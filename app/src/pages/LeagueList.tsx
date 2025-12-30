@@ -40,7 +40,30 @@ export default function LeagueList() {
       </Link>
 
       {leagues.length === 0 ? (
-        <p>No leagues yet. Create one to get started!</p>
+        <div style={{
+          padding: '40px',
+          background: '#f9fafb',
+          border: '2px dashed #d1d5db',
+          borderRadius: '8px',
+          textAlign: 'center',
+          maxWidth: '500px'
+        }}>
+          <h3 style={{ margin: '0 0 10px 0', color: '#374151' }}>No Leagues Yet</h3>
+          <p style={{ margin: '0 0 20px 0', color: '#6b7280' }}>
+            Create your first league to start organizing drafts and managing your fantasy teams.
+          </p>
+          <Link to="/leagues/create" style={{
+            display: 'inline-block',
+            padding: '12px 24px',
+            background: '#059669',
+            color: 'white',
+            textDecoration: 'none',
+            borderRadius: '6px',
+            fontWeight: '500'
+          }}>
+            Create Your First League
+          </Link>
+        </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
           {leagues.map(league => (

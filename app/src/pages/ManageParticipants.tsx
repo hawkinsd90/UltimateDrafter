@@ -13,6 +13,7 @@ export default function ManageParticipants() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [teamName, setTeamName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (draftId) {
@@ -33,10 +34,11 @@ export default function ManageParticipants() {
   async function addParticipant(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
+    setError('');
 
     const nextPosition = participants.length + 1;
 
-    const { error } = await supabase
+    const { error: insertError } = await supabase
       .from('draft_participants')
       .insert({
         draft_id: draftId!,
@@ -46,8 +48,8 @@ export default function ManageParticipants() {
         notification_preferences: {}
       });
 
-    if (error) {
-      alert('Error adding participant: ' + error.message);
+    if (insertError) {
+      setError('Error adding participant: ' + insertError.message);
     } else {
       setTeamName('');
       loadData();
@@ -56,13 +58,15 @@ export default function ManageParticipants() {
   }
 
   async function startDraft() {
+    setError('');
+
     if (participants.length < 2) {
-      alert('Need at least 2 participants to start draft');
+      setError('Need at least 2 participants to start draft');
       return;
     }
 
     const firstParticipant = participants[0];
-    const { error } = await supabase
+    const { error: updateError } = await supabase
       .from('drafts')
       .update({
         status: 'in_progress',
@@ -71,8 +75,8 @@ export default function ManageParticipants() {
       })
       .eq('id', draftId!);
 
-    if (error) {
-      alert('Error starting draft: ' + error.message);
+    if (updateError) {
+      setError('Error starting draft: ' + updateError.message);
     } else {
       navigate(`/leagues/${leagueId}/drafts/${draftId}/board`);
     }
@@ -136,6 +140,19 @@ export default function ManageParticipants() {
           </div>
         </form>
 
+        {error && (
+          <div style={{
+            marginTop: '20px',
+            padding: '12px',
+            background: '#fee2e2',
+            border: '1px solid #ef4444',
+            borderRadius: '6px',
+            color: '#dc2626'
+          }}>
+            {error}
+          </div>
+        )}
+
         <button
           onClick={startDraft}
           disabled={participants.length < 2}
@@ -153,6 +170,11 @@ export default function ManageParticipants() {
         >
           Start Draft
         </button>
+        {participants.length < 2 && (
+          <p style={{ marginTop: '10px', color: '#6b7280', fontSize: '14px' }}>
+            Add at least 2 participants to start the draft
+          </p>
+        )}
       </div>
     </div>
   );

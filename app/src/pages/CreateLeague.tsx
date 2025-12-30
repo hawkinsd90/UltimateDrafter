@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { getSeasonLabel } from '../utils/season';
 
 export default function CreateLeague() {
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [sport, setSport] = useState('football');
-  const [season, setSeason] = useState('2024');
   const [loading, setLoading] = useState(false);
+
+  const season = getSeasonLabel(sport);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -73,16 +75,12 @@ export default function CreateLeague() {
         </div>
 
         <div>
-          <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>
+          <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500', color: '#6b7280' }}>
             Season
           </label>
-          <input
-            type="text"
-            value={season}
-            onChange={(e) => setSeason(e.target.value)}
-            required
-            style={{ width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px' }}
-          />
+          <div style={{ padding: '10px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '6px', color: '#374151' }}>
+            {season}
+          </div>
         </div>
 
         <button

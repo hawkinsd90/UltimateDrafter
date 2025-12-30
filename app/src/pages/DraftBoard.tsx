@@ -18,6 +18,7 @@ export default function DraftBoard() {
   const [currentParticipant, setCurrentParticipant] = useState<Participant | null>(null);
   const [showPlayerSearch, setShowPlayerSearch] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (draftId) {
@@ -45,7 +46,19 @@ export default function DraftBoard() {
   }
 
   async function makePick(playerId: string) {
-    if (!draft || !currentParticipant) return;
+    setError('');
+
+    if (!draft || !currentParticipant) {
+      setError('Cannot make pick: no active participant');
+      return;
+    }
+
+    const alreadyPicked = picks.find(p => p.player_id === playerId);
+    if (alreadyPicked) {
+      setError('This player has already been drafted');
+      setShowPlayerSearch(false);
+      return;
+    }
 
     const pickNumber = draft.current_pick_number;
     const round = Math.ceil(pickNumber / participants.length);
@@ -66,7 +79,8 @@ export default function DraftBoard() {
       });
 
     if (pickError) {
-      alert('Error making pick: ' + pickError.message);
+      setError('Error making pick: ' + pickError.message);
+      setShowPlayerSearch(false);
       return;
     }
 
@@ -82,7 +96,8 @@ export default function DraftBoard() {
       .eq('id', draftId!);
 
     if (draftError) {
-      alert('Error updating draft: ' + draftError.message);
+      setError('Error updating draft: ' + draftError.message);
+      setShowPlayerSearch(false);
       return;
     }
 
@@ -151,6 +166,19 @@ export default function DraftBoard() {
         )}
       </div>
 
+      {error && (
+        <div style={{
+          marginBottom: '20px',
+          padding: '12px',
+          background: '#fee2e2',
+          border: '1px solid #ef4444',
+          borderRadius: '6px',
+          color: '#dc2626'
+        }}>
+          {error}
+        </div>
+      )}
+
       {draft.status === 'in_progress' && currentParticipant && (
         <button
           onClick={() => setShowPlayerSearch(true)}
@@ -168,6 +196,19 @@ export default function DraftBoard() {
         >
           Make Pick
         </button>
+      )}
+
+      {draft.status === 'in_progress' && !currentParticipant && (
+        <div style={{
+          marginBottom: '20px',
+          padding: '12px',
+          background: '#fef3c7',
+          border: '1px solid #f59e0b',
+          borderRadius: '6px',
+          color: '#92400e'
+        }}>
+          No active participant. Draft may be complete or in an invalid state.
+        </div>
       )}
 
       {showPlayerSearch && (
