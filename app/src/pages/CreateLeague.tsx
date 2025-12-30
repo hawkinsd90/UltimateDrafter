@@ -8,20 +8,21 @@ export default function CreateLeague() {
   const [name, setName] = useState('');
   const [sport, setSport] = useState('football');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const season = getSeasonLabel(sport);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
+    setError('');
 
-    const { data, error } = await supabase
+    const { data, error: insertError } = await supabase
       .from('leagues')
       .insert({
         name,
         sport,
         season,
-        owner_id: 'temp-user-id',
         settings: {}
       })
       .select()
@@ -29,8 +30,8 @@ export default function CreateLeague() {
 
     setLoading(false);
 
-    if (error) {
-      alert('Error creating league: ' + error.message);
+    if (insertError) {
+      setError('Error creating league: ' + insertError.message);
     } else if (data) {
       navigate(`/leagues/${data.id}/drafts`);
     }
@@ -82,6 +83,18 @@ export default function CreateLeague() {
             {season}
           </div>
         </div>
+
+        {error && (
+          <div style={{
+            padding: '12px',
+            background: '#fee2e2',
+            border: '1px solid #ef4444',
+            borderRadius: '6px',
+            color: '#dc2626'
+          }}>
+            {error}
+          </div>
+        )}
 
         <button
           type="submit"
