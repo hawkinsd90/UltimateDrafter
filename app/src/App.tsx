@@ -1,42 +1,24 @@
-import { useEffect, useState } from 'react';
-import { supabase } from './lib/supabase';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import Home from './pages/Home';
+import LeagueList from './pages/LeagueList';
+import CreateLeague from './pages/CreateLeague';
+import DraftList from './pages/DraftList';
+import CreateDraft from './pages/CreateDraft';
+import ManageParticipants from './pages/ManageParticipants';
+import DraftBoard from './pages/DraftBoard';
 
-function App() {
-  const [connected, setConnected] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const checkConnection = async () => {
-      try {
-        const { error } = await supabase.from('leagues').select('count').limit(1);
-        setConnected(!error);
-      } catch (err) {
-        setConnected(false);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    checkConnection();
-  }, []);
-
+export default function App() {
   return (
-    <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
-      <h1>DraftMaster - Offline4Ever</h1>
-      <p>
-        Status: {loading ? 'Checking connection...' : connected ? '✓ Connected to Supabase' : '✗ Not connected'}
-      </p>
-      <div style={{ marginTop: '20px', padding: '20px', background: '#f5f5f5', borderRadius: '8px' }}>
-        <h2>Backend Infrastructure</h2>
-        <ul>
-          <li>✓ Database tables created</li>
-          <li>✓ Row Level Security enabled</li>
-          <li>✓ Supabase client initialized</li>
-          <li>Ready for draft engine implementation</li>
-        </ul>
-      </div>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/leagues" element={<LeagueList />} />
+        <Route path="/leagues/create" element={<CreateLeague />} />
+        <Route path="/leagues/:leagueId/drafts" element={<DraftList />} />
+        <Route path="/leagues/:leagueId/drafts/create" element={<CreateDraft />} />
+        <Route path="/leagues/:leagueId/drafts/:draftId/participants" element={<ManageParticipants />} />
+        <Route path="/leagues/:leagueId/drafts/:draftId/board" element={<DraftBoard />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
-
-export default App;
