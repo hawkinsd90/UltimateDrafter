@@ -1,5 +1,8 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { AuthProvider } from './contexts/AuthContext';
+import ProtectedRoute from './components/ProtectedRoute';
 import Home from './pages/Home';
+import Login from './pages/Login';
 import LeagueList from './pages/LeagueList';
 import CreateLeague from './pages/CreateLeague';
 import DraftList from './pages/DraftList';
@@ -10,15 +13,18 @@ import DraftBoard from './pages/DraftBoard';
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/leagues" element={<LeagueList />} />
-        <Route path="/leagues/create" element={<CreateLeague />} />
-        <Route path="/leagues/:leagueId/drafts" element={<DraftList />} />
-        <Route path="/leagues/:leagueId/drafts/create" element={<CreateDraft />} />
-        <Route path="/leagues/:leagueId/drafts/:draftId/participants" element={<ManageParticipants />} />
-        <Route path="/leagues/:leagueId/drafts/:draftId/board" element={<DraftBoard />} />
-      </Routes>
+      <AuthProvider>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/leagues" element={<ProtectedRoute><LeagueList /></ProtectedRoute>} />
+          <Route path="/leagues/create" element={<ProtectedRoute><CreateLeague /></ProtectedRoute>} />
+          <Route path="/leagues/:leagueId/drafts" element={<ProtectedRoute><DraftList /></ProtectedRoute>} />
+          <Route path="/leagues/:leagueId/drafts/create" element={<ProtectedRoute><CreateDraft /></ProtectedRoute>} />
+          <Route path="/leagues/:leagueId/drafts/:draftId/participants" element={<ProtectedRoute><ManageParticipants /></ProtectedRoute>} />
+          <Route path="/leagues/:leagueId/drafts/:draftId/board" element={<ProtectedRoute><DraftBoard /></ProtectedRoute>} />
+        </Routes>
+      </AuthProvider>
     </BrowserRouter>
   );
 }

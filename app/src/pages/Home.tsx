@@ -1,8 +1,11 @@
 import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import UserMenu from '../components/UserMenu';
 
 export default function Home() {
+  const { user } = useAuth();
   const [playersExist, setPlayersExist] = useState<boolean | null>(null);
   const [isSeeding, setIsSeeding] = useState(false);
   const [seedMessage, setSeedMessage] = useState('');
@@ -58,6 +61,10 @@ export default function Home() {
 
   return (
     <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '20px' }}>
+        <UserMenu />
+      </div>
+
       <h1>DraftMaster</h1>
       <p>Provider-agnostic fantasy sports draft engine</p>
 
@@ -102,12 +109,20 @@ export default function Home() {
       )}
 
       <div style={{ marginTop: '30px', display: 'flex', gap: '15px', flexDirection: 'column', maxWidth: '300px' }}>
-        <Link to="/leagues" style={{ padding: '12px 24px', background: '#2563eb', color: 'white', textDecoration: 'none', borderRadius: '6px', textAlign: 'center' }}>
-          View Leagues
-        </Link>
-        <Link to="/leagues/create" style={{ padding: '12px 24px', background: '#059669', color: 'white', textDecoration: 'none', borderRadius: '6px', textAlign: 'center' }}>
-          Create League
-        </Link>
+        {user ? (
+          <>
+            <Link to="/leagues" style={{ padding: '12px 24px', background: '#2563eb', color: 'white', textDecoration: 'none', borderRadius: '6px', textAlign: 'center' }}>
+              View Leagues
+            </Link>
+            <Link to="/leagues/create" style={{ padding: '12px 24px', background: '#059669', color: 'white', textDecoration: 'none', borderRadius: '6px', textAlign: 'center' }}>
+              Create League
+            </Link>
+          </>
+        ) : (
+          <Link to="/login" style={{ padding: '12px 24px', background: '#2563eb', color: 'white', textDecoration: 'none', borderRadius: '6px', textAlign: 'center' }}>
+            Sign In to Get Started
+          </Link>
+        )}
       </div>
     </div>
   );

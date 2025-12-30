@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import UserMenu from '../components/UserMenu';
 import type { Database } from '../types/supabase';
 
 type League = Database['public']['Tables']['leagues']['Row'];
@@ -29,8 +30,9 @@ export default function LeagueList() {
 
   return (
     <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
-      <div style={{ marginBottom: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <Link to="/" style={{ color: '#2563eb', textDecoration: 'none' }}>← Home</Link>
+        <UserMenu />
       </div>
 
       <h1>Leagues</h1>
