@@ -3,16 +3,26 @@ import { createClient } from "npm:@supabase/supabase-js@2.39.3";
 
 const ALLOWED_ORIGINS = [
   "http://localhost:5173",
-  "https://localhost:5173"
+  // TODO: Add production origins when deployed:
+  // "https://your-app.netlify.app",
+  // "https://yourdomain.com"
 ];
 
 function getCorsHeaders(origin: string | null): Record<string, string> {
-  const allowedOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
-  return {
-    "Access-Control-Allow-Origin": allowedOrigin,
+  const isAllowed = origin && ALLOWED_ORIGINS.includes(origin);
+  const headers: Record<string, string> = {
+    "Vary": "Origin",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
   };
+
+  if (isAllowed) {
+    headers["Access-Control-Allow-Origin"] = origin;
+  } else {
+    headers["Access-Control-Allow-Origin"] = "null";
+  }
+
+  return headers;
 }
 
 interface EnqueueRequest {
