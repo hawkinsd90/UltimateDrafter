@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
 
 const RETURN_URL_KEY = 'auth_return_url';
 
@@ -29,37 +28,18 @@ export default function Login() {
     setIsCheckingRouting(true);
 
     const returnUrl = sessionStorage.getItem(RETURN_URL_KEY);
-    if (returnUrl) {
+    if (returnUrl && returnUrl.startsWith('/')) {
       sessionStorage.removeItem(RETURN_URL_KEY);
-      window.location.href = returnUrl;
+      navigate(returnUrl);
       return;
     }
 
-    try {
-      const { data: leagues, error } = await supabase
-        .from('leagues')
-        .select('id, created_at')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error) {
-        console.error('Error checking leagues:', error);
-        navigate('/leagues');
-        return;
-      }
-
-      if (leagues) {
-        navigate(`/leagues/${leagues.id}/drafts`);
-      } else {
-        navigate('/leagues');
-      }
-    } catch (error) {
-      console.error('Error during post-login routing:', error);
-      navigate('/leagues');
-    } finally {
-      setIsCheckingRouting(false);
-    }
+    // TODO: Re-enable "most recent league" routing after RLS policies restrict leagues by ownership
+    // Currently, the leagues table allows all authenticated users to see all leagues,
+    // so we cannot safely determine which league belongs to the current user.
+    // Always route to /leagues for now.
+    navigate('/leagues');
+    setIsCheckingRouting(false);
   }
 
   if (isLoadingAuth || isCheckingRouting) {
