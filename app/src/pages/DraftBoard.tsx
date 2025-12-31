@@ -14,7 +14,7 @@ type Pick = Database['public']['Tables']['draft_picks']['Row'] & {
 };
 
 export default function DraftBoard() {
-  const { leagueId, draftId } = useParams<{ leagueId: string; draftId: string }>();
+  const { draftId } = useParams<{ draftId: string }>();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [league, setLeague] = useState<League | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -31,19 +31,23 @@ export default function DraftBoard() {
   }, [draftId]);
 
   async function loadData() {
-    const [draftRes, participantsRes, picksRes, leagueRes] = await Promise.all([
-      supabase.from('drafts').select('*').eq('id', draftId!).single(),
+    const draftRes = await supabase.from('drafts').select('*').eq('id', draftId!).single();
+
+    if (!draftRes.data) {
+      setLoading(false);
+      return;
+    }
+
+    const [participantsRes, picksRes, leagueRes] = await Promise.all([
       supabase.from('draft_participants').select('*').eq('draft_id', draftId!).order('draft_position', { ascending: true }),
       supabase.from('draft_picks').select('*, player:players(name, position, team)').eq('draft_id', draftId!).order('pick_number', { ascending: true }),
-      supabase.from('leagues').select('*').eq('id', leagueId!).single()
+      supabase.from('leagues').select('*').eq('id', draftRes.data.league_id).single()
     ]);
 
-    if (draftRes.data) {
-      setDraft(draftRes.data);
-      if (draftRes.data.current_participant_id && participantsRes.data) {
-        const current = participantsRes.data.find(p => p.id === draftRes.data.current_participant_id);
-        setCurrentParticipant(current || null);
-      }
+    setDraft(draftRes.data);
+    if (draftRes.data.current_participant_id && participantsRes.data) {
+      const current = participantsRes.data.find(p => p.id === draftRes.data.current_participant_id);
+      setCurrentParticipant(current || null);
     }
     if (participantsRes.data) setParticipants(participantsRes.data);
     if (picksRes.data) setPicks(picksRes.data as Pick[]);
@@ -122,7 +126,7 @@ export default function DraftBoard() {
         enqueueNotification({
           channel: 'email',
           userId: nextParticipant.user_id,
-          leagueId: leagueId!,
+          leagueId: draft.league_id,
           templateKey: 'draft_turn',
           payload: notificationPayload,
           messageText
@@ -130,7 +134,7 @@ export default function DraftBoard() {
         enqueueNotification({
           channel: 'sms',
           userId: nextParticipant.user_id,
-          leagueId: leagueId!,
+          leagueId: draft.league_id,
           templateKey: 'draft_turn',
           payload: notificationPayload,
           messageText
@@ -138,7 +142,7 @@ export default function DraftBoard() {
         enqueueNotification({
           channel: 'voice',
           userId: nextParticipant.user_id,
-          leagueId: leagueId!,
+          leagueId: draft.league_id,
           templateKey: 'draft_turn',
           payload: notificationPayload,
           messageText
@@ -184,8 +188,8 @@ export default function DraftBoard() {
   return (
     <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <Link to={`/leagues/${leagueId}/drafts`} style={{ color: '#2563eb', textDecoration: 'none' }}>
-          ← Back to Drafts
+        <Link to={`/leagues/${draft.league_id}`} style={{ color: '#2563eb', textDecoration: 'none' }}>
+          ← Back to League
         </Link>
         <UserMenu />
       </div>

@@ -41,6 +41,74 @@ export interface Database {
           updated_at?: string
         }
       }
+      league_settings: {
+        Row: {
+          league_id: string
+          created_by: string
+          created_at: string
+          updated_at: string
+          draft_format: string
+          pick_timer_seconds: number
+          allow_pauses: boolean
+          drafting_hours_enabled: boolean
+          drafting_hours_start: string | null
+          drafting_hours_end: string | null
+          roster_qb: number
+          roster_rb: number
+          roster_wr: number
+          roster_te: number
+          roster_flex: number
+          roster_k: number
+          roster_dst: number
+          bench: number
+          allow_trades: boolean
+          allow_pick_trades: boolean
+        }
+        Insert: {
+          league_id: string
+          created_by: string
+          created_at?: string
+          updated_at?: string
+          draft_format?: string
+          pick_timer_seconds?: number
+          allow_pauses?: boolean
+          drafting_hours_enabled?: boolean
+          drafting_hours_start?: string | null
+          drafting_hours_end?: string | null
+          roster_qb?: number
+          roster_rb?: number
+          roster_wr?: number
+          roster_te?: number
+          roster_flex?: number
+          roster_k?: number
+          roster_dst?: number
+          bench?: number
+          allow_trades?: boolean
+          allow_pick_trades?: boolean
+        }
+        Update: {
+          league_id?: string
+          created_by?: string
+          created_at?: string
+          updated_at?: string
+          draft_format?: string
+          pick_timer_seconds?: number
+          allow_pauses?: boolean
+          drafting_hours_enabled?: boolean
+          drafting_hours_start?: string | null
+          drafting_hours_end?: string | null
+          roster_qb?: number
+          roster_rb?: number
+          roster_wr?: number
+          roster_te?: number
+          roster_flex?: number
+          roster_k?: number
+          roster_dst?: number
+          bench?: number
+          allow_trades?: boolean
+          allow_pick_trades?: boolean
+        }
+      }
       drafts: {
         Row: {
           id: string

@@ -88,15 +88,36 @@ export default function LeagueList() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
           {leagues.map(league => (
-            <div key={league.id} style={{ padding: '20px', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+            <Link
+              key={league.id}
+              to={`/leagues/${league.id}`}
+              style={{
+                display: 'block',
+                padding: '20px',
+                border: '1px solid #e5e7eb',
+                borderRadius: '8px',
+                textDecoration: 'none',
+                color: 'inherit',
+                transition: 'all 0.2s',
+                cursor: 'pointer'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = '#2563eb';
+                e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = '#e5e7eb';
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+            >
               <h3 style={{ margin: '0 0 10px 0' }}>{league.name}</h3>
               <p style={{ margin: '0 0 10px 0', color: '#6b7280' }}>
                 {league.sport} - {league.season}
               </p>
-              <Link to={`/leagues/${league.id}/drafts`} style={{ color: '#2563eb', textDecoration: 'none' }}>
-                View Drafts →
-              </Link>
-            </div>
+              <span style={{ color: '#2563eb', fontSize: '14px' }}>
+                View League →
+              </span>
+            </Link>
           ))}
         </div>
       )}

@@ -8,7 +8,7 @@ type Draft = Database['public']['Tables']['drafts']['Row'];
 type Participant = Database['public']['Tables']['draft_participants']['Row'];
 
 export default function ManageParticipants() {
-  const { leagueId, draftId } = useParams<{ leagueId: string; draftId: string }>();
+  const { draftId } = useParams<{ draftId: string }>();
   const navigate = useNavigate();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -79,7 +79,7 @@ export default function ManageParticipants() {
     if (updateError) {
       setError('Error starting draft: ' + updateError.message);
     } else {
-      navigate(`/leagues/${leagueId}/drafts/${draftId}/board`);
+      navigate(`/drafts/${draftId}`);
     }
   }
 
@@ -88,8 +88,8 @@ export default function ManageParticipants() {
   return (
     <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <Link to={`/leagues/${leagueId}/drafts`} style={{ color: '#2563eb', textDecoration: 'none' }}>
-          ← Back to Drafts
+        <Link to={`/leagues/${draft.league_id}`} style={{ color: '#2563eb', textDecoration: 'none' }}>
+          ← Back to League
         </Link>
         <UserMenu />
       </div>
