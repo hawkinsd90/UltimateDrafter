@@ -67,6 +67,88 @@ The app requires players in the database to function. There are two methods:
      -- Add more players as needed
    ```
 
+## Notifications Outbox System
+
+DraftMaster uses a reliable outbox pattern for all notifications (email, SMS, voice). All notifications are stored in the database first, then processed by a background worker.
+
+### How It Works
+
+1. **Enqueue**: Application calls `enqueueNotification()` which creates a row in `notifications_outbox`
+2. **Validate**: System checks for destination availability and user consent (for SMS/Voice)
+3. **Process**: Background worker (Edge Function) runs every minute via pg_cron
+4. **Retry**: Failed notifications are retried with exponential backoff (1m, 5m, 15m, 60m)
+5. **Audit**: All lifecycle events are logged to `audit_events` table
+
+### Channel Status
+
+- **Email**: Mock implementation (ready for SES integration)
+- **SMS**: Stub only (Telnyx integration pending)
+- **Voice**: Stub only (Telnyx integration pending)
+- **Push**: Not implemented
+
+### User Configuration
+
+Users can configure notification preferences at `/settings/notifications`:
+- Phone number (E.164 format)
+- SMS consent (optional, default unchecked)
+- Voice consent (optional, default unchecked)
+
+**Important**: Notifications are optional. Users can use DraftMaster without providing a phone number.
+
+### Manual Worker Trigger
+
+To manually trigger the notification worker (useful for local development):
+
+```sql
+SELECT process_notifications_worker();
+```
+
+Or call the Edge Function directly:
+```bash
+curl -X POST \
+  "${SUPABASE_URL}/functions/v1/process-notifications-outbox" \
+  -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+  -H "Content-Type: application/json"
+```
+
+### Monitoring
+
+View recent notification activity:
+```sql
+-- Recent notifications
+SELECT id, channel, destination, status, created_at, sent_at
+FROM notifications_outbox
+ORDER BY created_at DESC
+LIMIT 20;
+
+-- Recent audit events
+SELECT event_type, created_at, payload
+FROM audit_events
+WHERE event_type LIKE 'notification_%'
+ORDER BY created_at DESC
+LIMIT 20;
+
+-- Cron job status
+SELECT * FROM cron.job_run_details
+WHERE jobname = 'process-notifications-worker'
+ORDER BY start_time DESC
+LIMIT 10;
+```
+
+### Implementation Details
+
+**Database Tables:**
+- `notifications_outbox` - Queued notifications with retry logic
+- `user_notification_settings` - Phone numbers and consent flags
+- `audit_events` - Full lifecycle audit trail
+
+**Key Files:**
+- `app/src/utils/notifications.ts` - `enqueueNotification()` helper
+- `app/src/types/notifications.ts` - TypeScript types and constants
+- `app/src/pages/NotificationSettings.tsx` - User settings UI
+- `supabase/functions/process-notifications-outbox/` - Background worker
+- `supabase/migrations/*notifications*` - Database schema
+
 ## Project Structure
 
 See [STRUCTURE.md](./STRUCTURE.md) for detailed architecture documentation.

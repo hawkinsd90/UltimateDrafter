@@ -9,6 +9,7 @@ import DraftList from './pages/DraftList';
 import CreateDraft from './pages/CreateDraft';
 import ManageParticipants from './pages/ManageParticipants';
 import DraftBoard from './pages/DraftBoard';
+import NotificationSettings from './pages/NotificationSettings';
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/leagues/:leagueId/drafts/create" element={<ProtectedRoute><CreateDraft /></ProtectedRoute>} />
           <Route path="/leagues/:leagueId/drafts/:draftId/participants" element={<ProtectedRoute><ManageParticipants /></ProtectedRoute>} />
           <Route path="/leagues/:leagueId/drafts/:draftId/board" element={<ProtectedRoute><DraftBoard /></ProtectedRoute>} />
+          <Route path="/settings/notifications" element={<ProtectedRoute><NotificationSettings /></ProtectedRoute>} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>
