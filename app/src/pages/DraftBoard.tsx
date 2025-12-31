@@ -106,27 +106,48 @@ export default function DraftBoard() {
       return;
     }
 
-    // Enqueue email notification for next participant
+    // Enqueue email, SMS, and voice notifications for next participant
     if (nextParticipant && nextParticipant.user_id) {
-      const result = await enqueueNotification({
-        channel: 'email',
-        userId: nextParticipant.user_id,
-        leagueId: leagueId!,
-        templateKey: 'draft_turn',
-        payload: {
-          leagueName: league?.name || 'Unknown League',
-          pickNumber: nextPickNumber,
-          teamName: nextParticipant.team_name,
-          draftName: draft.name
-        },
-        messageText: `${nextParticipant.team_name}, you're on the clock! Pick #${nextPickNumber} in ${draft.name}`
-      });
+      const notificationPayload = {
+        leagueName: league?.name || 'Unknown League',
+        pickNumber: nextPickNumber,
+        teamName: nextParticipant.team_name,
+        draftName: draft.name
+      };
+      const messageText = `${nextParticipant.team_name}, you're on the clock! Pick #${nextPickNumber} in ${draft.name}`;
 
-      console.log('[DraftBoard] Notification enqueued:', {
-        notificationId: result.notificationId,
-        status: result.status,
-        success: result.success,
-        error: result.error
+      // Enqueue all three channels (edge function will apply consent + destination gating)
+      const [emailResult, smsResult, voiceResult] = await Promise.all([
+        enqueueNotification({
+          channel: 'email',
+          userId: nextParticipant.user_id,
+          leagueId: leagueId!,
+          templateKey: 'draft_turn',
+          payload: notificationPayload,
+          messageText
+        }),
+        enqueueNotification({
+          channel: 'sms',
+          userId: nextParticipant.user_id,
+          leagueId: leagueId!,
+          templateKey: 'draft_turn',
+          payload: notificationPayload,
+          messageText
+        }),
+        enqueueNotification({
+          channel: 'voice',
+          userId: nextParticipant.user_id,
+          leagueId: leagueId!,
+          templateKey: 'draft_turn',
+          payload: notificationPayload,
+          messageText
+        })
+      ]);
+
+      console.log('[DraftBoard] Notifications enqueued:', {
+        email: { notificationId: emailResult.notificationId, status: emailResult.status },
+        sms: { notificationId: smsResult.notificationId, status: smsResult.status },
+        voice: { notificationId: voiceResult.notificationId, status: voiceResult.status }
       });
     }
 

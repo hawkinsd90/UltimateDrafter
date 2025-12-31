@@ -82,9 +82,11 @@ DraftMaster uses a reliable outbox pattern for all notifications (email, SMS, vo
 ### Channel Status
 
 - **Email**: Mock implementation (ready for SES integration)
-- **SMS**: Stub only (Telnyx integration pending)
-- **Voice**: Stub only (Telnyx integration pending)
+- **SMS**: Queued + mocked (Telnyx integration pending)
+- **Voice**: Queued + mocked (Telnyx integration pending)
 - **Push**: Not implemented
+
+**Note:** Draft turn events now trigger all three channels (email, SMS, voice). The edge function applies consent and destination gating automatically. Until Telnyx is enabled, SMS/Voice notifications are queued and marked as "sent" with mock provider responses.
 
 ### User Configuration
 
