@@ -107,14 +107,14 @@ export default function DraftBoard() {
     }
 
     // Enqueue email notification for next participant
-    if (nextParticipant && nextParticipant.user_id && league) {
+    if (nextParticipant && nextParticipant.user_id) {
       const result = await enqueueNotification({
         channel: 'email',
         userId: nextParticipant.user_id,
-        leagueId: league.id,
+        leagueId: leagueId!,
         templateKey: 'draft_turn',
         payload: {
-          leagueName: league.name,
+          leagueName: league?.name || 'Unknown League',
           pickNumber: nextPickNumber,
           teamName: nextParticipant.team_name,
           draftName: draft.name

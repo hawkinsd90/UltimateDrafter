@@ -1,235 +1,39 @@
 import { supabase } from '../lib/supabase';
-import type { EnqueueNotificationInput, NotificationChannel, UserNotificationSettings } from '../types/notifications';
+import type { EnqueueNotificationInput } from '../types/notifications';
 
 interface EnqueueResult {
   success: boolean;
   notificationId?: string;
   error?: string;
   status?: string;
-}
-
-async function resolveDestination(
-  channel: NotificationChannel,
-  explicitDestination: string | undefined,
-  userId: string | undefined
-): Promise<{ destination: string | null; settings: UserNotificationSettings | null }> {
-  if (explicitDestination) {
-    return { destination: explicitDestination, settings: null };
-  }
-
-  if (!userId) {
-    return { destination: null, settings: null };
-  }
-
-  if (channel === 'email') {
-    const { data: user } = await supabase.auth.getUser();
-    if (user?.user?.email) {
-      return { destination: user.user.email, settings: null };
-    }
-
-    const { data: authUser } = await supabase
-      .from('auth.users')
-      .select('email')
-      .eq('id', userId)
-      .maybeSingle();
-
-    return { destination: authUser?.email || null, settings: null };
-  }
-
-  if (channel === 'sms' || channel === 'voice') {
-    const { data: settings } = await supabase
-      .from('user_notification_settings')
-      .select('*')
-      .eq('user_id', userId)
-      .maybeSingle();
-
-    return {
-      destination: settings?.phone_e164 || null,
-      settings: settings as UserNotificationSettings | null
-    };
-  }
-
-  return { destination: null, settings: null };
-}
-
-function checkConsent(
-  channel: NotificationChannel,
-  settings: UserNotificationSettings | null
-): { hasConsent: boolean; reason?: string } {
-  if (channel === 'email' || channel === 'push') {
-    return { hasConsent: true };
-  }
-
-  if (!settings) {
-    return { hasConsent: false, reason: 'No notification settings found' };
-  }
-
-  if (channel === 'sms') {
-    if (!settings.consent_sms) {
-      return { hasConsent: false, reason: 'SMS consent not granted' };
-    }
-    if (settings.opted_out_sms) {
-      return { hasConsent: false, reason: 'User opted out of SMS' };
-    }
-    return { hasConsent: true };
-  }
-
-  if (channel === 'voice') {
-    if (!settings.consent_voice) {
-      return { hasConsent: false, reason: 'Voice consent not granted' };
-    }
-    if (settings.opted_out_voice) {
-      return { hasConsent: false, reason: 'User opted out of voice calls' };
-    }
-    return { hasConsent: true };
-  }
-
-  return { hasConsent: true };
-}
-
-async function writeAuditEvent(
-  eventType: string,
-  userId: string | undefined,
-  leagueId: string | undefined,
-  payload: Record<string, unknown>
-): Promise<void> {
-  try {
-    await supabase.from('audit_events').insert({
-      event_type: eventType,
-      user_id: userId || null,
-      league_id: leagueId || null,
-      payload
-    });
-  } catch (err) {
-    console.error('Failed to write audit event:', err);
-  }
+  destination?: string;
 }
 
 export async function enqueueNotification(input: EnqueueNotificationInput): Promise<EnqueueResult> {
   try {
     const { channel, userId, leagueId, teamId, templateKey, payload, messageText } = input;
 
-    const { destination, settings } = await resolveDestination(
-      channel,
-      input.destination,
-      userId
-    );
-
-    if (!destination) {
-      const notificationData = {
+    const { data, error } = await supabase.functions.invoke('enqueue-notification', {
+      body: {
         channel,
-        destination: '',
-        user_id: userId || null,
-        league_id: leagueId || null,
-        team_id: teamId || null,
-        template_key: templateKey || null,
-        payload: payload || {},
-        message_text: messageText || null,
-        status: 'blocked_no_destination',
-        next_attempt_at: new Date().toISOString()
-      };
-
-      const { data: notification, error } = await supabase
-        .from('notifications_outbox')
-        .insert(notificationData)
-        .select('id')
-        .single();
-
-      if (error) {
-        console.error('Failed to create blocked notification:', error);
-        return { success: false, error: error.message };
+        userId,
+        leagueId,
+        teamId,
+        templateKey,
+        payload,
+        messageText
       }
-
-      await writeAuditEvent('notification_blocked', userId, leagueId, {
-        notification_id: notification.id,
-        channel,
-        reason: 'no_destination'
-      });
-
-      return {
-        success: false,
-        notificationId: notification.id,
-        status: 'blocked_no_destination',
-        error: 'No destination available'
-      };
-    }
-
-    const consentCheck = checkConsent(channel, settings);
-    if (!consentCheck.hasConsent) {
-      const notificationData = {
-        channel,
-        destination,
-        user_id: userId || null,
-        league_id: leagueId || null,
-        team_id: teamId || null,
-        template_key: templateKey || null,
-        payload: payload || {},
-        message_text: messageText || null,
-        status: 'blocked_no_consent',
-        next_attempt_at: new Date().toISOString()
-      };
-
-      const { data: notification, error } = await supabase
-        .from('notifications_outbox')
-        .insert(notificationData)
-        .select('id')
-        .single();
-
-      if (error) {
-        console.error('Failed to create blocked notification:', error);
-        return { success: false, error: error.message };
-      }
-
-      await writeAuditEvent('notification_blocked', userId, leagueId, {
-        notification_id: notification.id,
-        channel,
-        reason: 'no_consent',
-        details: consentCheck.reason
-      });
-
-      return {
-        success: false,
-        notificationId: notification.id,
-        status: 'blocked_no_consent',
-        error: consentCheck.reason || 'Consent not granted'
-      };
-    }
-
-    const notificationData = {
-      channel,
-      destination,
-      user_id: userId || null,
-      league_id: leagueId || null,
-      team_id: teamId || null,
-      template_key: templateKey || null,
-      payload: payload || {},
-      message_text: messageText || null,
-      status: 'pending',
-      next_attempt_at: new Date().toISOString()
-    };
-
-    const { data: notification, error } = await supabase
-      .from('notifications_outbox')
-      .insert(notificationData)
-      .select('id')
-      .single();
-
-    if (error) {
-      console.error('Failed to enqueue notification:', error);
-      return { success: false, error: error.message };
-    }
-
-    await writeAuditEvent('notification_enqueued', userId, leagueId, {
-      notification_id: notification.id,
-      channel,
-      destination
     });
 
-    return {
-      success: true,
-      notificationId: notification.id,
-      status: 'pending'
-    };
+    if (error) {
+      console.error('Edge function error:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to invoke notification function'
+      };
+    }
+
+    return data as EnqueueResult;
   } catch (err) {
     console.error('Error enqueueing notification:', err);
     return {
