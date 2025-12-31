@@ -1,11 +1,19 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.39.3";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
-};
+const ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "https://localhost:5173"
+];
+
+function getCorsHeaders(origin: string | null): Record<string, string> {
+  const allowedOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowedOrigin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  };
+}
 
 interface EnqueueRequest {
   channel: 'email' | 'sms' | 'voice' | 'push';
@@ -27,15 +35,46 @@ interface UserNotificationSettings {
 }
 
 Deno.serve(async (req: Request) => {
+  const origin = req.headers.get("origin");
+  const corsHeaders = getCorsHeaders(origin);
+
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
   try {
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Missing Authorization header' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
+
+    const supabaseClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      {
+        global: {
+          headers: {
+            Authorization: authHeader
+          }
+        }
+      }
+    );
+
+    const { data: { user: caller }, error: authError } = await supabaseClient.auth.getUser();
+    if (authError || !caller) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Invalid or expired token' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     const body: EnqueueRequest = await req.json();
     const { channel, userId, leagueId, teamId, templateKey, payload, messageText } = body;
@@ -45,6 +84,55 @@ Deno.serve(async (req: Request) => {
         JSON.stringify({ success: false, error: 'Missing required fields: channel, userId' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    if (leagueId) {
+      const { data: league } = await supabaseAdmin
+        .from('leagues')
+        .select('created_by')
+        .eq('id', leagueId)
+        .maybeSingle();
+
+      if (!league) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'League not found' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const isCreator = league.created_by === caller.id;
+
+      if (!isCreator) {
+        const { data: callerMembership } = await supabaseAdmin
+          .from('league_members')
+          .select('id')
+          .eq('league_id', leagueId)
+          .eq('user_id', caller.id)
+          .maybeSingle();
+
+        if (!callerMembership) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Not authorized to send notifications for this league' }),
+            { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+
+      if (!isCreator) {
+        const { data: targetMembership } = await supabaseAdmin
+          .from('league_members')
+          .select('id')
+          .eq('league_id', leagueId)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (!targetMembership) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Target user is not a member of this league' }),
+            { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
     }
 
     // Resolve destination based on channel
@@ -103,7 +191,8 @@ Deno.serve(async (req: Request) => {
         payload: {
           notification_id: notification.id,
           channel,
-          reason: 'no_destination'
+          reason: 'no_destination',
+          requested_by: caller.id
         }
       });
 
@@ -180,7 +269,8 @@ Deno.serve(async (req: Request) => {
             notification_id: notification.id,
             channel,
             reason: 'no_consent',
-            details: consentReason
+            details: consentReason,
+            requested_by: caller.id
           }
         });
 
@@ -227,7 +317,8 @@ Deno.serve(async (req: Request) => {
       payload: {
         notification_id: notification.id,
         channel,
-        destination
+        destination,
+        requested_by: caller.id
       }
     });
 
