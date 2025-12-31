@@ -10,7 +10,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
 
   useEffect(() => {
     if (!isLoadingAuth && !user && location.pathname !== '/login') {
-      sessionStorage.setItem(RETURN_URL_KEY, `${window.location.origin}${location.pathname}${location.search}`);
+      sessionStorage.setItem(RETURN_URL_KEY, `${window.location.origin}${location.pathname}${location.search}${location.hash}`);
     }
   }, [isLoadingAuth, user, location]);
 
