@@ -34,10 +34,25 @@ export default function Login() {
       return;
     }
 
-    // TODO: Re-enable "most recent league" routing after RLS policies restrict leagues by ownership
-    // Currently, the leagues table allows all authenticated users to see all leagues,
-    // so we cannot safely determine which league belongs to the current user.
-    // Always route to /leagues for now.
+    // SECURITY TODO: Post-login routing is intentionally simplified during MVP
+    //
+    // CURRENT BEHAVIOR:
+    // - Always routes to /leagues where leagues are currently visible to all
+    //   authenticated users by design during MVP.
+    // - "Most recent league" auto-routing is DISABLED because we cannot safely
+    //   determine ownership when all leagues are visible to everyone.
+    //
+    // REASON:
+    // The leagues table SELECT policy is currently permissive (all authenticated
+    // users can view all leagues). This was a deliberate MVP choice to enable
+    // testing and feature development without access control blocking progress.
+    //
+    // BEFORE PRODUCTION:
+    // 1. Tighten leagues SELECT RLS to restrict by ownership or membership
+    // 2. Re-enable "most recent league" routing logic here
+    // 3. Add league-level access guards on routes like /leagues/:id
+    //
+    // See SECURITY_TODO.md for full checklist and test plan.
     navigate('/leagues');
     setIsCheckingRouting(false);
   }

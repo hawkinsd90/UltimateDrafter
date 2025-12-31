@@ -15,6 +15,25 @@ export default function LeagueList() {
   }, []);
 
   async function loadLeagues() {
+    // SECURITY TODO: This query currently returns ALL leagues due to permissive RLS
+    //
+    // CURRENT BEHAVIOR:
+    // The leagues SELECT policy allows all authenticated users to view all leagues.
+    // This is intentional during MVP to enable testing without access control friction.
+    //
+    // DO NOT ASSUME:
+    // - That the leagues returned belong to the current user
+    // - That the user has membership/ownership of these leagues
+    // - That this list is properly filtered by access rights
+    //
+    // BEFORE PRODUCTION:
+    // 1. Update the leagues SELECT RLS policy to restrict by:
+    //    - created_by = auth.uid() OR
+    //    - user is a member via league_memberships table
+    // 2. Verify this query only returns leagues the user should access
+    // 3. Test with two separate user accounts to confirm isolation
+    //
+    // See SECURITY_TODO.md for full details.
     const { data, error } = await supabase
       .from('leagues')
       .select('*')
