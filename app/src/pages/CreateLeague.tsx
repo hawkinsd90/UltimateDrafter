@@ -2,9 +2,12 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { getSeasonLabel } from '../utils/season';
+import { useAuth } from '../contexts/AuthContext';
+import UserMenu from '../components/UserMenu';
 
 export default function CreateLeague() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [name, setName] = useState('');
   const [sport, setSport] = useState('football');
   const [loading, setLoading] = useState(false);
@@ -17,12 +20,19 @@ export default function CreateLeague() {
     setLoading(true);
     setError('');
 
+    if (!user?.id) {
+      setError('You must be signed in to create a league');
+      setLoading(false);
+      return;
+    }
+
     const { data, error: insertError } = await supabase
       .from('leagues')
       .insert({
         name,
         sport,
         season,
+        owner_id: user.id,
         settings: {}
       })
       .select()
@@ -39,8 +49,9 @@ export default function CreateLeague() {
 
   return (
     <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
-      <div style={{ marginBottom: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <Link to="/leagues" style={{ color: '#2563eb', textDecoration: 'none' }}>← Back to Leagues</Link>
+        <UserMenu />
       </div>
 
       <h1>Create League</h1>

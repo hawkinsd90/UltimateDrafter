@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import type { Database } from '../types/supabase';
 import PlayerSearch from '../components/PlayerSearch';
 import { enqueueNotification } from '../utils/notifications';
+import UserMenu from '../components/UserMenu';
 
 type Draft = Database['public']['Tables']['drafts']['Row'];
 type League = Database['public']['Tables']['leagues']['Row'];
@@ -182,10 +183,11 @@ export default function DraftBoard() {
 
   return (
     <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
-      <div style={{ marginBottom: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <Link to={`/leagues/${leagueId}/drafts`} style={{ color: '#2563eb', textDecoration: 'none' }}>
           ← Back to Drafts
         </Link>
+        <UserMenu />
       </div>
 
       <h1>{draft.name}</h1>

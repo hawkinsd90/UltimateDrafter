@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../types/supabase';
+import UserMenu from '../components/UserMenu';
 
 type League = Database['public']['Tables']['leagues']['Row'];
 
@@ -61,10 +62,11 @@ export default function CreateDraft() {
 
   return (
     <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
-      <div style={{ marginBottom: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <Link to={`/leagues/${leagueId}/drafts`} style={{ color: '#2563eb', textDecoration: 'none' }}>
           ← Back to {league.name}
         </Link>
+        <UserMenu />
       </div>
 
       <h1>Create Draft</h1>
