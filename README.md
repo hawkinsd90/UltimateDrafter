@@ -111,6 +111,55 @@ curl -X POST \
   -H "Content-Type: application/json"
 ```
 
+### Testing End-to-End
+
+**Manual Test Checklist:**
+
+1. **Trigger a draft turn event:**
+   - Create a league and draft
+   - Add at least 2 participants with user accounts
+   - Start the draft
+   - Make a pick (this triggers the notification for the next user)
+   - Check browser console for: `[DraftBoard] Notification enqueued:`
+
+2. **Verify outbox row appears (pending):**
+   ```sql
+   SELECT id, channel, destination, status, message_text, created_at
+   FROM notifications_outbox
+   WHERE status = 'pending'
+   ORDER BY created_at DESC
+   LIMIT 5;
+   ```
+
+3. **Run worker (or wait for cron):**
+   ```sql
+   -- Manual trigger
+   SELECT process_notifications_worker();
+   ```
+   Or wait up to 1 minute for automatic cron execution.
+
+4. **Verify row becomes sent + audit_event exists:**
+   ```sql
+   -- Check notification status
+   SELECT id, channel, status, sent_at, provider, provider_message_id
+   FROM notifications_outbox
+   ORDER BY created_at DESC
+   LIMIT 5;
+
+   -- Check audit trail
+   SELECT event_type, created_at, payload
+   FROM audit_events
+   WHERE event_type IN ('notification_enqueued', 'notification_sent')
+   ORDER BY created_at DESC
+   LIMIT 10;
+   ```
+
+**Expected Behavior:**
+- Status changes: `pending` → `processing` → `sent`
+- `sent_at` timestamp is populated
+- `provider` = 'mock' (until real providers are configured)
+- Two audit events: `notification_enqueued` and `notification_sent`
+
 ### Monitoring
 
 View recent notification activity:

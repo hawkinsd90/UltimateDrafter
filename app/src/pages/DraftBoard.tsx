@@ -3,8 +3,10 @@ import { Link, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import type { Database } from '../types/supabase';
 import PlayerSearch from '../components/PlayerSearch';
+import { enqueueNotification } from '../utils/notifications';
 
 type Draft = Database['public']['Tables']['drafts']['Row'];
+type League = Database['public']['Tables']['leagues']['Row'];
 type Participant = Database['public']['Tables']['draft_participants']['Row'];
 type Pick = Database['public']['Tables']['draft_picks']['Row'] & {
   player?: { name: string; position: string; team: string | null };
@@ -13,6 +15,7 @@ type Pick = Database['public']['Tables']['draft_picks']['Row'] & {
 export default function DraftBoard() {
   const { leagueId, draftId } = useParams<{ leagueId: string; draftId: string }>();
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [league, setLeague] = useState<League | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [picks, setPicks] = useState<Pick[]>([]);
   const [currentParticipant, setCurrentParticipant] = useState<Participant | null>(null);
@@ -27,10 +30,11 @@ export default function DraftBoard() {
   }, [draftId]);
 
   async function loadData() {
-    const [draftRes, participantsRes, picksRes] = await Promise.all([
+    const [draftRes, participantsRes, picksRes, leagueRes] = await Promise.all([
       supabase.from('drafts').select('*').eq('id', draftId!).single(),
       supabase.from('draft_participants').select('*').eq('draft_id', draftId!).order('draft_position', { ascending: true }),
-      supabase.from('draft_picks').select('*, player:players(name, position, team)').eq('draft_id', draftId!).order('pick_number', { ascending: true })
+      supabase.from('draft_picks').select('*, player:players(name, position, team)').eq('draft_id', draftId!).order('pick_number', { ascending: true }),
+      supabase.from('leagues').select('*').eq('id', leagueId!).single()
     ]);
 
     if (draftRes.data) {
@@ -42,6 +46,7 @@ export default function DraftBoard() {
     }
     if (participantsRes.data) setParticipants(participantsRes.data);
     if (picksRes.data) setPicks(picksRes.data as Pick[]);
+    if (leagueRes.data) setLeague(leagueRes.data);
     setLoading(false);
   }
 
@@ -101,16 +106,27 @@ export default function DraftBoard() {
       return;
     }
 
-    if (nextParticipant) {
-      await supabase.from('notifications_outbox').insert({
-        draft_id: draftId!,
-        participant_id: nextParticipant.id,
-        notification_type: 'your_turn',
-        channel: 'sms',
-        recipient: nextParticipant.user_id,
-        message: `${nextParticipant.team_name}, you are on the clock! Pick ${nextPickNumber}`,
-        status: 'pending',
-        metadata: { pick_number: nextPickNumber }
+    // Enqueue email notification for next participant
+    if (nextParticipant && nextParticipant.user_id && league) {
+      const result = await enqueueNotification({
+        channel: 'email',
+        userId: nextParticipant.user_id,
+        leagueId: league.id,
+        templateKey: 'draft_turn',
+        payload: {
+          leagueName: league.name,
+          pickNumber: nextPickNumber,
+          teamName: nextParticipant.team_name,
+          draftName: draft.name
+        },
+        messageText: `${nextParticipant.team_name}, you're on the clock! Pick #${nextPickNumber} in ${draft.name}`
+      });
+
+      console.log('[DraftBoard] Notification enqueued:', {
+        notificationId: result.notificationId,
+        status: result.status,
+        success: result.success,
+        error: result.error
       });
     }
 
