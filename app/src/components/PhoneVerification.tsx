@@ -45,6 +45,12 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
         return;
       }
 
+      console.log('Sending verification request with headers:', {
+        Authorization: `Bearer ${session.access_token.substring(0, 20)}...`,
+        Apikey: import.meta.env.VITE_SUPABASE_ANON_KEY ? 'present' : 'missing',
+        phone: phoneE164,
+      });
+
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/start-phone-verification`,
         {
@@ -59,6 +65,7 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
       );
 
       const result = await response.json();
+      console.log('Response:', { status: response.status, result });
 
       if (!response.ok) {
         if (response.status === 429) {

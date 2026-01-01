@@ -50,6 +50,12 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    console.log("Headers received:", {
+      authorization: req.headers.get("Authorization"),
+      apikey: req.headers.get("Apikey"),
+      contentType: req.headers.get("Content-Type"),
+    });
+
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_ANON_KEY") ?? "",
@@ -65,9 +71,12 @@ Deno.serve(async (req: Request) => {
       error: userError,
     } = await supabaseClient.auth.getUser();
 
+    console.log("Auth result:", { user: user?.id, error: userError?.message });
+
     if (userError || !user) {
+      console.error("Authentication failed:", userError);
       return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
+        JSON.stringify({ error: "Unauthorized", details: userError?.message }),
         {
           status: 401,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
