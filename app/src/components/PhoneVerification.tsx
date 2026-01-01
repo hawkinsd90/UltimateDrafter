@@ -52,7 +52,7 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
             'Content-Type': 'application/json',
-            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+            'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
           },
           body: JSON.stringify({ phone: phoneE164 }),
         }
@@ -106,7 +106,7 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
             'Content-Type': 'application/json',
-            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+            'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
           },
           body: JSON.stringify({ code, smsConsent }),
         }
