@@ -24,19 +24,15 @@ interface NotificationRow {
 }
 
 function calculateBackoff(attemptCount: number): number {
-  // Returns seconds to wait before next attempt
-  if (attemptCount === 1) return 60; // 1 minute
-  if (attemptCount === 2) return 300; // 5 minutes
-  if (attemptCount === 3) return 900; // 15 minutes
-  return 3600; // 60 minutes for 4+
+  if (attemptCount === 1) return 60;
+  if (attemptCount === 2) return 300;
+  if (attemptCount === 3) return 900;
+  return 3600;
 }
 
 async function sendEmail(notification: NotificationRow): Promise<{ success: boolean; error?: string; provider: string; messageId?: string }> {
-  // TODO: Replace with real SES integration when configured
-  // For now, mock the send
   console.log(`[MOCK] Sending email to ${notification.destination}: ${notification.message_text || 'Template: ' + notification.template_key}`);
 
-  // Simulate success
   return {
     success: true,
     provider: 'mock',
@@ -45,18 +41,69 @@ async function sendEmail(notification: NotificationRow): Promise<{ success: bool
 }
 
 async function sendSMS(notification: NotificationRow): Promise<{ success: boolean; error?: string; provider: string; messageId?: string }> {
-  // Telnyx is NOT ready yet - stub only
-  console.log(`[STUB] SMS to ${notification.destination}: ${notification.message_text || 'Template: ' + notification.template_key}`);
+  const telnyxApiKey = Deno.env.get("TELNYX_API_KEY");
+  const telnyxFromNumber = Deno.env.get("TELNYX_FROM_NUMBER");
 
-  return {
-    success: true,
-    provider: 'mock',
-    messageId: `mock-sms-${Date.now()}`
-  };
+  if (!telnyxApiKey || !telnyxFromNumber) {
+    console.error("Telnyx credentials not configured");
+    return {
+      success: false,
+      error: "SMS service not configured",
+      provider: 'telnyx'
+    };
+  }
+
+  const maskedDestination = notification.destination.slice(0, -4).replace(/./g, '*') + notification.destination.slice(-4);
+
+  try {
+    console.log(`Sending SMS to ${maskedDestination} via Telnyx`);
+
+    const response = await fetch('https://api.telnyx.com/v2/messages', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${telnyxApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: telnyxFromNumber,
+        to: notification.destination,
+        text: notification.message_text || 'You have a notification'
+      })
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`Telnyx API error: ${response.status} - ${errorBody}`);
+
+      return {
+        success: false,
+        error: `Telnyx error: ${response.status}`,
+        provider: 'telnyx'
+      };
+    }
+
+    const result = await response.json();
+
+    console.log(`SMS sent successfully to ${maskedDestination}, message_id: ${result.data?.id}`);
+
+    return {
+      success: true,
+      provider: 'telnyx',
+      messageId: result.data?.id || `telnyx-${Date.now()}`
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`Failed to send SMS to ${maskedDestination}:`, errorMessage);
+
+    return {
+      success: false,
+      error: errorMessage,
+      provider: 'telnyx'
+    };
+  }
 }
 
 async function sendVoice(notification: NotificationRow): Promise<{ success: boolean; error?: string; provider: string; messageId?: string }> {
-  // Telnyx is NOT ready yet - stub only
   console.log(`[STUB] Voice call to ${notification.destination}: ${notification.message_text || 'Template: ' + notification.template_key}`);
 
   return {
@@ -75,7 +122,6 @@ async function sendNotification(notification: NotificationRow): Promise<{ succes
     case 'voice':
       return await sendVoice(notification);
     case 'push':
-      // Not implemented yet
       return { success: false, error: 'Push notifications not implemented', provider: 'none' };
     default:
       return { success: false, error: `Unknown channel: ${notification.channel}`, provider: 'none' };
@@ -83,7 +129,6 @@ async function sendNotification(notification: NotificationRow): Promise<{ succes
 }
 
 function isTransientError(error: string): boolean {
-  // Classify errors as transient (retry) or permanent (fail)
   const transientPatterns = [
     'timeout',
     'network',
@@ -116,7 +161,6 @@ async function writeAuditEvent(
       });
   } catch (err) {
     console.error('Failed to write audit event:', err);
-    // Don't throw - audit failure shouldn't block notification processing
   }
 }
 
@@ -138,7 +182,6 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
 
-    // Step 1: Atomically claim pending notifications
     const now = new Date().toISOString();
 
     const { data: claimedNotifications, error: claimError } = await supabase
@@ -149,11 +192,9 @@ Deno.serve(async (req: Request) => {
       })
       .select();
 
-    // If RPC doesn't exist, fall back to manual claiming
     let notifications: NotificationRow[] = [];
 
     if (claimError && claimError.message.includes('function') && claimError.message.includes('does not exist')) {
-      // Fallback: manual claim with UPDATE...RETURNING
       console.log('Using fallback manual claim logic');
 
       const { data: pending, error: fetchError } = await supabase
@@ -215,13 +256,11 @@ Deno.serve(async (req: Request) => {
       errors: [] as string[]
     };
 
-    // Step 2: Process each notification
     for (const notification of notifications) {
       try {
         const result = await sendNotification(notification);
 
         if (result.success) {
-          // Mark as sent
           await supabase
             .from('notifications_outbox')
             .update({
@@ -247,7 +286,6 @@ Deno.serve(async (req: Request) => {
 
           results.sent++;
         } else {
-          // Handle failure
           const newAttemptCount = notification.attempt_count + 1;
           const shouldRetry = isTransientError(result.error || '') && newAttemptCount < MAX_ATTEMPTS;
 
@@ -316,7 +354,6 @@ Deno.serve(async (req: Request) => {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';
         results.errors.push(`${notification.id}: ${errorMessage}`);
 
-        // Mark as failed to avoid re-processing
         await supabase
           .from('notifications_outbox')
           .update({

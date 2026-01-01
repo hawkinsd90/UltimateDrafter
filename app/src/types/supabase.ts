@@ -411,6 +411,47 @@ export interface Database {
           updated_at?: string
         }
       }
+      user_profile: {
+        Row: {
+          user_id: string
+          phone_e164: string | null
+          phone_verified: boolean
+          phone_verified_at: string | null
+          phone_verification_sent_at: string | null
+          phone_verification_attempts: number
+          phone_verification_code_hash: string | null
+          phone_verification_expires_at: string | null
+          sms_consent: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          user_id: string
+          phone_e164?: string | null
+          phone_verified?: boolean
+          phone_verified_at?: string | null
+          phone_verification_sent_at?: string | null
+          phone_verification_attempts?: number
+          phone_verification_code_hash?: string | null
+          phone_verification_expires_at?: string | null
+          sms_consent?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          user_id?: string
+          phone_e164?: string | null
+          phone_verified?: boolean
+          phone_verified_at?: string | null
+          phone_verification_sent_at?: string | null
+          phone_verification_attempts?: number
+          phone_verification_code_hash?: string | null
+          phone_verification_expires_at?: string | null
+          sms_consent?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never

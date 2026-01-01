@@ -35,13 +35,11 @@ interface EnqueueRequest {
   messageText?: string;
 }
 
-interface UserNotificationSettings {
+interface UserProfile {
   user_id: string;
   phone_e164: string | null;
-  consent_sms: boolean;
-  consent_voice: boolean;
-  opted_out_sms: boolean;
-  opted_out_voice: boolean;
+  phone_verified: boolean;
+  sms_consent: boolean;
 }
 
 Deno.serve(async (req: Request) => {
@@ -147,7 +145,7 @@ Deno.serve(async (req: Request) => {
 
     // Resolve destination based on channel
     let destination: string | null = null;
-    let settings: UserNotificationSettings | null = null;
+    let profile: UserProfile | null = null;
 
     if (channel === 'email') {
       // Fetch email from auth.users using SERVICE_ROLE
@@ -158,15 +156,15 @@ Deno.serve(async (req: Request) => {
         destination = authUser.user.email;
       }
     } else if (channel === 'sms' || channel === 'voice') {
-      // Fetch phone and consent from user_notification_settings
+      // Fetch phone and verification status from user_profile
       const { data } = await supabaseAdmin
-        .from('user_notification_settings')
-        .select('*')
+        .from('user_profile')
+        .select('user_id, phone_e164, phone_verified, sms_consent')
         .eq('user_id', userId)
         .maybeSingle();
 
-      settings = data as UserNotificationSettings | null;
-      destination = settings?.phone_e164 || null;
+      profile = data as UserProfile | null;
+      destination = profile?.phone_e164 || null;
     }
 
     // Check if destination is available
@@ -217,37 +215,28 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Check consent for SMS/voice (email doesn't require explicit consent)
+    // Check verification and consent for SMS/voice (email doesn't require explicit consent)
     if (channel === 'sms' || channel === 'voice') {
-      let hasConsent = false;
-      let consentReason = '';
+      let isAllowed = false;
+      let blockReason = '';
 
-      if (!settings) {
-        hasConsent = false;
-        consentReason = 'No notification settings found';
-      } else if (channel === 'sms') {
-        if (!settings.consent_sms) {
-          hasConsent = false;
-          consentReason = 'SMS consent not granted';
-        } else if (settings.opted_out_sms) {
-          hasConsent = false;
-          consentReason = 'User opted out of SMS';
-        } else {
-          hasConsent = true;
-        }
+      if (!profile) {
+        isAllowed = false;
+        blockReason = 'No user profile found';
+      } else if (!profile.phone_verified) {
+        isAllowed = false;
+        blockReason = 'Phone number not verified';
+      } else if (channel === 'sms' && !profile.sms_consent) {
+        isAllowed = false;
+        blockReason = 'SMS consent not granted';
       } else if (channel === 'voice') {
-        if (!settings.consent_voice) {
-          hasConsent = false;
-          consentReason = 'Voice consent not granted';
-        } else if (settings.opted_out_voice) {
-          hasConsent = false;
-          consentReason = 'User opted out of voice';
-        } else {
-          hasConsent = true;
-        }
+        isAllowed = false;
+        blockReason = 'Voice notifications not yet supported';
+      } else {
+        isAllowed = true;
       }
 
-      if (!hasConsent) {
+      if (!isAllowed) {
         const notificationData = {
           channel,
           destination,
@@ -279,7 +268,7 @@ Deno.serve(async (req: Request) => {
             notification_id: notification.id,
             channel,
             reason: 'no_consent',
-            details: consentReason,
+            details: blockReason,
             requested_by: caller.id
           }
         });
@@ -289,7 +278,7 @@ Deno.serve(async (req: Request) => {
             success: false,
             notificationId: notification.id,
             status: 'blocked_no_consent',
-            error: consentReason
+            error: blockReason
           }),
           { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
