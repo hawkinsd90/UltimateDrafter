@@ -72,9 +72,9 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
 
       setStep('code');
       setResendCooldown(30);
+      setLoading(false);
     } catch (err) {
       setError('Failed to send code. Please try again.');
-    } finally {
       setLoading(false);
     }
   }
@@ -246,20 +246,20 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
               )}
               <button
                 onClick={handleSendCode}
-                disabled={loading || !phone || !smsConsent}
+                disabled={loading || !phone || !smsConsent || resendCooldown > 0}
                 style={{
                   flex: 1,
                   padding: '12px 24px',
-                  background: (loading || !phone || !smsConsent) ? '#9ca3af' : '#059669',
+                  background: (loading || !phone || !smsConsent || resendCooldown > 0) ? '#9ca3af' : '#059669',
                   color: 'white',
                   border: 'none',
                   borderRadius: '8px',
-                  cursor: (loading || !phone || !smsConsent) ? 'not-allowed' : 'pointer',
+                  cursor: (loading || !phone || !smsConsent || resendCooldown > 0) ? 'not-allowed' : 'pointer',
                   fontWeight: '500',
                   fontSize: '16px'
                 }}
               >
-                {loading ? 'Sending...' : 'Send Code'}
+                {loading ? 'Sending...' : resendCooldown > 0 ? `Wait ${resendCooldown}s` : 'Send Code'}
               </button>
             </div>
           </>
