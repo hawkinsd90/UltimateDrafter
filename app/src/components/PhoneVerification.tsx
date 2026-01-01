@@ -37,43 +37,32 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
     }
 
     try {
-      const { data: { session }, error: sessionError } = await supabase.auth.refreshSession();
+      console.log('Supabase URL:', import.meta.env.VITE_SUPABASE_URL);
+      console.log('Sending verification request for phone:', phoneE164);
 
-      if (sessionError || !session) {
-        console.error('Session error:', sessionError);
-        setError('Your session has expired. Please sign in again.');
+      const { data, error } = await supabase.functions.invoke('start-phone-verification', {
+        body: { phone: phoneE164 }
+      });
+
+      console.log('Invoke result:', { data, error });
+
+      if (error) {
+        if (error.message?.includes('429')) {
+          setError('Too many attempts. Please wait before trying again.');
+          setResendCooldown(30);
+        } else {
+          setError(error.message || 'Failed to send verification code');
+        }
         setLoading(false);
         return;
       }
 
-      console.log('Sending verification request with headers:', {
-        Authorization: `Bearer ${session.access_token.substring(0, 20)}...`,
-        Apikey: import.meta.env.VITE_SUPABASE_ANON_KEY ? 'present' : 'missing',
-        phone: phoneE164,
-      });
-
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/start-phone-verification`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json',
-            'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-          },
-          body: JSON.stringify({ phone: phoneE164 }),
-        }
-      );
-
-      const result = await response.json();
-      console.log('Response:', { status: response.status, result });
-
-      if (!response.ok) {
-        if (response.status === 429) {
-          setError(result.error || 'Too many attempts. Please wait before trying again.');
-          setResendCooldown(result.retryAfter || 30);
+      if (data?.error) {
+        if (data.retryAfter) {
+          setError(data.error);
+          setResendCooldown(data.retryAfter);
         } else {
-          setError(result.error || 'Failed to send verification code');
+          setError(data.error);
         }
         setLoading(false);
         return;
@@ -83,6 +72,7 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
       setResendCooldown(30);
       setLoading(false);
     } catch (err) {
+      console.error('Error sending code:', err);
       setError('Failed to send code. Please try again.');
       setLoading(false);
     }
@@ -99,34 +89,24 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
     }
 
     try {
-      const { data: { session }, error: sessionError } = await supabase.auth.refreshSession();
+      console.log('Verifying code:', code.substring(0, 2) + '****');
 
-      if (sessionError || !session) {
-        console.error('Session error:', sessionError);
-        setError('Your session has expired. Please sign in again.');
+      const { data, error } = await supabase.functions.invoke('verify-phone-code', {
+        body: { code, smsConsent }
+      });
+
+      console.log('Verify result:', { data, error });
+
+      if (error) {
+        setError(error.message || 'Failed to verify code');
         setLoading(false);
         return;
       }
 
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/verify-phone-code`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json',
-            'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-          },
-          body: JSON.stringify({ code, smsConsent }),
-        }
-      );
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        setError(result.error || 'Invalid verification code');
-        if (result.attemptsLeft !== undefined) {
-          setAttemptsLeft(result.attemptsLeft);
+      if (data?.error) {
+        setError(data.error || 'Invalid verification code');
+        if (data.attemptsLeft !== undefined) {
+          setAttemptsLeft(data.attemptsLeft);
         }
         setLoading(false);
         return;
@@ -134,6 +114,7 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
 
       onVerified();
     } catch (err) {
+      console.error('Error verifying code:', err);
       setError('Failed to verify code. Please try again.');
       setLoading(false);
     }

@@ -11,7 +11,8 @@ const MAX_VERIFY_ATTEMPTS = 10;
 
 async function hashCode(code: string): Promise<string> {
   const encoder = new TextEncoder();
-  const data = encoder.encode(code + Deno.env.get("VERIFICATION_SALT") || "default-salt");
+  const salt = Deno.env.get("VERIFICATION_SALT") ?? "default-salt";
+  const data = encoder.encode(code + salt);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
