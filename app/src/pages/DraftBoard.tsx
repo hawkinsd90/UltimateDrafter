@@ -8,6 +8,7 @@ import UserMenu from '../components/UserMenu';
 
 type Draft = Database['public']['Tables']['drafts']['Row'];
 type League = Database['public']['Tables']['leagues']['Row'];
+type DraftSettings = Database['public']['Tables']['draft_settings']['Row'];
 type Participant = Database['public']['Tables']['draft_participants']['Row'];
 type Pick = Database['public']['Tables']['draft_picks']['Row'] & {
   player?: { name: string; position: string; team: string | null };
@@ -17,6 +18,7 @@ export default function DraftBoard() {
   const { draftId } = useParams<{ draftId: string }>();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [league, setLeague] = useState<League | null>(null);
+  const [draftSettings, setDraftSettings] = useState<DraftSettings | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [picks, setPicks] = useState<Pick[]>([]);
   const [currentParticipant, setCurrentParticipant] = useState<Participant | null>(null);
@@ -38,10 +40,11 @@ export default function DraftBoard() {
       return;
     }
 
-    const [participantsRes, picksRes, leagueRes] = await Promise.all([
+    const [participantsRes, picksRes, leagueRes, settingsRes] = await Promise.all([
       supabase.from('draft_participants').select('*').eq('draft_id', draftId!).order('draft_position', { ascending: true }),
       supabase.from('draft_picks').select('*, player:players(name, position, team)').eq('draft_id', draftId!).order('pick_number', { ascending: true }),
-      supabase.from('leagues').select('*').eq('id', draftRes.data.league_id).single()
+      supabase.from('leagues').select('*').eq('id', draftRes.data.league_id).single(),
+      supabase.from('draft_settings').select('*').eq('draft_id', draftId!).maybeSingle()
     ]);
 
     setDraft(draftRes.data);
@@ -52,6 +55,7 @@ export default function DraftBoard() {
     if (participantsRes.data) setParticipants(participantsRes.data);
     if (picksRes.data) setPicks(picksRes.data as Pick[]);
     if (leagueRes.data) setLeague(leagueRes.data);
+    if (settingsRes.data) setDraftSettings(settingsRes.data);
     setLoading(false);
   }
 
@@ -166,7 +170,9 @@ export default function DraftBoard() {
     const nextPickNumber = currentPickNumber + 1;
     const nextRound = Math.ceil(nextPickNumber / participants.length);
 
-    if (draft?.draft_type === 'snake') {
+    const draftFormat = draftSettings?.draft_format || draft?.draft_type || 'snake';
+
+    if (draftFormat === 'snake') {
       const isNextRoundOdd = nextRound % 2 === 1;
 
       if (isNextRoundOdd) {
@@ -202,6 +208,13 @@ export default function DraftBoard() {
         <p style={{ margin: '0 0 10px 0' }}>
           <strong>Pick #{draft.current_pick_number}</strong>
         </p>
+        {draftSettings && (
+          <p style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#6b7280' }}>
+            {draftSettings.draft_format === 'snake' ? 'Snake' : 'Linear'} Draft •
+            {draftSettings.pick_timer_seconds === 0 ? ' Unlimited time' : ` ${draftSettings.pick_timer_seconds}s per pick`} •
+            Roster: {draftSettings.roster_qb}QB {draftSettings.roster_rb}RB {draftSettings.roster_wr}WR {draftSettings.roster_te}TE {draftSettings.roster_flex}FLEX {draftSettings.roster_k}K {draftSettings.roster_dst}DST {draftSettings.bench}Bench
+          </p>
+        )}
         {currentParticipant && (
           <p style={{ margin: '0', fontSize: '18px', color: '#059669', fontWeight: '600' }}>
             On the clock: {currentParticipant.team_name}
