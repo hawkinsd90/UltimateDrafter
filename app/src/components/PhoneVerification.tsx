@@ -37,10 +37,11 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
     }
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session }, error: sessionError } = await supabase.auth.refreshSession();
 
-      if (!session) {
-        setError('You must be signed in');
+      if (sessionError || !session) {
+        console.error('Session error:', sessionError);
+        setError('Your session has expired. Please sign in again.');
         setLoading(false);
         return;
       }
@@ -98,10 +99,11 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
     }
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session }, error: sessionError } = await supabase.auth.refreshSession();
 
-      if (!session) {
-        setError('You must be signed in');
+      if (sessionError || !session) {
+        console.error('Session error:', sessionError);
+        setError('Your session has expired. Please sign in again.');
         setLoading(false);
         return;
       }
