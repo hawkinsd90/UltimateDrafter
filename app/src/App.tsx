@@ -12,6 +12,8 @@ import CreateDraft from './pages/CreateDraft';
 import ManageParticipants from './pages/ManageParticipants';
 import DraftBoard from './pages/DraftBoard';
 import NotificationSettings from './pages/NotificationSettings';
+import Privacy from './pages/Privacy';
+import Terms from './pages/Terms';
 
 export default function App() {
   return (
@@ -29,6 +31,8 @@ export default function App() {
             <Route path="/drafts/:draftId" element={<ProtectedRoute><DraftBoard /></ProtectedRoute>} />
             <Route path="/drafts/:draftId/participants" element={<ProtectedRoute><ManageParticipants /></ProtectedRoute>} />
             <Route path="/settings/notifications" element={<ProtectedRoute><NotificationSettings /></ProtectedRoute>} />
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
           </Routes>
         </PhoneVerificationGate>
       </AuthProvider>
