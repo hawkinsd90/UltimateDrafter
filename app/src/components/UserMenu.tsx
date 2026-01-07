@@ -12,18 +12,18 @@ export default function UserMenu() {
       alignItems: 'center',
       gap: '12px',
       padding: '8px 16px',
-      background: '#f9fafb',
+      background: '#2d3748',
       borderRadius: '6px',
       fontSize: '14px'
     }}>
-      <span style={{ color: '#374151' }}>{user.email}</span>
+      <span style={{ color: '#cbd5e0' }}>{user.email}</span>
       <Link
         to="/settings/notifications"
         style={{
           padding: '6px 12px',
-          background: 'white',
-          color: '#374151',
-          border: '1px solid #d1d5db',
+          background: '#1a2332',
+          color: '#cbd5e0',
+          border: '1px solid #4a5568',
           borderRadius: '4px',
           textDecoration: 'none',
           fontSize: '14px',
@@ -36,9 +36,9 @@ export default function UserMenu() {
         onClick={signOut}
         style={{
           padding: '6px 12px',
-          background: 'white',
-          color: '#374151',
-          border: '1px solid #d1d5db',
+          background: '#1a2332',
+          color: '#cbd5e0',
+          border: '1px solid #4a5568',
           borderRadius: '4px',
           cursor: 'pointer',
           fontSize: '14px',
