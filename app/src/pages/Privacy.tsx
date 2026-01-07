@@ -19,13 +19,15 @@ export default function Privacy() {
       </section>
 
       <section style={{ marginTop: '30px' }}>
-        <h2>SMS Verification and Notifications</h2>
-        <p>We use SMS text messaging for:</p>
+        <h2>Phone Number Collection and SMS Usage</h2>
+        <p><strong>Offline4ever DraftMaster collects phone numbers solely for account security and draft-related notifications. We do not send marketing or promotional messages.</strong></p>
+        <p>We use SMS text messaging exclusively for:</p>
         <ul>
-          <li><strong>Phone Verification:</strong> We send a one-time verification code to confirm your phone number</li>
-          <li><strong>Draft Notifications:</strong> We send alerts when it's your turn to pick in a draft (if you opt in)</li>
+          <li><strong>SMS OTP Verification:</strong> We send one-time password (OTP) codes to verify your phone number and secure your account</li>
+          <li><strong>Draft Turn Notifications:</strong> We send alerts when it's your turn to pick in a draft (only if you opt in)</li>
+          <li><strong>Security Alerts:</strong> Critical account security notifications when necessary</li>
         </ul>
-        <p>By providing your phone number, you consent to receive these SMS messages. Message and data rates may apply based on your carrier's plan.</p>
+        <p>By providing your phone number and completing verification, you consent to receive these SMS messages. Message and data rates may apply based on your carrier's plan.</p>
       </section>
 
       <section style={{ marginTop: '30px' }}>
@@ -34,12 +36,18 @@ export default function Privacy() {
           <li><strong>Stop Notifications:</strong> Reply <strong>STOP</strong> to any message to opt out of draft notifications</li>
           <li><strong>Get Help:</strong> Reply <strong>HELP</strong> to receive support information</li>
         </ul>
-        <p>You can also manage notification preferences in your account settings.</p>
+        <p>You can also manage notification preferences in your account settings. For more information about our SMS practices, see our <Link to="/sms-consent" style={{ color: '#2563eb' }}>SMS Consent page</Link>.</p>
       </section>
 
       <section style={{ marginTop: '30px' }}>
         <h2>Marketing Communications</h2>
-        <p>We do not send marketing messages or promotional SMS. All text messages are transactional and related to account verification or draft activity you've explicitly opted into.</p>
+        <p><strong>We do not send marketing messages.</strong> All SMS text messages from Offline4ever DraftMaster are transactional and related exclusively to:</p>
+        <ul>
+          <li>Account verification (OTP codes)</li>
+          <li>Draft turn notifications (if opted in)</li>
+          <li>Critical security alerts</li>
+        </ul>
+        <p>We will never send promotional, advertising, or marketing messages via SMS.</p>
       </section>
 
       <section style={{ marginTop: '30px' }}>
@@ -70,11 +78,18 @@ export default function Privacy() {
 
       <section style={{ marginTop: '30px' }}>
         <h2>Contact Us</h2>
-        <p>If you have questions about this Privacy Policy, please contact us through the app or at the email address associated with your account.</p>
+        <p>If you have questions about this Privacy Policy, please contact us:</p>
+        <ul>
+          <li><strong>Email:</strong> <a href="mailto:admin@offline4ever.com" style={{ color: '#2563eb' }}>admin@offline4ever.com</a></li>
+          <li><strong>Phone:</strong> +1 (734) 358-8854</li>
+          <li><strong>Location:</strong> Wayne, Michigan, USA</li>
+        </ul>
       </section>
 
       <div style={{ marginTop: '50px', paddingTop: '20px', borderTop: '1px solid #e5e7eb' }}>
         <Link to="/terms" style={{ color: '#2563eb', textDecoration: 'none', marginRight: '20px' }}>Terms of Service</Link>
+        <Link to="/sms-consent" style={{ color: '#2563eb', textDecoration: 'none', marginRight: '20px' }}>SMS Consent</Link>
+        <Link to="/about" style={{ color: '#2563eb', textDecoration: 'none', marginRight: '20px' }}>About</Link>
         <Link to="/" style={{ color: '#2563eb', textDecoration: 'none' }}>Home</Link>
       </div>
     </div>

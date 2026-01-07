@@ -14,6 +14,8 @@ import DraftBoard from './pages/DraftBoard';
 import NotificationSettings from './pages/NotificationSettings';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
+import About from './pages/About';
+import SmsConsent from './pages/SmsConsent';
 
 export default function App() {
   return (
@@ -33,6 +35,8 @@ export default function App() {
             <Route path="/settings/notifications" element={<ProtectedRoute><NotificationSettings /></ProtectedRoute>} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
+            <Route path="/about" element={<About />} />
+            <Route path="/sms-consent" element={<SmsConsent />} />
           </Routes>
         </PhoneVerificationGate>
       </AuthProvider>

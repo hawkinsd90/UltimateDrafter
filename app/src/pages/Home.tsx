@@ -124,6 +124,36 @@ export default function Home() {
           </Link>
         )}
       </div>
+
+      <footer style={{ marginTop: '60px', paddingTop: '30px', borderTop: '2px solid #e5e7eb', maxWidth: '800px' }}>
+        <div style={{ marginBottom: '20px' }}>
+          <h3 style={{ margin: '0 0 10px 0', fontSize: '18px' }}>About Offline4ever DraftMaster</h3>
+          <p style={{ margin: '0 0 15px 0', color: '#6b7280', lineHeight: '1.6' }}>
+            A provider-agnostic fantasy sports draft engine for organizing recreational drafts.
+            <strong> We do not support gambling, wagering, paid entry, or cash prizes.</strong>
+          </p>
+        </div>
+
+        <div style={{ marginBottom: '20px', padding: '15px', background: '#f9fafb', borderRadius: '8px' }}>
+          <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', fontWeight: '600' }}>Contact Information</h4>
+          <p style={{ margin: '5px 0', fontSize: '14px', color: '#374151' }}>
+            <strong>Email:</strong> <a href="mailto:admin@offline4ever.com" style={{ color: '#2563eb', textDecoration: 'none' }}>admin@offline4ever.com</a>
+          </p>
+          <p style={{ margin: '5px 0', fontSize: '14px', color: '#374151' }}>
+            <strong>Phone:</strong> +1 (734) 358-8854
+          </p>
+          <p style={{ margin: '5px 0', fontSize: '14px', color: '#374151' }}>
+            <strong>Location:</strong> Wayne, Michigan, USA
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', fontSize: '14px' }}>
+          <Link to="/about" style={{ color: '#2563eb', textDecoration: 'none' }}>About</Link>
+          <Link to="/privacy" style={{ color: '#2563eb', textDecoration: 'none' }}>Privacy Policy</Link>
+          <Link to="/terms" style={{ color: '#2563eb', textDecoration: 'none' }}>Terms of Service</Link>
+          <Link to="/sms-consent" style={{ color: '#2563eb', textDecoration: 'none' }}>SMS Consent</Link>
+        </div>
+      </footer>
     </div>
   );
 }
