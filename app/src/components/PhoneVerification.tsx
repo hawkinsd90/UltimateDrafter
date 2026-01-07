@@ -187,17 +187,48 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
               padding: '16px',
               background: '#f3f4f6',
               borderRadius: '8px',
-              marginBottom: '20px'
+              marginBottom: '20px',
+              border: '1px solid #d1d5db'
             }}>
               <label style={{ display: 'flex', alignItems: 'start', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
                   checked={smsConsent}
                   onChange={(e) => setSmsConsent(e.target.checked)}
-                  style={{ marginTop: '2px', marginRight: '10px' }}
+                  style={{
+                    marginTop: '4px',
+                    marginRight: '10px',
+                    width: '16px',
+                    height: '16px',
+                    flexShrink: 0,
+                    cursor: 'pointer'
+                  }}
+                  required
                 />
-                <span style={{ fontSize: '14px', color: '#374151', lineHeight: '1.5' }}>
-                  I agree to receive SMS notifications for draft activity. Message and data rates may apply.
+                <span style={{ fontSize: '14px', color: '#1f2937', lineHeight: '1.6' }}>
+                  <strong>I consent to receive SMS text messages</strong> from Offline4ever DraftMaster for:
+                  <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
+                    <li>One-time password (OTP) verification codes</li>
+                    <li>Draft turn notifications</li>
+                    <li>Security alerts</li>
+                  </ul>
+                  <span style={{ fontSize: '13px', color: '#4b5563' }}>
+                    Msg &amp; data rates may apply. Reply <strong>STOP</strong> to opt out, <strong>HELP</strong> for help.
+                    We do not send marketing messages. By checking this box, you provide your express written consent.
+                    <a
+                      href="/sms-consent"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        color: '#2563eb',
+                        textDecoration: 'underline',
+                        marginLeft: '4px'
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      Learn more
+                    </a>
+                  </span>
                 </span>
               </label>
             </div>
