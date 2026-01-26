@@ -9,6 +9,7 @@ export default function Login() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [isCheckingRouting, setIsCheckingRouting] = useState(false);
+  const [smsConsent, setSmsConsent] = useState(false);
 
   const reason = searchParams.get('reason');
 
@@ -127,31 +128,93 @@ export default function Login() {
           Sign in to manage your fantasy drafts
         </p>
 
+        <div style={{
+          padding: '20px',
+          background: '#f3f4f6',
+          borderRadius: '8px',
+          marginBottom: '24px',
+          border: '1px solid #d1d5db',
+          textAlign: 'left'
+        }}>
+          <label style={{ display: 'flex', alignItems: 'start', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={smsConsent}
+              onChange={(e) => setSmsConsent(e.target.checked)}
+              style={{
+                marginTop: '4px',
+                marginRight: '12px',
+                width: '18px',
+                height: '18px',
+                flexShrink: 0,
+                cursor: 'pointer'
+              }}
+              required
+            />
+            <div style={{ fontSize: '14px', color: '#1f2937', lineHeight: '1.6' }}>
+              <strong style={{ display: 'block', marginBottom: '8px', fontSize: '15px' }}>SMS & Voice Consent</strong>
+              <p style={{ margin: '0 0 8px 0' }}>
+                I agree to receive SMS text messages and automated voice calls from Offline4ever DraftMaster for the following purposes:
+              </p>
+              <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
+                <li>One-time password (OTP) verification codes</li>
+                <li>Draft turn and draft-related notifications</li>
+                <li>Account security alerts</li>
+              </ul>
+              <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: '#4b5563' }}>
+                Message frequency varies. Message and data rates may apply.
+                Reply STOP to opt out at any time or HELP for help.
+              </p>
+              <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: '#4b5563' }}>
+                Offline4ever DraftMaster does not send marketing or promotional messages.
+              </p>
+              <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: '#4b5563' }}>
+                By checking this box, I provide my express written consent to receive these communications.
+              </p>
+            </div>
+          </label>
+        </div>
+
         <button
-          onClick={() => signInWithGoogle()}
+          onClick={() => {
+            if (smsConsent) {
+              sessionStorage.setItem('pending_sms_consent', JSON.stringify({
+                consent: true,
+                timestamp: new Date().toISOString(),
+                source: 'login_screen'
+              }));
+              signInWithGoogle();
+            }
+          }}
+          disabled={!smsConsent}
           style={{
             width: '100%',
             padding: '12px 24px',
-            background: 'white',
-            color: '#374151',
-            border: '1px solid #d1d5db',
+            background: smsConsent ? 'white' : '#e5e7eb',
+            color: smsConsent ? '#374151' : '#9ca3af',
+            border: `1px solid ${smsConsent ? '#d1d5db' : '#d1d5db'}`,
             borderRadius: '6px',
-            cursor: 'pointer',
+            cursor: smsConsent ? 'pointer' : 'not-allowed',
             fontWeight: '500',
             fontSize: '16px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             gap: '12px',
-            transition: 'all 0.2s'
+            transition: 'all 0.2s',
+            opacity: smsConsent ? 1 : 0.6
           }}
           onMouseOver={(e) => {
-            e.currentTarget.style.background = '#f9fafb';
-            e.currentTarget.style.borderColor = '#9ca3af';
+            if (smsConsent) {
+              e.currentTarget.style.background = '#f9fafb';
+              e.currentTarget.style.borderColor = '#9ca3af';
+            }
           }}
           onMouseOut={(e) => {
-            e.currentTarget.style.background = 'white';
-            e.currentTarget.style.borderColor = '#d1d5db';
+            if (smsConsent) {
+              e.currentTarget.style.background = 'white';
+              e.currentTarget.style.borderColor = '#d1d5db';
+            }
           }}
         >
           <svg width="20" height="20" viewBox="0 0 24 24">

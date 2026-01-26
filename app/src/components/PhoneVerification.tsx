@@ -92,7 +92,12 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
       console.log('Verifying code:', code.substring(0, 2) + '****');
 
       const { data, error } = await supabase.functions.invoke('verify-phone-code', {
-        body: { code, smsConsent }
+        body: {
+          code,
+          smsConsent,
+          consentTimestamp: new Date().toISOString(),
+          consentSource: 'phone_verification'
+        }
       });
 
       console.log('Verify result:', { data, error });
@@ -205,31 +210,27 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
                   }}
                   required
                 />
-                <span style={{ fontSize: '14px', color: '#1f2937', lineHeight: '1.6' }}>
-                  <strong>I consent to receive SMS text messages</strong> from Offline4ever DraftMaster for:
+                <div style={{ fontSize: '14px', color: '#1f2937', lineHeight: '1.6' }}>
+                  <strong style={{ display: 'block', marginBottom: '8px' }}>SMS & Voice Consent</strong>
+                  <p style={{ margin: '0 0 8px 0' }}>
+                    I agree to receive SMS text messages and automated voice calls from Offline4ever DraftMaster for the following purposes:
+                  </p>
                   <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
                     <li>One-time password (OTP) verification codes</li>
-                    <li>Draft turn notifications</li>
-                    <li>Security alerts</li>
+                    <li>Draft turn and draft-related notifications</li>
+                    <li>Account security alerts</li>
                   </ul>
-                  <span style={{ fontSize: '13px', color: '#4b5563' }}>
-                    Msg &amp; data rates may apply. Reply <strong>STOP</strong> to opt out, <strong>HELP</strong> for help.
-                    We do not send marketing messages. By checking this box, you provide your express written consent.
-                    <a
-                      href="/sms-consent"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{
-                        color: '#2563eb',
-                        textDecoration: 'underline',
-                        marginLeft: '4px'
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      Learn more
-                    </a>
-                  </span>
-                </span>
+                  <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: '#4b5563' }}>
+                    Message frequency varies. Message and data rates may apply.
+                    Reply STOP to opt out at any time or HELP for help.
+                  </p>
+                  <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: '#4b5563' }}>
+                    Offline4ever DraftMaster does not send marketing or promotional messages.
+                  </p>
+                  <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: '#4b5563' }}>
+                    By checking this box, I provide my express written consent to receive these communications.
+                  </p>
+                </div>
               </label>
             </div>
 

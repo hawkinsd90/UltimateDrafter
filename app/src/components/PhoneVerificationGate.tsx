@@ -14,11 +14,38 @@ export default function PhoneVerificationGate({ children }: PhoneVerificationGat
 
   useEffect(() => {
     if (user) {
-      loadProfile();
+      saveConsentAndLoadProfile();
     } else {
       setLoading(false);
     }
   }, [user]);
+
+  async function saveConsentAndLoadProfile() {
+    if (!user) return;
+
+    try {
+      const pendingConsent = sessionStorage.getItem('pending_sms_consent');
+      if (pendingConsent) {
+        const consentData = JSON.parse(pendingConsent);
+
+        await supabase
+          .from('user_profile')
+          .update({
+            sms_consent: consentData.consent,
+            sms_consent_timestamp: consentData.timestamp,
+            sms_consent_source: consentData.source
+          })
+          .eq('user_id', user.id);
+
+        sessionStorage.removeItem('pending_sms_consent');
+      }
+
+      await loadProfile();
+    } catch (err) {
+      console.error('Failed to save consent:', err);
+      setLoading(false);
+    }
+  }
 
   async function loadProfile() {
     if (!user) return;

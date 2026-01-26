@@ -63,7 +63,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const { code, smsConsent } = await req.json();
+    const { code, smsConsent, consentTimestamp, consentSource } = await req.json();
 
     if (!code || typeof code !== "string" || !/^\d{6}$/.test(code)) {
       return new Response(
@@ -156,7 +156,11 @@ Deno.serve(async (req: Request) => {
     if (smsConsent === true) {
       await supabaseAdmin
         .from("user_profile")
-        .update({ sms_consent: true })
+        .update({
+          sms_consent: true,
+          sms_consent_timestamp: consentTimestamp || new Date().toISOString(),
+          sms_consent_source: consentSource || 'phone_verification'
+        })
         .eq("user_id", user.id);
     }
 
