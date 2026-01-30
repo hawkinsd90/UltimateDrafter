@@ -21,6 +21,65 @@ export default function SmsConsent() {
       </section>
 
       <section style={{ marginTop: '30px' }}>
+        <h2 style={{ color: '#ffffff' }}>Visual Proof of SMS Opt-In & Phone Verification</h2>
+        <p>Below is a screenshot of the actual phone verification and SMS consent interface that users see in the application:</p>
+
+        <div style={{
+          marginTop: '20px',
+          marginBottom: '20px',
+          background: '#2d3748',
+          padding: '20px',
+          borderRadius: '8px',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center'
+        }}>
+          <img
+            src="/image.png"
+            alt="Phone verification modal showing phone number input field, SMS & Voice Consent checkbox with full consent language including purposes (OTP verification, draft notifications, security alerts), message frequency notice, STOP/HELP instructions, no marketing statement, and express written consent confirmation. Send Code button is visible at the bottom."
+            style={{
+              maxWidth: '100%',
+              height: 'auto',
+              borderRadius: '8px',
+              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)'
+            }}
+          />
+        </div>
+
+        <p style={{
+          fontSize: '14px',
+          fontStyle: 'italic',
+          color: '#9ca3af',
+          marginTop: '10px',
+          padding: '15px',
+          background: '#2d3748',
+          borderRadius: '6px',
+          borderLeft: '4px solid #10b981'
+        }}>
+          <strong style={{ color: '#10b981' }}>Caption:</strong> After authentication, users are required to enter their phone number and explicitly confirm SMS & voice consent before receiving a one-time password (OTP). No messages are sent until this step is completed.
+        </p>
+
+        <div style={{
+          marginTop: '20px',
+          padding: '20px',
+          background: '#2d3748',
+          borderRadius: '8px',
+          border: '1px solid #4a5568'
+        }}>
+          <h3 style={{ color: '#ffffff', marginTop: '0', marginBottom: '15px' }}>Complete Consent Flow Sequence</h3>
+          <ol style={{ lineHeight: '1.8', color: '#cbd5e0' }}>
+            <li><strong style={{ color: '#10b981' }}>Pre-Authentication Consent (Login Screen):</strong> Users must check the SMS & Voice consent checkbox on the login screen before they can authenticate with Google. This ensures consent is obtained before account creation.</li>
+            <li><strong style={{ color: '#10b981' }}>Authentication:</strong> After providing consent, users complete Google authentication.</li>
+            <li><strong style={{ color: '#10b981' }}>Phone Number Collection (Post-Authentication):</strong> Once authenticated, users are presented with the phone verification modal (shown above) where they enter their phone number and reconfirm their consent.</li>
+            <li><strong style={{ color: '#10b981' }}>OTP Verification:</strong> Only after the user clicks "Send Code" with consent confirmed is an OTP message sent to their phone number for verification.</li>
+          </ol>
+          <p style={{ marginTop: '15px', marginBottom: '0', color: '#9ca3af', fontSize: '14px' }}>
+            This multi-step process ensures explicit, informed consent at multiple touchpoints before any SMS or voice communication occurs.
+          </p>
+        </div>
+      </section>
+
+      <section style={{ marginTop: '30px' }}>
         <h2 style={{ color: '#ffffff' }}>What Messages We Send</h2>
         <p><strong style={{ color: '#ffffff' }}>Offline4ever DraftMaster collects phone numbers solely for account security and draft-related notifications. We do not send marketing messages.</strong></p>
 
