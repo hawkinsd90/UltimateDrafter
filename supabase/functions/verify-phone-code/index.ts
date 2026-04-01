@@ -28,6 +28,8 @@ Deno.serve(async (req: Request) => {
 
   try {
     const authHeader = req.headers.get("Authorization");
+    console.log("[verify-phone-code] Authorization header present:", !!authHeader);
+
     if (!authHeader) {
       return new Response(
         JSON.stringify({ error: "Missing authorization header" }),
@@ -38,24 +40,24 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    console.log("[verify-phone-code] Bearer token extracted, length:", accessToken.length);
+
     const supabaseClient = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-      {
-        global: {
-          headers: { Authorization: authHeader },
-        },
-      }
     );
 
     const {
       data: { user },
       error: userError,
-    } = await supabaseClient.auth.getUser();
+    } = await supabaseClient.auth.getUser(accessToken);
+
+    console.log("[verify-phone-code] getUser result - user:", !!user, "error:", userError?.message ?? null);
 
     if (userError || !user) {
       return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
+        JSON.stringify({ error: "Unauthorized", details: userError?.message }),
         {
           status: 401,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
