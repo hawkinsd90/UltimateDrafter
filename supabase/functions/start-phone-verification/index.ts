@@ -170,11 +170,12 @@ Deno.serve(async (req: Request) => {
       user_id: user.id,
       notification_type: "phone_verification",
       channel: "sms",
-      recipient: phoneE164,
-      message: `Your DraftMaster verification code is: ${code}. This code expires in 10 minutes.`,
+      destination: phoneE164,
+      message_text: `Your DraftMaster verification code is: ${code}. This code expires in 10 minutes.`,
       metadata: {
         code_type: "verification",
       },
+      next_attempt_at: new Date().toISOString(),
     });
 
     console.log(`Verification code sent to ${phoneE164.slice(0, -4).replace(/./g, "*")}${phoneE164.slice(-4)}`);

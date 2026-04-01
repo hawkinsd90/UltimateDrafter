@@ -53,7 +53,19 @@ async function sendSMS(notification: NotificationRow): Promise<{ success: boolea
     };
   }
 
-  const maskedDestination = notification.destination.slice(0, -4).replace(/./g, '*') + notification.destination.slice(-4);
+  const resolvedDestination = notification.destination || (notification as any).recipient || null;
+  const resolvedText = notification.message_text || (notification as any).message || null;
+
+  if (!resolvedDestination || !resolvedText) {
+    console.error(`[process-notifications-outbox] Missing destination or message_text for notification ${notification.id}`);
+    return {
+      success: false,
+      error: "Missing destination or message_text",
+      provider: 'telnyx'
+    };
+  }
+
+  const maskedDestination = resolvedDestination.slice(0, -4).replace(/./g, '*') + resolvedDestination.slice(-4);
 
   try {
     console.log(`Sending SMS to ${maskedDestination} via Telnyx`);
@@ -66,8 +78,8 @@ async function sendSMS(notification: NotificationRow): Promise<{ success: boolea
       },
       body: JSON.stringify({
         from: telnyxFromNumber,
-        to: notification.destination,
-        text: notification.message_text || 'You have a notification'
+        to: resolvedDestination,
+        text: resolvedText
       })
     });
 
