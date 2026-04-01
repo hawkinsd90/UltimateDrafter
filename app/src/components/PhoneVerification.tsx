@@ -37,11 +37,18 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
     }
 
     try {
-      console.log('Supabase URL:', import.meta.env.VITE_SUPABASE_URL);
-      console.log('Sending verification request for phone:', phoneE164);
+      await supabase.auth.refreshSession();
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        setError('Your session has expired. Please sign in again.');
+        setLoading(false);
+        return;
+      }
 
       const { data, error } = await supabase.functions.invoke('start-phone-verification', {
-        body: { phone: phoneE164 }
+        body: { phone: phoneE164 },
+        headers: { Authorization: `Bearer ${session.access_token}` }
       });
 
       console.log('Invoke result:', { data, error });
@@ -89,7 +96,14 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
     }
 
     try {
-      console.log('Verifying code:', code.substring(0, 2) + '****');
+      await supabase.auth.refreshSession();
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        setError('Your session has expired. Please sign in again.');
+        setLoading(false);
+        return;
+      }
 
       const { data, error } = await supabase.functions.invoke('verify-phone-code', {
         body: {
@@ -97,7 +111,8 @@ export default function PhoneVerification({ onVerified, onSkip }: PhoneVerificat
           smsConsent,
           consentTimestamp: new Date().toISOString(),
           consentSource: 'phone_verification'
-        }
+        },
+        headers: { Authorization: `Bearer ${session.access_token}` }
       });
 
       console.log('Verify result:', { data, error });
