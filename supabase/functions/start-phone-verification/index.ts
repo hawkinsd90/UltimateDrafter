@@ -166,7 +166,7 @@ Deno.serve(async (req: Request) => {
       p_expires_at: expiresAt,
     });
 
-    await supabaseAdmin.from("notifications_outbox").insert({
+    const { error: insertError } = await supabaseAdmin.from("notifications_outbox").insert({
       user_id: user.id,
       notification_type: "phone_verification",
       channel: "sms",
@@ -177,6 +177,13 @@ Deno.serve(async (req: Request) => {
       },
       next_attempt_at: new Date().toISOString(),
     });
+
+    if (insertError) {
+      console.error("[start-phone-verification] notifications_outbox insert failed:", insertError.message, insertError.details, insertError.hint);
+      throw new Error(`Failed to queue verification SMS: ${insertError.message}`);
+    }
+
+    console.log("[start-phone-verification] notifications_outbox row inserted for user:", user.id);
 
     console.log(`Verification code sent to ${phoneE164.slice(0, -4).replace(/./g, "*")}${phoneE164.slice(-4)}`);
 
