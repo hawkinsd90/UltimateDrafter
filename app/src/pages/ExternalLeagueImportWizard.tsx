@@ -26,6 +26,16 @@ interface ImportSummary {
   warnings: string[];
 }
 
+interface ExistingImport {
+  linkId: string;
+  provider: string;
+  displayName: string;
+  importStatus: string;
+  externalSeason: number;
+  teamsImported: number;
+  rosterPlayersImported: number;
+}
+
 const CURRENT_YEAR = new Date().getFullYear();
 
 const IMPORT_MODE_LABELS: Record<ImportMode, { label: string; description: string }> = {
@@ -40,6 +50,7 @@ export default function ExternalLeagueImportWizard() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [loadingDraft, setLoadingDraft] = useState(true);
   const [draftError, setDraftError] = useState('');
+  const [existingImport, setExistingImport] = useState<ExistingImport | null>(null);
 
   const [provider, setProvider] = useState<Provider>('espn');
   const [leagueId, setLeagueId] = useState('');
@@ -66,9 +77,40 @@ export default function ExternalLeagueImportWizard() {
       .maybeSingle();
     if (!data) {
       setDraftError('Draft not found.');
-    } else {
-      setDraft(data);
+      setLoadingDraft(false);
+      return;
     }
+    setDraft(data);
+
+    // Check for an existing import link
+    const { data: link } = await supabase
+      .from('external_league_links')
+      .select('id, provider, display_name, import_status, external_season')
+      .eq('draft_id', draftId!)
+      .maybeSingle();
+
+    if (link) {
+      const { count: teamsCount } = await supabase
+        .from('external_league_teams')
+        .select('id', { count: 'exact', head: true })
+        .eq('link_id', link.id);
+
+      const { count: rosterCount } = await supabase
+        .from('external_roster_players')
+        .select('id', { count: 'exact', head: true })
+        .eq('link_id', link.id);
+
+      setExistingImport({
+        linkId: link.id,
+        provider: link.provider,
+        displayName: link.display_name ?? '',
+        importStatus: link.import_status,
+        externalSeason: link.external_season,
+        teamsImported: teamsCount ?? 0,
+        rosterPlayersImported: rosterCount ?? 0,
+      });
+    }
+
     setLoadingDraft(false);
   }
 
@@ -181,12 +223,9 @@ export default function ExternalLeagueImportWizard() {
           <Link to={`/drafts/${draftId}/participants`} style={styles.btnSecondary}>
             Back to Participants
           </Link>
-          <span
-            title="Team mapping coming soon"
-            style={{ ...styles.btnDisabled }}
-          >
-            Next: Map Teams (coming soon)
-          </span>
+          <Link to={`/drafts/${draftId}/map-teams`} style={styles.btnPrimary as React.CSSProperties & { display: string; textDecoration: string; textAlign: 'center' }}>
+            Next: Map Teams
+          </Link>
         </div>
       </div>
     );
@@ -206,6 +245,30 @@ export default function ExternalLeagueImportWizard() {
       <p style={{ margin: '0 0 28px 0', color: '#9ca3af', fontSize: '13px' }}>
         ESPN and Sleeper imports are supported.
       </p>
+
+      {existingImport && (
+        <div style={{ padding: '14px 16px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+            <div>
+              <div style={{ fontWeight: '600', fontSize: '14px', color: '#14532d' }}>
+                Import exists: {existingImport.displayName}
+              </div>
+              <div style={{ fontSize: '13px', color: '#166534', marginTop: '3px' }}>
+                {existingImport.provider.toUpperCase()} · Season {existingImport.externalSeason} · {existingImport.teamsImported} teams · {existingImport.rosterPlayersImported} roster players · Status: {existingImport.importStatus}
+              </div>
+            </div>
+            <Link
+              to={`/drafts/${draftId}/map-teams`}
+              style={{ padding: '8px 16px', background: '#16a34a', color: '#fff', borderRadius: '6px', fontWeight: '600', fontSize: '14px', textDecoration: 'none', whiteSpace: 'nowrap' }}
+            >
+              Go to Map Teams
+            </Link>
+          </div>
+          <div style={{ marginTop: '10px', fontSize: '12px', color: '#166534' }}>
+            Re-submitting the form below will replace this import.
+          </div>
+        </div>
+      )}
 
       {submitError && (
         <div style={{ ...styles.errorBox, marginBottom: '20px' }}>
@@ -346,7 +409,7 @@ export default function ExternalLeagueImportWizard() {
         <button
           type="submit"
           disabled={submitting}
-          style={submitting ? styles.btnDisabled : styles.btnPrimary}
+          style={submitting ? styles.btnDisabled : styles.btnPrimaryFull}
         >
           {submitting ? 'Importing...' : 'Import League'}
         </button>
@@ -474,6 +537,20 @@ const styles = {
   } as React.CSSProperties,
 
   btnPrimary: {
+    display: 'inline-block',
+    padding: '11px 20px',
+    background: '#2563eb',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: '8px',
+    fontWeight: '600',
+    fontSize: '15px',
+    cursor: 'pointer',
+    textDecoration: 'none',
+    textAlign: 'center',
+  } as React.CSSProperties,
+
+  btnPrimaryFull: {
     width: '100%',
     padding: '13px',
     background: '#2563eb',
