@@ -593,6 +593,3 @@ const s = {
   btnDisabled: { display: 'inline-block', padding: '11px 20px', background: '#f3f4f6', color: '#9ca3af', border: '1px solid #e5e7eb', borderRadius: '8px', fontWeight: '600', fontSize: '15px', cursor: 'not-allowed', textDecoration: 'none' } as React.CSSProperties,
   linkBlue: { color: '#2563eb', textDecoration: 'none', fontSize: '14px' } as React.CSSProperties,
 } as const;
-
-
-export default TeamMapping
