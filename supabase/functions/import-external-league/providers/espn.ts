@@ -10,6 +10,10 @@
 import type { NormalizedImport, NormalizedTeam, NormalizedRosterPlayer } from "../shared/types.ts";
 import { espnRosterSettings, espnScoringType, espnPositionLabel } from "../shared/normalize.ts";
 
+function getString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 type EspnParams =
   | { leagueId: string; season: number; isPrivate: false }
   | { leagueId: string; season: number; isPrivate: true; swid: string; espnS2: string };
@@ -116,12 +120,14 @@ function normalizeEspnResponse(
   const scoringSettings = (settings?.scoringSettings as unknown) ?? undefined;
   const scoringType = espnScoringType(scoringSettings);
 
-  // Store only safe scoring data — the scoring settings map contains stat multipliers,
-  // not credentials, so it is safe to snapshot.
+  // Store only safe scoring data — stat multipliers only, no credentials.
+  // Preserve array shape when ESPN returns array-form scoring settings.
   const rawScoringSettings: Record<string, unknown> =
-    typeof scoringSettings === "object" && scoringSettings !== null && !Array.isArray(scoringSettings)
-      ? (scoringSettings as Record<string, unknown>)
-      : {};
+    Array.isArray(scoringSettings)
+      ? { scoringItems: scoringSettings }
+      : typeof scoringSettings === "object" && scoringSettings !== null
+        ? (scoringSettings as Record<string, unknown>)
+        : {};
 
   // ── Members map: espn userId → display name ─────────────────────────────────
   const membersRaw = Array.isArray(data?.members) ? (data.members as unknown[]) : [];
@@ -209,18 +215,16 @@ function normalizeEspnResponse(
         continue;
       }
 
-      // Player name: try multiple known nesting paths safely
+      // Player name: try multiple known nesting paths safely with explicit getString()
       const playerPoolEntry = entry?.playerPoolEntry as Record<string, unknown> | undefined;
       const innerPlayerPool = playerPoolEntry?.playerPoolEntry as Record<string, unknown> | undefined;
       const directPlayer = playerPoolEntry?.player as Record<string, unknown> | undefined;
       const innerPlayer = innerPlayerPool?.player as Record<string, unknown> | undefined;
 
-      const fullName: string =
-        directPlayer?.fullName as string ||
-        innerPlayer?.fullName as string ||
-        playerPoolEntry?.onTeamId != null
-          ? "" // onTeamId present but no name found — will be unresolved
-          : "";
+      const fullName =
+        getString(directPlayer?.fullName) ||
+        getString(innerPlayer?.fullName) ||
+        "";
 
       // defaultPositionId may be on player or playerPoolEntry
       const defaultPositionId: unknown =

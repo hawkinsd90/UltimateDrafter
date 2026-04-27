@@ -13,6 +13,7 @@ import type {
   PlayerMappingResult,
   Provider,
 } from "./types.ts";
+import { normalizePosition } from "./normalize.ts";
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 interface MappingCacheRow {
@@ -139,9 +140,10 @@ export async function mapRosterPlayers(
       }
     }
 
-    // ── auto_name: exact LOWER(display_name) + position ───────────────────────
+    // ── auto_name: exact LOWER(display_name) + normalized position ────────────
+    const normalizedPos = normalizePosition(position);
     if (playerName && playerName.trim() !== "") {
-      const nameMatch = await matchByName(playerName, position, adminClient);
+      const nameMatch = await matchByName(playerName, normalizedPos, adminClient);
       if (nameMatch) {
         newMappings.push({
           provider,
@@ -170,7 +172,7 @@ export async function mapRosterPlayers(
 
     // ── fuzzy: trigram similarity (skip gracefully if pg_trgm unavailable) ────
     if (trgmAvailable && playerName && playerName.trim() !== "") {
-      const fuzzyMatch = await matchByFuzzy(playerName, position, adminClient);
+      const fuzzyMatch = await matchByFuzzy(playerName, normalizedPos, adminClient);
       if (fuzzyMatch) {
         newMappings.push({
           provider,
@@ -210,13 +212,14 @@ export async function mapRosterPlayers(
   }
 
   // ── Batch-upsert new mappings ─────────────────────────────────────────────
+  // ignoreDuplicates: true — never overwrite an existing mapping during auto-import.
+  // Manual correction is handled in Phase 3/4 via a deliberate UI flow.
   if (newMappings.length > 0) {
-    // onConflict = (provider, external_player_id): update mapping if method or player changed
     await adminClient
       .from("external_player_mappings")
       .upsert(newMappings, {
         onConflict: "provider,external_player_id",
-        ignoreDuplicates: false,
+        ignoreDuplicates: true,
       });
   }
 
@@ -255,9 +258,6 @@ async function matchByFuzzy(
   adminClient: SupabaseClient
 ): Promise<{ id: string; similarity: number } | null> {
   try {
-    // Use Supabase RPC or raw SQL via the admin client
-    // We call a raw query through the admin postgres connection
-    const posFilter = position ? `AND fantasy_position = '${position.replace(/'/g, "''")}'` : "";
     const { data, error } = await adminClient.rpc("find_player_by_similarity", {
       p_name: playerName,
       p_position: position ?? null,

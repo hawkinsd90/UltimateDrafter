@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 import { validateRequest, isValidationError } from "./shared/validation.ts";
+import { verifyImportAccess, isAccessDenied } from "./shared/access.ts";
 import { saveImport } from "./shared/save-import.ts";
 import { mapRosterPlayers } from "./shared/player-mapping.ts";
 import { fetchEspnLeague } from "./providers/espn.ts";
@@ -65,9 +66,16 @@ Deno.serve(async (req: Request) => {
 
     const { draftId, importMode, params } = validated;
 
+    // ── Preflight: verify ownership and draft status before any network call ──
+    const access = await verifyImportAccess(draftId, user.id, adminClient);
+    if (isAccessDenied(access)) {
+      return jsonResponse({ error: access.message }, access.status);
+    }
+
     console.log(JSON.stringify({
       event: "import_start",
       draftId,
+      leagueId: access.leagueId,
       provider: params.provider,
       importMode,
       // Safe: boolean presence only for ESPN credentials
