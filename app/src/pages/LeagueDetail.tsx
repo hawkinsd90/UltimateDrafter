@@ -429,7 +429,7 @@ export default function LeagueDetail() {
                   <div>
                     <h3 style={{ margin: '0 0 5px 0' }}>{draft.name}</h3>
                     <p style={{ margin: '0', color: '#6b7280', fontSize: '14px' }}>
-                      Status: {draft.status} • Type: {draft.draft_type}
+                      Status: {draft.status.replace('_', ' ')} • Type: {draft.draft_type}
                     </p>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
