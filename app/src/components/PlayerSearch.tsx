@@ -14,6 +14,9 @@ type DraftPoolPlayer = {
   years_exp: number | null;
 };
 
+// Three distinct unavailability reasons — ordered by priority for display
+type UnavailableReason = 'picked' | 'keeper' | 'excluded';
+
 interface PlayerSearchProps {
   draftId: string;
   onSelectPlayer: (playerId: string) => void;
@@ -30,16 +33,27 @@ const INJURY_COLORS: Record<string, string> = {
   'IR':           '#7c3aed',
 };
 
+const UNAVAILABLE_LABEL: Record<UnavailableReason, string> = {
+  picked:   'Picked',
+  keeper:   'Keeper',
+  excluded: 'Unavailable',
+};
+
 export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: PlayerSearchProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [positionFilter, setPositionFilter] = useState<PositionFilter>('All');
   const [players, setPlayers] = useState<DraftPoolPlayer[]>([]);
-  const [pickedPlayerIds, setPickedPlayerIds] = useState<Set<string>>(new Set());
+
+  // Three separate sets — loaded once on mount, refreshed whenever the modal opens
+  const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
+  const [keeperIds, setKeeperIds] = useState<Set<string>>(new Set());
+  const [excludedIds, setExcludedIds] = useState<Set<string>>(new Set());
+
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    loadPickedPlayers();
+    loadUnavailableSets();
   }, [draftId]);
 
   useEffect(() => {
@@ -52,16 +66,26 @@ export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: Playe
     };
   }, [searchTerm, positionFilter]);
 
-  async function loadPickedPlayers() {
-    const { data } = await supabase
-      .from('draft_picks')
-      .select('player_id')
-      .eq('draft_id', draftId)
-      .not('player_id', 'is', null);
+  async function loadUnavailableSets() {
+    const [picksRes, keepersRes, exclusionsRes] = await Promise.all([
+      supabase
+        .from('draft_picks')
+        .select('player_id')
+        .eq('draft_id', draftId)
+        .not('player_id', 'is', null),
+      supabase
+        .from('draft_keeper_assignments')
+        .select('sports_player_id')
+        .eq('draft_id', draftId),
+      supabase
+        .from('draft_player_exclusions')
+        .select('sports_player_id')
+        .eq('draft_id', draftId),
+    ]);
 
-    if (data) {
-      setPickedPlayerIds(new Set(data.map(p => p.player_id!)));
-    }
+    setPickedIds(new Set((picksRes.data ?? []).map(p => p.player_id as string)));
+    setKeeperIds(new Set((keepersRes.data ?? []).map(k => k.sports_player_id as string)));
+    setExcludedIds(new Set((exclusionsRes.data ?? []).map(e => e.sports_player_id as string)));
   }
 
   async function searchPlayers() {
@@ -88,6 +112,14 @@ export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: Playe
     const { data } = await query;
     setPlayers((data as DraftPoolPlayer[]) ?? []);
     setLoading(false);
+  }
+
+  // Returns the highest-priority unavailability reason for a player, or null if available.
+  function getUnavailableReason(playerId: string): UnavailableReason | null {
+    if (pickedIds.has(playerId)) return 'picked';
+    if (keeperIds.has(playerId)) return 'keeper';
+    if (excludedIds.has(playerId)) return 'excluded';
+    return null;
   }
 
   const showResults = searchTerm.length >= 2 || positionFilter !== 'All';
@@ -175,23 +207,24 @@ export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: Playe
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {players.map(player => {
-              const isPicked = pickedPlayerIds.has(player.id);
+              const unavailableReason = getUnavailableReason(player.id);
+              const isUnavailable = unavailableReason !== null;
               const injuryLabel = player.injury_status;
               const injuryColor = injuryLabel ? (INJURY_COLORS[injuryLabel] ?? '#64748b') : null;
 
               return (
                 <button
                   key={player.id}
-                  onClick={() => !isPicked && onSelectPlayer(player.id)}
-                  disabled={isPicked}
+                  onClick={() => !isUnavailable && onSelectPlayer(player.id)}
+                  disabled={isUnavailable}
                   style={{
                     padding: '11px 14px',
                     border: '1px solid #e2e8f0',
                     borderRadius: '7px',
-                    background: isPicked ? '#f8fafc' : 'white',
-                    cursor: isPicked ? 'not-allowed' : 'pointer',
+                    background: isUnavailable ? '#f8fafc' : 'white',
+                    cursor: isUnavailable ? 'not-allowed' : 'pointer',
                     textAlign: 'left',
-                    opacity: isPicked ? 0.5 : 1,
+                    opacity: isUnavailable ? 0.5 : 1,
                     display: 'flex', alignItems: 'center', gap: '12px',
                   }}
                 >
@@ -214,9 +247,16 @@ export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: Playe
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: '600', fontSize: '14px', color: '#0f172a' }}>
                         {player.display_name}
-                        {isPicked && <span style={{ marginLeft: '6px', fontSize: '12px', color: '#94a3b8' }}>(Picked)</span>}
                       </span>
-                      {injuryLabel && injuryColor && (
+                      {unavailableReason && (
+                        <span style={{
+                          fontSize: '11px', fontWeight: '700', padding: '1px 7px', borderRadius: '4px',
+                          ...unavailableBadgeStyle(unavailableReason),
+                        }}>
+                          {UNAVAILABLE_LABEL[unavailableReason]}
+                        </span>
+                      )}
+                      {injuryLabel && injuryColor && !unavailableReason && (
                         <span style={{ fontSize: '11px', fontWeight: '600', color: injuryColor }}>
                           {injuryLabel}
                         </span>
@@ -247,6 +287,14 @@ export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: Playe
       </div>
     </div>
   );
+}
+
+function unavailableBadgeStyle(reason: UnavailableReason): React.CSSProperties {
+  switch (reason) {
+    case 'picked':   return { background: '#dbeafe', color: '#1e40af' };
+    case 'keeper':   return { background: '#dcfce7', color: '#166534' };
+    case 'excluded': return { background: '#fef2f2', color: '#991b1b' };
+  }
 }
 
 function positionBadgeBg(pos: string | null): string {
