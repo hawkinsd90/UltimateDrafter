@@ -383,8 +383,18 @@ export default function TeamMapping() {
       )}
 
       {participants.length === 0 && (
-        <div style={{ padding: '14px 16px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', color: '#92400e', fontSize: '14px', marginBottom: '20px' }}>
-          No draft participants found. <Link to={`/drafts/${draftId}/participants`} style={{ color: '#92400e', fontWeight: '600' }}>Add participants</Link> before mapping teams.
+        <div style={{ padding: '16px 18px', background: '#fffbeb', border: '2px solid #f59e0b', borderRadius: '8px', color: '#92400e', fontSize: '14px', marginBottom: '24px' }}>
+          <div style={{ fontWeight: '700', marginBottom: '6px', fontSize: '15px' }}>No draft participants found</div>
+          <div style={{ marginBottom: '12px' }}>
+            You need to add participants to this draft before you can map imported teams to them.
+            You can still set ignore options below and come back to map teams after adding participants.
+          </div>
+          <Link
+            to={`/drafts/${draftId}/participants`}
+            style={{ display: 'inline-block', padding: '8px 16px', background: '#d97706', color: '#fff', borderRadius: '6px', fontWeight: '700', fontSize: '14px', textDecoration: 'none' }}
+          >
+            Add Participants Now
+          </Link>
         </div>
       )}
 
@@ -411,10 +421,20 @@ export default function TeamMapping() {
                   value="map"
                   current={d.action}
                   label="Map to participant"
+                  description={participants.length === 0 ? 'No participants added yet — add participants first.' : undefined}
                   onChange={setDecision}
-                  disabled={!isOwner}
+                  disabled={!isOwner || participants.length === 0}
                 />
-                {d.action === 'map' && (
+                {d.action === 'map' && participants.length === 0 && (
+                  <div style={{ marginLeft: '28px', padding: '10px 14px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', fontSize: '13px', color: '#92400e' }}>
+                    No draft participants exist for this draft yet.{' '}
+                    <Link to={`/drafts/${draftId}/participants`} style={{ color: '#92400e', fontWeight: '700', textDecoration: 'underline' }}>
+                      Add participants
+                    </Link>
+                    {' '}then come back to map teams.
+                  </div>
+                )}
+                {d.action === 'map' && participants.length > 0 && (
                   <select
                     value={d.participantId}
                     onChange={e => setParticipantForTeam(team.id, e.target.value)}
