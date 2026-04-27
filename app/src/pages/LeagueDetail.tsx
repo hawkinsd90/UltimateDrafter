@@ -28,7 +28,7 @@ export default function LeagueDetail() {
   const [message, setMessage] = useState('');
 
   // members tab state
-  const [phoneInput, setPhoneInput] = useState('');
+  const [phoneInputs, setPhoneInputs] = useState<string[]>(['']);
   const [addingPhone, setAddingPhone] = useState(false);
   const [memberError, setMemberError] = useState('');
   const [memberSuccess, setMemberSuccess] = useState('');
@@ -147,37 +147,51 @@ export default function LeagueDetail() {
     setMemberError('');
     setMemberSuccess('');
 
-    const phone = phoneInput.trim();
-    if (!phone.match(/^\+[1-9]\d{1,14}$/)) {
-      setMemberError('Enter a valid phone number in E.164 format, e.g. +12125551234');
+    const phones = phoneInputs.map(p => p.trim()).filter(Boolean);
+    const invalid = phones.filter(p => !p.match(/^\+[1-9]\d{1,14}$/));
+    if (invalid.length > 0) {
+      setMemberError(`Invalid number(s): ${invalid.join(', ')} — use E.164 format, e.g. +12125551234`);
+      setAddingPhone(false);
+      return;
+    }
+    if (phones.length === 0) {
+      setMemberError('Enter at least one phone number.');
       setAddingPhone(false);
       return;
     }
 
-    // Create invite tied to this phone number
-    const { data: invite, error: inviteError } = await supabase
-      .from('league_invites')
-      .insert({ league_id: leagueId, invited_by: user.id, phone_e164: phone })
-      .select()
-      .single();
+    const inviteLinks: string[] = [];
+    const errors: string[] = [];
 
-    if (inviteError || !invite) {
-      setMemberError('Failed to create invite: ' + (inviteError?.message ?? 'unknown error'));
-      setAddingPhone(false);
-      return;
+    for (const phone of phones) {
+      const { data: invite, error: inviteError } = await supabase
+        .from('league_invites')
+        .insert({ league_id: leagueId, invited_by: user.id, phone_e164: phone })
+        .select()
+        .single();
+
+      if (inviteError || !invite) {
+        errors.push(`${phone}: ${inviteError?.message ?? 'unknown'}`);
+        continue;
+      }
+
+      const { error: mErr } = await supabase
+        .from('league_members')
+        .insert({ league_id: leagueId, phone_e164: phone, display_name: phone });
+
+      if (mErr) {
+        errors.push(`${phone}: ${mErr.message}`);
+      } else {
+        inviteLinks.push(`${window.location.origin}/leagues/join/${invite.id}`);
+      }
     }
 
-    // Also add as a pending member row (phone-only, no user_id yet)
-    const { error: memberError } = await supabase
-      .from('league_members')
-      .insert({ league_id: leagueId, phone_e164: phone, display_name: phone });
-
-    if (memberError) {
-      setMemberError('Failed to add member: ' + memberError.message);
-    } else {
-      const inviteUrl = `${window.location.origin}/leagues/join/${invite.id}`;
-      setMemberSuccess(`Added! Share this link with them: ${inviteUrl}`);
-      setPhoneInput('');
+    if (errors.length > 0) {
+      setMemberError('Some numbers failed: ' + errors.join('; '));
+    }
+    if (inviteLinks.length > 0) {
+      setMemberSuccess(`Added ${inviteLinks.length} member(s). Invite links:\n${inviteLinks.join('\n')}`);
+      setPhoneInputs(['']);
       await loadLeagueData();
     }
     setAddingPhone(false);
@@ -473,34 +487,63 @@ export default function LeagueDetail() {
 
           {isOwner && (
             <div style={{ marginBottom: '24px', padding: '20px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: '#374151' }}>Add by Phone Number</h3>
-              <p style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#6b7280' }}>
-                Enter their number in E.164 format (e.g. +12125551234). They'll receive an invite link via SMS once you send it to them.
+              <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', color: '#374151' }}>Add by Phone Number</h3>
+              <p style={{ margin: '0 0 14px 0', fontSize: '14px', color: '#6b7280' }}>
+                Enter numbers in E.164 format (e.g. +12125551234). Add multiple rows to invite several people at once.
               </p>
-              <form onSubmit={addMemberByPhone} style={{ display: 'flex', gap: '10px' }}>
-                <input
-                  type="tel"
-                  value={phoneInput}
-                  onChange={(e) => setPhoneInput(e.target.value)}
-                  placeholder="+12125551234"
-                  required
-                  style={{ flex: 1, padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px', color: '#111827', background: 'white' }}
-                />
-                <button
-                  type="submit"
-                  disabled={addingPhone}
-                  style={{
-                    padding: '10px 20px',
-                    background: addingPhone ? '#9ca3af' : '#2563eb',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '6px',
-                    cursor: addingPhone ? 'not-allowed' : 'pointer',
-                    fontWeight: '500',
-                  }}
-                >
-                  Add
-                </button>
+              <form onSubmit={addMemberByPhone}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+                  {phoneInputs.map((val, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="tel"
+                        value={val}
+                        onChange={(e) => {
+                          const next = [...phoneInputs];
+                          next[idx] = e.target.value;
+                          setPhoneInputs(next);
+                        }}
+                        placeholder="+12125551234"
+                        style={{ flex: 1, padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px', color: '#111827', background: 'white' }}
+                      />
+                      {phoneInputs.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setPhoneInputs(phoneInputs.filter((_, i) => i !== idx))}
+                          style={{ padding: '10px 12px', background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', color: '#6b7280', cursor: 'pointer', fontSize: '16px', lineHeight: 1 }}
+                          title="Remove"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setPhoneInputs([...phoneInputs, ''])}
+                    style={{ padding: '8px 14px', background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', color: '#374151', cursor: 'pointer', fontSize: '14px' }}
+                  >
+                    + Add Another
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={addingPhone}
+                    style={{
+                      padding: '8px 20px',
+                      background: addingPhone ? '#9ca3af' : '#2563eb',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: addingPhone ? 'not-allowed' : 'pointer',
+                      fontWeight: '500',
+                      fontSize: '14px',
+                    }}
+                  >
+                    {addingPhone ? 'Adding...' : `Invite ${phoneInputs.filter(p => p.trim()).length > 1 ? `${phoneInputs.filter(p => p.trim()).length} People` : 'Person'}`}
+                  </button>
+                </div>
               </form>
             </div>
           )}
