@@ -75,6 +75,13 @@ export default function CreateLeague() {
       return;
     }
 
+    await supabase.from('league_members').insert({
+      league_id: leagueData.id,
+      user_id: user.id,
+      display_name: user.email?.split('@')[0] || 'Commissioner',
+      role: 'owner',
+    });
+
     const { error: settingsError } = await supabase
       .from('league_settings')
       .insert({

@@ -583,9 +583,10 @@ export default function LeagueDetail() {
                       <span style={{ marginLeft: '8px', fontSize: '12px', color: '#f59e0b' }}>pending</span>
                     )}
                   </div>
-                  {isOwner && m.role !== 'owner' && (
+                  {isOwner && (
                     <button
                       onClick={() => removeMember(m.id)}
+                      title={m.user_id === user?.id ? 'Remove yourself (you remain the commissioner)' : undefined}
                       style={{ padding: '6px 12px', background: 'none', border: '1px solid #ef4444', color: '#ef4444', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
                     >
                       Remove
