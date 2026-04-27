@@ -125,9 +125,9 @@ Deno.serve(async (req: Request) => {
 
     if (!canSend) {
       return new Response(
-        JSON.stringify({ 
+        JSON.stringify({
           error: "Rate limit exceeded. Please wait before requesting another code.",
-          retryAfter: 30 
+          retryAfter: 30
         }),
         {
           status: 429,
@@ -166,29 +166,100 @@ Deno.serve(async (req: Request) => {
       p_expires_at: expiresAt,
     });
 
-    const { error: insertError } = await supabaseAdmin.from("notifications_outbox").insert({
+    // --- Twilio direct send ---
+    // OTP is sent immediately via Twilio in this request.
+    // process-notifications-outbox is NOT used for OTP delivery.
+    // notifications_outbox is written as an audit record only, after the Twilio attempt.
+
+    const twilioAccountSid = Deno.env.get("TWILIO_ACCOUNT_SID");
+    const twilioAuthToken = Deno.env.get("TWILIO_AUTH_TOKEN");
+    const twilioFromNumber = Deno.env.get("TWILIO_FROM_NUMBER");
+
+    if (!twilioAccountSid || !twilioAuthToken || !twilioFromNumber) {
+      console.error("[start-phone-verification] Twilio credentials not configured");
+      return new Response(
+        JSON.stringify({ error: "SMS service is not configured. Please contact support." }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const messageText = `Your DraftMaster verification code is: ${code}. This code expires in 10 minutes.`;
+    const now = new Date().toISOString();
+
+    const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${twilioAccountSid}/Messages.json`;
+    const auth = btoa(`${twilioAccountSid}:${twilioAuthToken}`);
+
+    const formData = new URLSearchParams();
+    formData.append("To", phoneE164);
+    formData.append("From", twilioFromNumber);
+    formData.append("Body", messageText);
+
+    let twilioSid: string | null = null;
+    let twilioError: string | null = null;
+
+    try {
+      const twilioResponse = await fetch(twilioUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: formData.toString(),
+      });
+
+      const twilioData = await twilioResponse.json();
+
+      if (!twilioResponse.ok) {
+        // Log Twilio error server-side only; do not expose raw error to frontend
+        console.error("[start-phone-verification] Twilio error:", {
+          status: twilioResponse.status,
+          code: twilioData.code,
+          message: twilioData.message,
+        });
+        twilioError = `Twilio error ${twilioData.code}: ${twilioData.message || "Unknown error"}`;
+      } else {
+        twilioSid = twilioData.sid;
+        console.log("[start-phone-verification] Twilio accepted OTP SMS, SID:", twilioSid);
+      }
+    } catch (fetchErr) {
+      const errMsg = fetchErr instanceof Error ? fetchErr.message : "Network error";
+      console.error("[start-phone-verification] Twilio fetch failed:", errMsg);
+      twilioError = errMsg;
+    }
+
+    // Write audit row to notifications_outbox reflecting actual outcome.
+    // This row is purely for audit — process-notifications-outbox will not pick it up
+    // because it is inserted as 'sent' or 'failed', never 'pending'.
+    await supabaseAdmin.from("notifications_outbox").insert({
       user_id: user.id,
       notification_type: "phone_verification",
       channel: "sms",
       destination: phoneE164,
-      message_text: `Your DraftMaster verification code is: ${code}. This code expires in 10 minutes.`,
-      metadata: {
-        code_type: "verification",
-      },
-      next_attempt_at: new Date().toISOString(),
+      message_text: messageText,
+      metadata: { code_type: "verification" },
+      next_attempt_at: now,
+      status: twilioSid ? "sent" : "failed",
+      sent_at: twilioSid ? now : null,
+      provider: "twilio",
+      provider_message_id: twilioSid ?? null,
+      last_error: twilioError ?? null,
     });
 
-    if (insertError) {
-      console.error("[start-phone-verification] notifications_outbox insert failed:", insertError.message, insertError.details, insertError.hint);
-      throw new Error(`Failed to queue verification SMS: ${insertError.message}`);
+    if (twilioError) {
+      return new Response(
+        JSON.stringify({ error: "Failed to send verification code. Please try again." }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
     }
 
-    console.log("[start-phone-verification] notifications_outbox row inserted for user:", user.id);
-
-    console.log(`Verification code sent to ${phoneE164.slice(0, -4).replace(/./g, "*")}${phoneE164.slice(-4)}`);
-
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         success: true,
         message: "Verification code sent",
         phone: phoneE164.slice(0, -4).replace(/./g, "*") + phoneE164.slice(-4)
