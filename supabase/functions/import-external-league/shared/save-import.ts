@@ -226,6 +226,50 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
     warnings.push("Could not save scoring rules: " + scoringErr.message);
   }
 
+  // ── 8b. Upsert draft_settings with imported roster slot counts ─────────────
+  // Check if a draft_settings row already exists for this draft
+  const { data: existingSettings } = await adminClient
+    .from("draft_settings")
+    .select("draft_id")
+    .eq("draft_id", draftId)
+    .maybeSingle();
+
+  const rs = league.rosterSettings;
+  const rosterPayload = {
+    roster_qb: rs.qb,
+    roster_rb: rs.rb,
+    roster_wr: rs.wr,
+    roster_te: rs.te,
+    roster_flex: rs.flex,
+    roster_k: rs.k,
+    roster_dst: rs.dst,
+    bench: rs.bench,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existingSettings) {
+    const { error: settingsErr } = await adminClient
+      .from("draft_settings")
+      .update(rosterPayload)
+      .eq("draft_id", draftId);
+
+    if (settingsErr) {
+      warnings.push("Could not update roster settings: " + settingsErr.message);
+    }
+  } else {
+    const { error: settingsErr } = await adminClient
+      .from("draft_settings")
+      .insert({
+        draft_id: draftId,
+        created_by: callerUserId,
+        ...rosterPayload,
+      });
+
+    if (settingsErr) {
+      warnings.push("Could not save roster settings: " + settingsErr.message);
+    }
+  }
+
   // ── 9. Build summary ────────────────────────────────────────────────────────
   const matchedPlayers = mappedPlayers.filter(
     (p) => p.resolutionStatus === "matched"
