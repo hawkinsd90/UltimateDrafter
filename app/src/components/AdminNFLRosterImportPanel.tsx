@@ -15,13 +15,28 @@ type ImportRun = {
   completed_at: string | null;
 };
 
+type DraftPoolCounts = {
+  QB: number;
+  RB: number;
+  WR: number;
+  TE: number;
+  K: number;
+  DST: number;
+};
+
 const PROVIDERS = [
-  { value: 'mock', label: 'Mock (no credentials needed)' },
-  { value: 'sleeper', label: 'Sleeper (free public API)' },
+  { value: 'mock',        label: 'Mock (no credentials needed)' },
+  { value: 'sleeper',     label: 'Sleeper (free public API)' },
   { value: 'sportsdataio', label: 'SportsDataIO (requires API key)' },
 ];
 
+const POSITION_ORDER: (keyof DraftPoolCounts)[] = ['QB', 'RB', 'WR', 'TE', 'K', 'DST'];
 const currentYear = new Date().getFullYear().toString();
+
+// Draft pool sanity thresholds
+const DST_EXPECTED = 32;
+const POOL_MAX = 2000;
+const POOL_MIN_TOTAL = 200;
 
 export default function AdminNFLRosterImportPanel() {
   const [provider, setProvider] = useState('mock');
@@ -31,6 +46,7 @@ export default function AdminNFLRosterImportPanel() {
   const [importRuns, setImportRuns] = useState<ImportRun[]>([]);
   const [totalPlayers, setTotalPlayers] = useState<number | null>(null);
   const [fantasyRelevantCount, setFantasyRelevantCount] = useState<number | null>(null);
+  const [draftPoolCounts, setDraftPoolCounts] = useState<DraftPoolCounts | null>(null);
   const [loadingStats, setLoadingStats] = useState(true);
   const [error, setError] = useState('');
 
@@ -41,7 +57,7 @@ export default function AdminNFLRosterImportPanel() {
 
   async function loadStats() {
     setLoadingStats(true);
-    const [totalRes, fantasyRes] = await Promise.all([
+    const [totalRes, fantasyRes, poolRes] = await Promise.all([
       supabase
         .from('sports_players')
         .select('id', { count: 'exact', head: true })
@@ -50,9 +66,23 @@ export default function AdminNFLRosterImportPanel() {
         .from('sports_players')
         .select('id', { count: 'exact', head: true })
         .eq('is_fantasy_relevant', true),
+      supabase
+        .from('nfl_draft_player_pool')
+        .select('fantasy_position'),
     ]);
+
     setTotalPlayers(totalRes.count ?? 0);
     setFantasyRelevantCount(fantasyRes.count ?? 0);
+
+    if (poolRes.data) {
+      const counts: DraftPoolCounts = { QB: 0, RB: 0, WR: 0, TE: 0, K: 0, DST: 0 };
+      for (const row of poolRes.data) {
+        const pos = row.fantasy_position as keyof DraftPoolCounts;
+        if (pos in counts) counts[pos]++;
+      }
+      setDraftPoolCounts(counts);
+    }
+
     setLoadingStats(false);
   }
 
@@ -113,19 +143,92 @@ export default function AdminNFLRosterImportPanel() {
     return '#d97706';
   }
 
+  // Compute warnings for the draft pool
+  const draftPoolWarnings: string[] = [];
+  if (draftPoolCounts) {
+    const total = Object.values(draftPoolCounts).reduce((a, b) => a + b, 0);
+    if (draftPoolCounts.DST !== DST_EXPECTED) {
+      draftPoolWarnings.push(`DST count is ${draftPoolCounts.DST} — expected exactly ${DST_EXPECTED} (one per NFL team).`);
+    }
+    if (total > POOL_MAX) {
+      draftPoolWarnings.push(`Draft pool total (${total}) is unusually high — may include too many fringe players.`);
+    }
+    if (total > 0 && total < POOL_MIN_TOTAL) {
+      draftPoolWarnings.push(`Draft pool total (${total}) is unusually low — import may not have run yet.`);
+    }
+    for (const pos of POSITION_ORDER) {
+      if (draftPoolCounts[pos] === 0) {
+        draftPoolWarnings.push(`${pos} count is zero — check import data.`);
+      }
+    }
+  }
+
+  const draftPoolTotal = draftPoolCounts
+    ? Object.values(draftPoolCounts).reduce((a, b) => a + b, 0)
+    : null;
+
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif' }}>
-      {/* Stats bar */}
-      <div style={{ display: 'flex', gap: '16px', marginBottom: '28px', flexWrap: 'wrap' }}>
+
+      {/* Raw import stats */}
+      <div style={{ display: 'flex', gap: '16px', marginBottom: '20px', flexWrap: 'wrap' }}>
         {[
-          { label: 'Total Active NFL Players', value: loadingStats ? '…' : (totalPlayers ?? 0) },
-          { label: 'Fantasy-Relevant Players', value: loadingStats ? '…' : (fantasyRelevantCount ?? 0) },
+          { label: 'Total Active NFL Players (raw)', value: loadingStats ? '…' : (totalPlayers ?? 0) },
+          { label: 'Fantasy-Relevant Flag (raw)',    value: loadingStats ? '…' : (fantasyRelevantCount ?? 0) },
         ].map(s => (
           <div key={s.label} style={{ flex: '1 1 200px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '16px 20px' }}>
             <div style={{ fontSize: '28px', fontWeight: '700', color: '#1e293b' }}>{s.value}</div>
             <div style={{ fontSize: '13px', color: '#64748b', marginTop: '4px' }}>{s.label}</div>
           </div>
         ))}
+      </div>
+
+      {/* Draft pool counts */}
+      <div style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <h2 style={{ margin: 0, fontSize: '16px', fontWeight: '600', color: '#1e293b' }}>
+            Draft Pool — <code style={{ fontSize: '13px', background: '#f1f5f9', padding: '2px 6px', borderRadius: '4px' }}>nfl_draft_player_pool</code>
+          </h2>
+          {draftPoolTotal !== null && (
+            <span style={{ fontSize: '13px', color: '#64748b' }}>Total: <strong style={{ color: '#1e293b' }}>{draftPoolTotal}</strong></span>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          {POSITION_ORDER.map(pos => {
+            const count = draftPoolCounts ? draftPoolCounts[pos] : null;
+            const isWarn = draftPoolCounts && count === 0;
+            const isDSTWarn = pos === 'DST' && draftPoolCounts && draftPoolCounts.DST !== DST_EXPECTED && draftPoolCounts.DST !== 0;
+            return (
+              <div
+                key={pos}
+                style={{
+                  flex: '1 1 80px',
+                  background: isWarn ? '#fee2e2' : isDSTWarn ? '#fef9c3' : '#f8fafc',
+                  border: `1px solid ${isWarn ? '#ef4444' : isDSTWarn ? '#fde047' : '#e2e8f0'}`,
+                  borderRadius: '8px',
+                  padding: '14px 16px',
+                  textAlign: 'center',
+                }}
+              >
+                <div style={{ fontSize: '22px', fontWeight: '700', color: isWarn ? '#dc2626' : '#1e293b' }}>
+                  {loadingStats ? '…' : (count ?? 0)}
+                </div>
+                <div style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginTop: '2px' }}>{pos}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {draftPoolWarnings.length > 0 && (
+          <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {draftPoolWarnings.map((w, i) => (
+              <div key={i} style={{ padding: '8px 12px', background: '#fef9c3', border: '1px solid #fde047', borderRadius: '6px', fontSize: '13px', color: '#713f12' }}>
+                Warning: {w}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Import controls */}
@@ -176,7 +279,7 @@ export default function AdminNFLRosterImportPanel() {
 
         {provider === 'sportsdataio' && (
           <div style={{ marginTop: '12px', padding: '10px 14px', background: '#fef9c3', border: '1px solid #fde047', borderRadius: '6px', fontSize: '13px', color: '#713f12' }}>
-            SportsDataIO requires the <code>SPORTSDATAIO_NFL_API_KEY</code> secret to be configured. See TODOs in the edge function.
+            SportsDataIO requires the <code>SPORTSDATAIO_NFL_API_KEY</code> secret to be configured.
           </div>
         )}
 

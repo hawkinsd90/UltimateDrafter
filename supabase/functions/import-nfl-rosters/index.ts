@@ -49,69 +49,152 @@ type ProviderResult = {
 const NFL_FANTASY_POSITIONS = new Set(["QB", "RB", "WR", "TE", "K", "DST"]);
 
 // ============================================================
-// Mock provider — generates a realistic set of fake NFL players
-// for testing without any API credentials.
+// Canonical NFL 32-team map
+// Used by any provider that does not supply team metadata.
+// ============================================================
+type CanonicalTeam = {
+  abbr: string;
+  name: string;
+  city: string;
+  conference: "AFC" | "NFC";
+  division: string;
+};
+
+const CANONICAL_NFL_TEAMS: CanonicalTeam[] = [
+  // AFC East
+  { abbr: "BUF", name: "Buffalo Bills",           city: "Buffalo",        conference: "AFC", division: "AFC East" },
+  { abbr: "MIA", name: "Miami Dolphins",           city: "Miami",          conference: "AFC", division: "AFC East" },
+  { abbr: "NE",  name: "New England Patriots",     city: "New England",    conference: "AFC", division: "AFC East" },
+  { abbr: "NYJ", name: "New York Jets",            city: "New York",       conference: "AFC", division: "AFC East" },
+  // AFC North
+  { abbr: "BAL", name: "Baltimore Ravens",         city: "Baltimore",      conference: "AFC", division: "AFC North" },
+  { abbr: "CIN", name: "Cincinnati Bengals",       city: "Cincinnati",     conference: "AFC", division: "AFC North" },
+  { abbr: "CLE", name: "Cleveland Browns",         city: "Cleveland",      conference: "AFC", division: "AFC North" },
+  { abbr: "PIT", name: "Pittsburgh Steelers",      city: "Pittsburgh",     conference: "AFC", division: "AFC North" },
+  // AFC South
+  { abbr: "HOU", name: "Houston Texans",           city: "Houston",        conference: "AFC", division: "AFC South" },
+  { abbr: "IND", name: "Indianapolis Colts",       city: "Indianapolis",   conference: "AFC", division: "AFC South" },
+  { abbr: "JAX", name: "Jacksonville Jaguars",     city: "Jacksonville",   conference: "AFC", division: "AFC South" },
+  { abbr: "TEN", name: "Tennessee Titans",         city: "Tennessee",      conference: "AFC", division: "AFC South" },
+  // AFC West
+  { abbr: "DEN", name: "Denver Broncos",           city: "Denver",         conference: "AFC", division: "AFC West" },
+  { abbr: "KC",  name: "Kansas City Chiefs",       city: "Kansas City",    conference: "AFC", division: "AFC West" },
+  { abbr: "LV",  name: "Las Vegas Raiders",        city: "Las Vegas",      conference: "AFC", division: "AFC West" },
+  { abbr: "LAC", name: "Los Angeles Chargers",     city: "Los Angeles",    conference: "AFC", division: "AFC West" },
+  // NFC East
+  { abbr: "DAL", name: "Dallas Cowboys",           city: "Dallas",         conference: "NFC", division: "NFC East" },
+  { abbr: "NYG", name: "New York Giants",          city: "New York",       conference: "NFC", division: "NFC East" },
+  { abbr: "PHI", name: "Philadelphia Eagles",      city: "Philadelphia",   conference: "NFC", division: "NFC East" },
+  { abbr: "WAS", name: "Washington Commanders",    city: "Washington",     conference: "NFC", division: "NFC East" },
+  // NFC North
+  { abbr: "CHI", name: "Chicago Bears",            city: "Chicago",        conference: "NFC", division: "NFC North" },
+  { abbr: "DET", name: "Detroit Lions",            city: "Detroit",        conference: "NFC", division: "NFC North" },
+  { abbr: "GB",  name: "Green Bay Packers",        city: "Green Bay",      conference: "NFC", division: "NFC North" },
+  { abbr: "MIN", name: "Minnesota Vikings",        city: "Minnesota",      conference: "NFC", division: "NFC North" },
+  // NFC South
+  { abbr: "ATL", name: "Atlanta Falcons",          city: "Atlanta",        conference: "NFC", division: "NFC South" },
+  { abbr: "CAR", name: "Carolina Panthers",        city: "Carolina",       conference: "NFC", division: "NFC South" },
+  { abbr: "NO",  name: "New Orleans Saints",       city: "New Orleans",    conference: "NFC", division: "NFC South" },
+  { abbr: "TB",  name: "Tampa Bay Buccaneers",     city: "Tampa Bay",      conference: "NFC", division: "NFC South" },
+  // NFC West
+  { abbr: "ARI", name: "Arizona Cardinals",        city: "Arizona",        conference: "NFC", division: "NFC West" },
+  { abbr: "LAR", name: "Los Angeles Rams",         city: "Los Angeles",    conference: "NFC", division: "NFC West" },
+  { abbr: "SF",  name: "San Francisco 49ers",      city: "San Francisco",  conference: "NFC", division: "NFC West" },
+  { abbr: "SEA", name: "Seattle Seahawks",         city: "Seattle",        conference: "NFC", division: "NFC West" },
+];
+
+// Index for O(1) lookups by abbreviation
+const CANONICAL_TEAM_BY_ABBR: Record<string, CanonicalTeam> = {};
+for (const t of CANONICAL_NFL_TEAMS) {
+  CANONICAL_TEAM_BY_ABBR[t.abbr] = t;
+}
+
+function canonicalTeamsAsNormalized(provider: string): NormalizedNFLTeam[] {
+  return CANONICAL_NFL_TEAMS.map((t) => ({
+    provider,
+    providerTeamId: t.abbr,
+    name: t.name,
+    abbreviation: t.abbr,
+    city: t.city,
+    conference: t.conference,
+    division: t.division,
+    logoUrl: null,
+    rawData: {},
+  }));
+}
+
+// Build synthetic D/ST players (one per canonical team) for a given provider
+function syntheticDSTPlayers(provider: string): NormalizedNFLPlayer[] {
+  return CANONICAL_NFL_TEAMS.map((t) => ({
+    provider,
+    providerPlayerId: `dst_${t.abbr}`,
+    providerTeamId: t.abbr,
+    firstName: null,
+    lastName: null,
+    displayName: `${t.name} D/ST`,
+    position: "DEF",
+    fantasyPosition: "DST",
+    jerseyNumber: null,
+    status: "Active",
+    injuryStatus: null,
+    yearsExp: null,
+    college: null,
+    headshotUrl: null,
+    rawData: { synthetic: true, source: "canonical_team_map" },
+  }));
+}
+
+// ============================================================
+// Mock provider
 // ============================================================
 function mockProvider(_season: string): ProviderResult {
   const teams: NormalizedNFLTeam[] = [
-    { provider: "mock", providerTeamId: "KC", name: "Kansas City Chiefs", abbreviation: "KC", city: "Kansas City", conference: "AFC", division: "AFC West", logoUrl: null, rawData: {} },
-    { provider: "mock", providerTeamId: "SF", name: "San Francisco 49ers", abbreviation: "SF", city: "San Francisco", conference: "NFC", division: "NFC West", logoUrl: null, rawData: {} },
-    { provider: "mock", providerTeamId: "BUF", name: "Buffalo Bills", abbreviation: "BUF", city: "Buffalo", conference: "AFC", division: "AFC East", logoUrl: null, rawData: {} },
-    { provider: "mock", providerTeamId: "PHI", name: "Philadelphia Eagles", abbreviation: "PHI", city: "Philadelphia", conference: "NFC", division: "NFC East", logoUrl: null, rawData: {} },
-    { provider: "mock", providerTeamId: "DAL", name: "Dallas Cowboys", abbreviation: "DAL", city: "Dallas", conference: "NFC", division: "NFC East", logoUrl: null, rawData: {} },
+    { provider: "mock", providerTeamId: "KC",  name: "Kansas City Chiefs",     abbreviation: "KC",  city: "Kansas City",    conference: "AFC", division: "AFC West", logoUrl: null, rawData: {} },
+    { provider: "mock", providerTeamId: "SF",  name: "San Francisco 49ers",    abbreviation: "SF",  city: "San Francisco",  conference: "NFC", division: "NFC West", logoUrl: null, rawData: {} },
+    { provider: "mock", providerTeamId: "BUF", name: "Buffalo Bills",           abbreviation: "BUF", city: "Buffalo",        conference: "AFC", division: "AFC East", logoUrl: null, rawData: {} },
+    { provider: "mock", providerTeamId: "PHI", name: "Philadelphia Eagles",     abbreviation: "PHI", city: "Philadelphia",   conference: "NFC", division: "NFC East", logoUrl: null, rawData: {} },
+    { provider: "mock", providerTeamId: "DAL", name: "Dallas Cowboys",          abbreviation: "DAL", city: "Dallas",         conference: "NFC", division: "NFC East", logoUrl: null, rawData: {} },
   ];
 
   const players: NormalizedNFLPlayer[] = [
-    // QBs
-    { provider: "mock", providerPlayerId: "p1", providerTeamId: "KC", firstName: "Patrick", lastName: "Mahomes", displayName: "P. Mahomes", position: "QB", fantasyPosition: "QB", jerseyNumber: "15", status: "Active", injuryStatus: null, yearsExp: 7, college: "Texas Tech", headshotUrl: null, rawData: {} },
-    { provider: "mock", providerPlayerId: "p2", providerTeamId: "BUF", firstName: "Josh", lastName: "Allen", displayName: "J. Allen", position: "QB", fantasyPosition: "QB", jerseyNumber: "17", status: "Active", injuryStatus: null, yearsExp: 6, college: "Wyoming", headshotUrl: null, rawData: {} },
-    { provider: "mock", providerPlayerId: "p3", providerTeamId: "PHI", firstName: "Jalen", lastName: "Hurts", displayName: "J. Hurts", position: "QB", fantasyPosition: "QB", jerseyNumber: "1", status: "Active", injuryStatus: null, yearsExp: 4, college: "Alabama", headshotUrl: null, rawData: {} },
-    // RBs
-    { provider: "mock", providerPlayerId: "p4", providerTeamId: "SF", firstName: "Christian", lastName: "McCaffrey", displayName: "C. McCaffrey", position: "RB", fantasyPosition: "RB", jerseyNumber: "23", status: "Active", injuryStatus: null, yearsExp: 7, college: "Stanford", headshotUrl: null, rawData: {} },
-    { provider: "mock", providerPlayerId: "p5", providerTeamId: "DAL", firstName: "Tony", lastName: "Pollard", displayName: "T. Pollard", position: "RB", fantasyPosition: "RB", jerseyNumber: "20", status: "Active", injuryStatus: null, yearsExp: 5, college: "Memphis", headshotUrl: null, rawData: {} },
-    // WRs
-    { provider: "mock", providerPlayerId: "p6", providerTeamId: "KC", firstName: "Rashee", lastName: "Rice", displayName: "R. Rice", position: "WR", fantasyPosition: "WR", jerseyNumber: "4", status: "Active", injuryStatus: null, yearsExp: 2, college: "SMU", headshotUrl: null, rawData: {} },
-    { provider: "mock", providerPlayerId: "p7", providerTeamId: "BUF", firstName: "Stefon", lastName: "Diggs", displayName: "S. Diggs", position: "WR", fantasyPosition: "WR", jerseyNumber: "14", status: "Active", injuryStatus: null, yearsExp: 9, college: "Maryland", headshotUrl: null, rawData: {} },
-    { provider: "mock", providerPlayerId: "p8", providerTeamId: "PHI", firstName: "DeVonta", lastName: "Smith", displayName: "D. Smith", position: "WR", fantasyPosition: "WR", jerseyNumber: "6", status: "Active", injuryStatus: null, yearsExp: 3, college: "Alabama", headshotUrl: null, rawData: {} },
-    // TEs
-    { provider: "mock", providerPlayerId: "p9", providerTeamId: "KC", firstName: "Travis", lastName: "Kelce", displayName: "T. Kelce", position: "TE", fantasyPosition: "TE", jerseyNumber: "87", status: "Active", injuryStatus: null, yearsExp: 11, college: "Cincinnati", headshotUrl: null, rawData: {} },
-    { provider: "mock", providerPlayerId: "p10", providerTeamId: "SF", firstName: "George", lastName: "Kittle", displayName: "G. Kittle", position: "TE", fantasyPosition: "TE", jerseyNumber: "85", status: "Active", injuryStatus: null, yearsExp: 7, college: "Iowa", headshotUrl: null, rawData: {} },
-    // K
-    { provider: "mock", providerPlayerId: "p11", providerTeamId: "KC", firstName: "Harrison", lastName: "Butker", displayName: "H. Butker", position: "K", fantasyPosition: "K", jerseyNumber: "7", status: "Active", injuryStatus: null, yearsExp: 7, college: "Georgia Tech", headshotUrl: null, rawData: {} },
-    // DST (one per team)
-    { provider: "mock", providerPlayerId: "dst_KC", providerTeamId: "KC", firstName: null, lastName: null, displayName: "Kansas City Chiefs D/ST", position: "DEF", fantasyPosition: "DST", jerseyNumber: null, status: "Active", injuryStatus: null, yearsExp: null, college: null, headshotUrl: null, rawData: {} },
-    { provider: "mock", providerPlayerId: "dst_SF", providerTeamId: "SF", firstName: null, lastName: null, displayName: "San Francisco 49ers D/ST", position: "DEF", fantasyPosition: "DST", jerseyNumber: null, status: "Active", injuryStatus: null, yearsExp: null, college: null, headshotUrl: null, rawData: {} },
-    // Non-fantasy player (individual defensive player — should NOT be fantasy relevant)
-    { provider: "mock", providerPlayerId: "p12", providerTeamId: "SF", firstName: "Nick", lastName: "Bosa", displayName: "N. Bosa", position: "DE", fantasyPosition: null, jerseyNumber: "97", status: "Active", injuryStatus: null, yearsExp: 5, college: "Ohio State", headshotUrl: null, rawData: {} },
+    { provider: "mock", providerPlayerId: "p1",     providerTeamId: "KC",  firstName: "Patrick",   lastName: "Mahomes",   displayName: "P. Mahomes",   position: "QB",  fantasyPosition: "QB",  jerseyNumber: "15", status: "Active", injuryStatus: null, yearsExp: 7, college: "Texas Tech",  headshotUrl: null, rawData: {} },
+    { provider: "mock", providerPlayerId: "p2",     providerTeamId: "BUF", firstName: "Josh",      lastName: "Allen",     displayName: "J. Allen",     position: "QB",  fantasyPosition: "QB",  jerseyNumber: "17", status: "Active", injuryStatus: null, yearsExp: 6, college: "Wyoming",     headshotUrl: null, rawData: {} },
+    { provider: "mock", providerPlayerId: "p3",     providerTeamId: "PHI", firstName: "Jalen",     lastName: "Hurts",     displayName: "J. Hurts",     position: "QB",  fantasyPosition: "QB",  jerseyNumber: "1",  status: "Active", injuryStatus: null, yearsExp: 4, college: "Alabama",     headshotUrl: null, rawData: {} },
+    { provider: "mock", providerPlayerId: "p4",     providerTeamId: "SF",  firstName: "Christian", lastName: "McCaffrey", displayName: "C. McCaffrey", position: "RB",  fantasyPosition: "RB",  jerseyNumber: "23", status: "Active", injuryStatus: null, yearsExp: 7, college: "Stanford",    headshotUrl: null, rawData: {} },
+    { provider: "mock", providerPlayerId: "p5",     providerTeamId: "DAL", firstName: "Tony",      lastName: "Pollard",   displayName: "T. Pollard",   position: "RB",  fantasyPosition: "RB",  jerseyNumber: "20", status: "Active", injuryStatus: null, yearsExp: 5, college: "Memphis",     headshotUrl: null, rawData: {} },
+    { provider: "mock", providerPlayerId: "p6",     providerTeamId: "KC",  firstName: "Rashee",    lastName: "Rice",      displayName: "R. Rice",      position: "WR",  fantasyPosition: "WR",  jerseyNumber: "4",  status: "Active", injuryStatus: null, yearsExp: 2, college: "SMU",         headshotUrl: null, rawData: {} },
+    { provider: "mock", providerPlayerId: "p7",     providerTeamId: "BUF", firstName: "Stefon",    lastName: "Diggs",     displayName: "S. Diggs",     position: "WR",  fantasyPosition: "WR",  jerseyNumber: "14", status: "Active", injuryStatus: null, yearsExp: 9, college: "Maryland",    headshotUrl: null, rawData: {} },
+    { provider: "mock", providerPlayerId: "p8",     providerTeamId: "PHI", firstName: "DeVonta",   lastName: "Smith",     displayName: "D. Smith",     position: "WR",  fantasyPosition: "WR",  jerseyNumber: "6",  status: "Active", injuryStatus: null, yearsExp: 3, college: "Alabama",     headshotUrl: null, rawData: {} },
+    { provider: "mock", providerPlayerId: "p9",     providerTeamId: "KC",  firstName: "Travis",    lastName: "Kelce",     displayName: "T. Kelce",     position: "TE",  fantasyPosition: "TE",  jerseyNumber: "87", status: "Active", injuryStatus: null, yearsExp: 11, college: "Cincinnati", headshotUrl: null, rawData: {} },
+    { provider: "mock", providerPlayerId: "p10",    providerTeamId: "SF",  firstName: "George",    lastName: "Kittle",    displayName: "G. Kittle",    position: "TE",  fantasyPosition: "TE",  jerseyNumber: "85", status: "Active", injuryStatus: null, yearsExp: 7, college: "Iowa",        headshotUrl: null, rawData: {} },
+    { provider: "mock", providerPlayerId: "p11",    providerTeamId: "KC",  firstName: "Harrison",  lastName: "Butker",    displayName: "H. Butker",    position: "K",   fantasyPosition: "K",   jerseyNumber: "7",  status: "Active", injuryStatus: null, yearsExp: 7, college: "Georgia Tech", headshotUrl: null, rawData: {} },
+    { provider: "mock", providerPlayerId: "dst_KC", providerTeamId: "KC",  firstName: null, lastName: null, displayName: "Kansas City Chiefs D/ST",  position: "DEF", fantasyPosition: "DST", jerseyNumber: null, status: "Active", injuryStatus: null, yearsExp: null, college: null, headshotUrl: null, rawData: { synthetic: true, source: "canonical_team_map" } },
+    { provider: "mock", providerPlayerId: "dst_SF", providerTeamId: "SF",  firstName: null, lastName: null, displayName: "San Francisco 49ers D/ST", position: "DEF", fantasyPosition: "DST", jerseyNumber: null, status: "Active", injuryStatus: null, yearsExp: null, college: null, headshotUrl: null, rawData: { synthetic: true, source: "canonical_team_map" } },
+    // Non-fantasy individual defensive player
+    { provider: "mock", providerPlayerId: "p12",    providerTeamId: "SF",  firstName: "Nick", lastName: "Bosa", displayName: "N. Bosa", position: "DE", fantasyPosition: null, jerseyNumber: "97", status: "Active", injuryStatus: null, yearsExp: 5, college: "Ohio State", headshotUrl: null, rawData: {} },
   ];
 
   return { teams, players };
 }
 
 // ============================================================
-// Sleeper provider — fetches free public NFL player data.
-// https://docs.sleeper.app/#players
-// Sleeper returns a flat JSON map of player_id -> player object.
+// Sleeper provider
 // ============================================================
 async function sleeperProvider(_season: string): Promise<ProviderResult> {
-  // TODO: Sleeper doesn't have a teams endpoint; teams are inferred from player data.
   const resp = await fetch("https://api.sleeper.app/v1/players/nfl");
   if (!resp.ok) {
     throw new Error(`Sleeper API returned ${resp.status}: ${await resp.text()}`);
   }
   const raw: Record<string, Record<string, unknown>> = await resp.json();
 
-  const teamAbbrs = new Set<string>();
   const players: NormalizedNFLPlayer[] = [];
 
   for (const [pid, p] of Object.entries(raw)) {
-    // Only active/practice-squad players with a real position
+    // Skip records with no active flag and non-Active status
     if (!p.active && p.status !== "Active") continue;
     const pos = (p.position as string | null) ?? null;
     const fantasyPos = pos && NFL_FANTASY_POSITIONS.has(pos) ? pos : null;
-
     const teamAbbr = (p.team as string | null) ?? null;
-    if (teamAbbr) teamAbbrs.add(teamAbbr);
 
     players.push({
       provider: "sleeper",
@@ -132,27 +215,18 @@ async function sleeperProvider(_season: string): Promise<ProviderResult> {
     });
   }
 
-  // Build minimal team objects from the abbreviations seen in player data
-  const teams: NormalizedNFLTeam[] = Array.from(teamAbbrs).map((abbr) => ({
-    provider: "sleeper",
-    providerTeamId: abbr,
-    name: abbr,
-    abbreviation: abbr,
-    city: null,
-    conference: null,
-    division: null,
-    logoUrl: null,
-    rawData: {},
-  }));
+  // Always use canonical 32 teams — do not infer from player data
+  const teams = canonicalTeamsAsNormalized("sleeper");
+
+  // Append synthetic D/ST for all 32 canonical teams
+  const dstPlayers = syntheticDSTPlayers("sleeper");
+  players.push(...dstPlayers);
 
   return { teams, players };
 }
 
 // ============================================================
 // SportsDataIO provider skeleton
-// TODO: Obtain a SportsDataIO NFL API key and set it as a
-// Supabase Edge Function secret named SPORTSDATAIO_NFL_API_KEY.
-// Then fill in the actual endpoints below.
 // ============================================================
 async function sportsDataIOProvider(season: string): Promise<ProviderResult> {
   const apiKey = Deno.env.get("SPORTSDATAIO_NFL_API_KEY");
@@ -162,12 +236,6 @@ async function sportsDataIOProvider(season: string): Promise<ProviderResult> {
       "Set it via Supabase dashboard > Settings > Edge Functions > Secrets."
     );
   }
-
-  // TODO: Replace these with the correct SportsDataIO endpoints.
-  // Typical endpoints:
-  //   Teams:   https://api.sportsdata.io/v3/nfl/scores/json/Teams?key=KEY
-  //   Players: https://api.sportsdata.io/v3/nfl/scores/json/Players?key=KEY
-  //   Rosters: https://api.sportsdata.io/v3/nfl/scores/json/PlayersByTeam/{TEAM}?key=KEY
   throw new Error(
     `SportsDataIO provider is not yet implemented. Season: ${season}. ` +
     "Set SPORTSDATAIO_NFL_API_KEY and implement the fetch logic above."
@@ -179,14 +247,10 @@ async function sportsDataIOProvider(season: string): Promise<ProviderResult> {
 // ============================================================
 async function fetchFromProvider(provider: string, season: string): Promise<ProviderResult> {
   switch (provider) {
-    case "mock":
-      return mockProvider(season);
-    case "sleeper":
-      return await sleeperProvider(season);
-    case "sportsdataio":
-      return await sportsDataIOProvider(season);
-    default:
-      throw new Error(`Unknown provider: "${provider}". Valid values: mock, sleeper, sportsdataio`);
+    case "mock":    return mockProvider(season);
+    case "sleeper": return await sleeperProvider(season);
+    case "sportsdataio": return await sportsDataIOProvider(season);
+    default: throw new Error(`Unknown provider: "${provider}". Valid values: mock, sleeper, sportsdataio`);
   }
 }
 
@@ -199,7 +263,6 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // Build a service-role client so we can bypass RLS for upserts
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -228,7 +291,6 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Parse request body
     const body = await req.json().catch(() => ({}));
     const provider: string = body.provider ?? "mock";
     const season: string = body.season ?? new Date().getFullYear().toString();
@@ -264,7 +326,6 @@ Deno.serve(async (req: Request) => {
     let fantasyRelevantCount = 0;
 
     try {
-      // Fetch normalized data from provider
       const { teams, players } = await fetchFromProvider(provider, season);
       teamsSeen = teams.length;
       playersSeen = players.length;
@@ -350,7 +411,7 @@ Deno.serve(async (req: Request) => {
 
       fantasyRelevantCount = playerUpsertRows.filter((p) => p.is_fantasy_relevant).length;
 
-      // Mark any previously active players not in this import as inactive/free_agent
+      // Mark any previously active players not in this import as inactive
       const seenProviderIds = players.map((p) => p.providerPlayerId);
       if (seenProviderIds.length > 0) {
         await supabaseAdmin
