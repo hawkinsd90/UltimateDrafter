@@ -193,11 +193,11 @@ export default function DraftBoard() {
     }
   }
 
-  if (loading) return <div style={{ padding: '40px' }}>Loading...</div>;
-  if (!draft) return <div style={{ padding: '40px' }}>Draft not found</div>;
+  if (loading) return <div style={{ padding: '40px', color: '#0f172a' }}>Loading...</div>;
+  if (!draft) return <div style={{ padding: '40px', color: '#0f172a' }}>Draft not found</div>;
 
   return (
-    <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
+    <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif', color: '#0f172a' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <Link to={`/leagues/${draft.league_id}`} style={{ color: '#2563eb', textDecoration: 'none' }}>
           ← Back to League
@@ -205,23 +205,35 @@ export default function DraftBoard() {
         <UserMenu />
       </div>
 
-      <h1>{draft.name}</h1>
-      <div style={{ marginBottom: '30px', padding: '20px', background: '#f3f4f6', borderRadius: '8px' }}>
-        <p style={{ margin: '0 0 10px 0' }}>
-          <strong>Status:</strong> <span style={{ textTransform: 'capitalize' }}>{draft.status}</span>
+      <h1 style={{ color: '#0f172a' }}>{draft.name}</h1>
+      <div style={{ marginBottom: '30px', padding: '20px', background: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#0f172a' }}>
+        <p style={{ margin: '0 0 8px 0', color: '#0f172a' }}>
+          <strong>Status:</strong>{' '}
+          <span style={{
+            textTransform: 'capitalize',
+            display: 'inline-block',
+            padding: '2px 10px',
+            borderRadius: '9999px',
+            fontSize: '13px',
+            fontWeight: '600',
+            background: draft.status === 'in_progress' ? '#dcfce7' : draft.status === 'paused' ? '#fef9c3' : '#f1f5f9',
+            color: draft.status === 'in_progress' ? '#166534' : draft.status === 'paused' ? '#713f12' : '#475569',
+          }}>
+            {draft.status}
+          </span>
         </p>
-        <p style={{ margin: '0 0 10px 0' }}>
+        <p style={{ margin: '0 0 8px 0', color: '#0f172a' }}>
           <strong>Pick #{draft.current_pick_number}</strong>
         </p>
         {draftSettings && (
-          <p style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#6b7280' }}>
+          <p style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#475569' }}>
             {draftSettings.draft_format === 'snake' ? 'Snake' : 'Linear'} Draft •
             {draftSettings.pick_timer_seconds === 0 ? ' Unlimited time' : ` ${draftSettings.pick_timer_seconds}s per pick`} •
             Roster: {draftSettings.roster_qb}QB {draftSettings.roster_rb}RB {draftSettings.roster_wr}WR {draftSettings.roster_te}TE {draftSettings.roster_flex}FLEX {draftSettings.roster_k}K {draftSettings.roster_dst}DST {draftSettings.bench}Bench
           </p>
         )}
         {currentParticipant && (
-          <p style={{ margin: '0', fontSize: '18px', color: '#059669', fontWeight: '600' }}>
+          <p style={{ margin: '0', fontSize: '17px', color: '#059669', fontWeight: '600' }}>
             On the clock: {currentParticipant.team_name}
           </p>
         )}
@@ -250,7 +262,7 @@ export default function DraftBoard() {
             border: 'none',
             borderRadius: '6px',
             cursor: 'pointer',
-            fontWeight: '500',
+            fontWeight: '600',
             fontSize: '16px',
             marginBottom: '20px'
           }}
@@ -259,16 +271,27 @@ export default function DraftBoard() {
         </button>
       )}
 
-      {draft.status === 'in_progress' && !currentParticipant && (
-        <div style={{
-          marginBottom: '20px',
-          padding: '12px',
-          background: '#fef3c7',
-          border: '1px solid #f59e0b',
-          borderRadius: '6px',
-          color: '#92400e'
-        }}>
-          No active participant. Draft may be complete or in an invalid state.
+      {draft.status === 'in_progress' && !currentParticipant && participants.length > 0 && (
+        <div style={{ marginBottom: '20px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ padding: '12px 16px', background: '#fef9c3', border: '1px solid #fde047', borderRadius: '6px', color: '#713f12', fontSize: '14px' }}>
+            No active participant set. Use the button to assign the next pick and make a selection.
+          </div>
+          <button
+            onClick={async () => {
+              const first = participants[0];
+              await supabase.from('drafts').update({ current_participant_id: first.id }).eq('id', draft.id);
+              setCurrentParticipant(first);
+            }}
+            style={{ padding: '12px 20px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '15px', whiteSpace: 'nowrap' }}
+          >
+            Set Pick 1 &amp; Make Pick
+          </button>
+        </div>
+      )}
+
+      {draft.status === 'in_progress' && !currentParticipant && participants.length === 0 && (
+        <div style={{ marginBottom: '20px', padding: '12px 16px', background: '#fef9c3', border: '1px solid #fde047', borderRadius: '6px', color: '#713f12', fontSize: '14px' }}>
+          No participants have joined this draft yet. Add participants before making picks.
         </div>
       )}
 
@@ -280,46 +303,59 @@ export default function DraftBoard() {
         />
       )}
 
-      <h2>Draft Order</h2>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px' }}>
-        {participants.map(p => (
+      <h2 style={{ color: '#0f172a' }}>Draft Order</h2>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '30px' }}>
+        {participants.length === 0 ? (
+          <p style={{ color: '#64748b' }}>No participants yet.</p>
+        ) : participants.map(p => (
           <div
             key={p.id}
             style={{
-              padding: '15px',
+              padding: '12px 16px',
               border: '2px solid',
-              borderColor: p.id === currentParticipant?.id ? '#059669' : '#e5e7eb',
-              borderRadius: '6px',
-              background: p.id === currentParticipant?.id ? '#f0fdf4' : 'white'
+              borderColor: p.id === currentParticipant?.id ? '#059669' : '#e2e8f0',
+              borderRadius: '7px',
+              background: p.id === currentParticipant?.id ? '#f0fdf4' : 'white',
+              color: '#0f172a',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
             }}
           >
-            <strong>Pick {p.draft_position}:</strong> {p.team_name}
+            <span style={{ fontWeight: '700', color: p.id === currentParticipant?.id ? '#059669' : '#64748b', minWidth: '28px' }}>
+              {p.draft_position}.
+            </span>
+            <span style={{ fontWeight: p.id === currentParticipant?.id ? '600' : '400' }}>{p.team_name}</span>
+            {p.id === currentParticipant?.id && (
+              <span style={{ marginLeft: 'auto', fontSize: '13px', fontWeight: '600', color: '#059669' }}>On the clock</span>
+            )}
           </div>
         ))}
       </div>
 
-      <h2>Picks Made ({picks.length})</h2>
+      <h2 style={{ color: '#0f172a' }}>Picks Made ({picks.length})</h2>
       {picks.length === 0 ? (
-        <p style={{ color: '#6b7280' }}>No picks yet</p>
+        <p style={{ color: '#64748b' }}>No picks yet.</p>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {picks.map(pick => {
             const participant = participants.find(p => p.id === pick.participant_id);
             return (
-              <div key={pick.id} style={{ padding: '15px', border: '1px solid #e5e7eb', borderRadius: '6px' }}>
+              <div key={pick.id} style={{ padding: '14px 16px', border: '1px solid #e2e8f0', borderRadius: '7px', background: 'white', color: '#0f172a' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <strong>Pick {pick.pick_number}</strong> (Rd {pick.round}, Pick {pick.pick_in_round})
+                    <span style={{ fontWeight: '700', color: '#0f172a' }}>Pick {pick.pick_number}</span>
+                    <span style={{ marginLeft: '8px', fontSize: '13px', color: '#64748b' }}>Rd {pick.round}, Pick {pick.pick_in_round}</span>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontWeight: '600' }}>{pick.player?.display_name ?? 'Unknown Player'}</div>
-                    <div style={{ color: '#6b7280', fontSize: '14px' }}>
+                    <div style={{ fontWeight: '600', color: '#0f172a' }}>{pick.player?.display_name ?? 'Unknown Player'}</div>
+                    <div style={{ fontSize: '13px', color: '#64748b' }}>
                       {pick.player?.fantasy_position ?? pick.player?.position ?? '—'}
-                      {pick.player?.team?.abbreviation ? ` - ${pick.player.team.abbreviation}` : ''}
+                      {pick.player?.team?.abbreviation ? ` · ${pick.player.team.abbreviation}` : ''}
                     </div>
                   </div>
                 </div>
-                <div style={{ marginTop: '5px', color: '#6b7280', fontSize: '14px' }}>
+                <div style={{ marginTop: '4px', fontSize: '13px', color: '#64748b' }}>
                   {participant?.team_name}
                 </div>
               </div>

@@ -206,6 +206,22 @@ export default function LeagueDetail() {
     }
   }
 
+  async function pauseDraft(draftId: string) {
+    await supabase.from('drafts').update({ status: 'paused' }).eq('id', draftId);
+    await loadLeagueData();
+  }
+
+  async function resumeDraft(draftId: string) {
+    await supabase.from('drafts').update({ status: 'in_progress' }).eq('id', draftId);
+    await loadLeagueData();
+  }
+
+  async function deleteDraft(draftId: string, draftName: string) {
+    if (!window.confirm(`Delete draft "${draftName}"? This cannot be undone.`)) return;
+    await supabase.from('drafts').delete().eq('id', draftId);
+    await loadLeagueData();
+  }
+
   async function revokeInvite(inviteId: string) {
     const { error } = await supabase.from('league_invites').delete().eq('id', inviteId);
     if (!error) await loadLeagueData();
@@ -416,33 +432,43 @@ export default function LeagueDetail() {
                       Status: {draft.status} • Type: {draft.draft_type}
                     </p>
                   </div>
-                  <div style={{ display: 'flex', gap: '10px' }}>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    {isOwner && draft.status === 'in_progress' && (
+                      <button
+                        onClick={() => pauseDraft(draft.id)}
+                        style={{ padding: '8px 14px', background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', borderRadius: '6px', fontSize: '14px', cursor: 'pointer', fontWeight: '500' }}
+                      >
+                        Pause
+                      </button>
+                    )}
+                    {isOwner && draft.status === 'paused' && (
+                      <button
+                        onClick={() => resumeDraft(draft.id)}
+                        style={{ padding: '8px 14px', background: '#f0fdf4', color: '#166534', border: '1px solid #86efac', borderRadius: '6px', fontSize: '14px', cursor: 'pointer', fontWeight: '500' }}
+                      >
+                        Resume
+                      </button>
+                    )}
                     <Link
                       to={`/drafts/${draft.id}/participants`}
-                      style={{
-                        padding: '8px 16px',
-                        background: '#f3f4f6',
-                        color: '#374151',
-                        textDecoration: 'none',
-                        borderRadius: '6px',
-                        fontSize: '14px'
-                      }}
+                      style={{ padding: '8px 14px', background: '#f3f4f6', color: '#374151', textDecoration: 'none', borderRadius: '6px', fontSize: '14px' }}
                     >
                       Manage Participants
                     </Link>
                     <Link
                       to={`/drafts/${draft.id}`}
-                      style={{
-                        padding: '8px 16px',
-                        background: '#2563eb',
-                        color: 'white',
-                        textDecoration: 'none',
-                        borderRadius: '6px',
-                        fontSize: '14px'
-                      }}
+                      style={{ padding: '8px 14px', background: '#2563eb', color: 'white', textDecoration: 'none', borderRadius: '6px', fontSize: '14px' }}
                     >
                       View Draft
                     </Link>
+                    {isOwner && (
+                      <button
+                        onClick={() => deleteDraft(draft.id, draft.name)}
+                        style={{ padding: '8px 14px', background: 'none', color: '#dc2626', border: '1px solid #dc2626', borderRadius: '6px', fontSize: '14px', cursor: 'pointer', fontWeight: '500' }}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
