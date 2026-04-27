@@ -69,6 +69,18 @@ export default function JoinLeague() {
     setTimeout(() => navigate(`/leagues/${leagueId}`), 1500);
   }
 
+  if (!user && status !== 'loading') {
+    return (
+      <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif', maxWidth: '500px', margin: '0 auto' }}>
+        <div style={{ padding: '30px', background: 'white', borderRadius: '8px', border: '1px solid #e5e7eb', textAlign: 'center' }}>
+          <h2 style={{ marginTop: 0 }}>Sign in to join</h2>
+          <p style={{ color: '#6b7280' }}>You need to sign in before joining a league.</p>
+          <Link to={`/login?redirect=/leagues/join/${inviteId}`} style={{ color: '#2563eb' }}>Sign in</Link>
+        </div>
+      </div>
+    );
+  }
+
   if (status === 'loading') {
     return <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif', color: '#f9fafb' }}>Checking invite...</div>;
   }
@@ -149,6 +161,3 @@ export default function JoinLeague() {
     </div>
   );
 }
-
-
-export default JoinLeague
