@@ -146,42 +146,36 @@ export default function DraftBoard() {
     const pickNumber = draft.current_pick_number;
     const round = Math.ceil(pickNumber / participants.length);
     const pickInRound = ((pickNumber - 1) % participants.length) + 1;
-
-    const { error: pickError } = await supabase
-      .from('draft_picks')
-      .insert({
-        draft_id: draftId!,
-        participant_id: currentParticipant.id,
-        player_id: playerId,
-        pick_number: pickNumber,
-        round,
-        pick_in_round: pickInRound,
-        picked_at: new Date().toISOString(),
-        time_taken_seconds: 0,
-        is_autopick: false
-      });
-
-    if (pickError) {
-      setError('Error making pick: ' + pickError.message);
-      setShowPlayerSearch(false);
-      return;
-    }
-
     const nextPickNumber = pickNumber + 1;
     const nextParticipant = getNextParticipant(pickNumber);
 
-    const { error: draftError } = await supabase
-      .from('drafts')
-      .update({
-        current_pick_number: nextPickNumber,
-        current_participant_id: nextParticipant?.id ?? null
-      })
-      .eq('id', draftId!);
+    const isForcePick = isOwner && currentParticipant.user_id !== user?.id;
 
-    if (draftError) {
-      setError('Error updating draft: ' + draftError.message);
-      setShowPlayerSearch(false);
-      return;
+    if (isForcePick) {
+      // Owner force-picking: two separate queries using the owner's UPDATE rights
+      const { error: pickError } = await supabase.from('draft_picks').insert({
+        draft_id: draftId!, participant_id: currentParticipant.id, player_id: playerId,
+        pick_number: pickNumber, round, pick_in_round: pickInRound,
+        picked_at: new Date().toISOString(), time_taken_seconds: 0, is_autopick: false,
+      });
+      if (pickError) { setError('Error making pick: ' + pickError.message); setShowPlayerSearch(false); return; }
+
+      const { error: advErr } = await supabase.from('drafts')
+        .update({ current_pick_number: nextPickNumber, current_participant_id: nextParticipant?.id ?? null })
+        .eq('id', draftId!);
+      if (advErr) { setError('Error advancing draft: ' + advErr.message); setShowPlayerSearch(false); return; }
+    } else {
+      // Normal pick: atomic RPC that verifies it's actually the caller's turn
+      const { error: rpcError } = await supabase.rpc('advance_draft_turn', {
+        p_draft_id:            draftId!,
+        p_player_id:           playerId,
+        p_pick_number:         pickNumber,
+        p_round:               round,
+        p_pick_in_round:       pickInRound,
+        p_next_pick_number:    nextPickNumber,
+        p_next_participant_id: nextParticipant?.id ?? null,
+      });
+      if (rpcError) { setError('Error making pick: ' + rpcError.message); setShowPlayerSearch(false); return; }
     }
 
     if (nextParticipant && nextParticipant.user_id) {
