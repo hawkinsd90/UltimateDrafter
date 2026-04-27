@@ -14,31 +14,36 @@ export async function enqueueNotification(input: EnqueueNotificationInput): Prom
     const { channel, userId, leagueId, teamId, templateKey, payload, messageText } = input;
 
     const { data: { session } } = await supabase.auth.getSession();
-    const headers: Record<string, string> = {};
+    const supabaseUrl = (supabase as unknown as { supabaseUrl: string }).supabaseUrl
+      ?? import.meta.env.VITE_SUPABASE_URL;
+    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Apikey': anonKey,
+    };
     if (session?.access_token) {
       headers['Authorization'] = `Bearer ${session.access_token}`;
+    } else {
+      headers['Authorization'] = `Bearer ${anonKey}`;
     }
 
-    const { data, error } = await supabase.functions.invoke('enqueue-notification', {
-      body: { channel, userId, leagueId, teamId, templateKey, payload, messageText },
+    const res = await fetch(`${supabaseUrl}/functions/v1/enqueue-notification`, {
+      method: 'POST',
       headers,
+      body: JSON.stringify({ channel, userId, leagueId, teamId, templateKey, payload, messageText }),
     });
 
-    if (error) {
-      console.error('Edge function error:', error);
-      return {
-        success: false,
-        error: error.message || 'Failed to invoke notification function'
-      };
+    if (!res.ok) {
+      const text = await res.text();
+      console.error('enqueue-notification error:', res.status, text);
+      return { success: false, error: `HTTP ${res.status}` };
     }
 
-    return data as EnqueueResult;
+    return await res.json() as EnqueueResult;
   } catch (err) {
     console.error('Error enqueueing notification:', err);
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : 'Unknown error'
-    };
+    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
   }
 }
 
