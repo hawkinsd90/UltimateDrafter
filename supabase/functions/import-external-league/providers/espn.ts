@@ -18,7 +18,7 @@ type EspnParams =
   | { leagueId: string; season: number; isPrivate: false }
   | { leagueId: string; season: number; isPrivate: true; swid: string; espnS2: string };
 
-const ESPN_API_BASE = "https://fantasy.espn.com/apis/v3/games/ffl/seasons";
+const ESPN_API_BASE = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons";
 
 export async function fetchEspnLeague(params: EspnParams): Promise<NormalizedImport> {
   const { leagueId, season } = params;
