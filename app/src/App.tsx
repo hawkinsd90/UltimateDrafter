@@ -17,6 +17,7 @@ import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import About from './pages/About';
 import SmsConsent from './pages/SmsConsent';
+import Admin from './pages/Admin';
 
 export default function App() {
   return (
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="/terms" element={<Terms />} />
             <Route path="/about" element={<About />} />
             <Route path="/sms-consent" element={<SmsConsent />} />
+            <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
           </Routes>
         </PhoneVerificationGate>
       </AuthProvider>

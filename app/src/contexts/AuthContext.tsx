@@ -6,6 +6,7 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   isLoadingAuth: boolean;
+  isAdmin: boolean;
   signInWithGoogle: (returnTo?: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -18,6 +19,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  async function checkAdmin(userId: string) {
+    const { data } = await supabase
+      .from('admin_users')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
+    setIsAdmin(!!data);
+  }
 
   useEffect(() => {
     if (import.meta.env.DEV) {
@@ -37,6 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(session);
       setUser(session?.user ?? null);
       setIsLoadingAuth(false);
+      if (session?.user) checkAdmin(session.user.id);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
@@ -44,6 +56,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(session);
         setUser(session?.user ?? null);
         setIsLoadingAuth(false);
+        if (session?.user) checkAdmin(session.user.id);
+        else setIsAdmin(false);
 
         if (event === 'SIGNED_OUT') {
           sessionStorage.removeItem(RETURN_URL_KEY);
@@ -85,6 +99,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user,
     session,
     isLoadingAuth,
+    isAdmin,
     signInWithGoogle,
     signOut
   };
