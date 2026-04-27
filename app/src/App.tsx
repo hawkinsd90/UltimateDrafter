@@ -18,6 +18,7 @@ import Terms from './pages/Terms';
 import About from './pages/About';
 import SmsConsent from './pages/SmsConsent';
 import Admin from './pages/Admin';
+import ExternalLeagueImportWizard from './pages/ExternalLeagueImportWizard';
 
 export default function App() {
   return (
@@ -34,6 +35,7 @@ export default function App() {
             <Route path="/leagues/:leagueId/drafts/create" element={<ProtectedRoute><CreateDraft /></ProtectedRoute>} />
             <Route path="/drafts/:draftId" element={<ProtectedRoute><DraftBoard /></ProtectedRoute>} />
             <Route path="/drafts/:draftId/participants" element={<ProtectedRoute><ManageParticipants /></ProtectedRoute>} />
+            <Route path="/drafts/:draftId/import" element={<ProtectedRoute><ExternalLeagueImportWizard /></ProtectedRoute>} />
             <Route path="/leagues/join/:inviteId" element={<ProtectedRoute><JoinLeague /></ProtectedRoute>} />
             <Route path="/settings/notifications" element={<ProtectedRoute><NotificationSettings /></ProtectedRoute>} />
             <Route path="/privacy" element={<Privacy />} />

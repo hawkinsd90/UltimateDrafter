@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import UserMenu from '../components/UserMenu';
 
 type Draft = {
   id: string;
   league_id: string;
+  league_owner_id: string;
   name: string;
   status: string;
 };
@@ -27,6 +29,7 @@ type Participant = {
 export default function ManageParticipants() {
   const { draftId } = useParams<{ draftId: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [draft, setDraft] = useState<Draft | null>(null);
   const [leagueMembers, setLeagueMembers] = useState<LeagueMember[]>([]);
@@ -53,7 +56,14 @@ export default function ManageParticipants() {
       setLoading(false);
       return;
     }
-    setDraft(draftData);
+
+    const { data: leagueData } = await supabase
+      .from('leagues')
+      .select('owner_id')
+      .eq('id', draftData.league_id)
+      .maybeSingle();
+
+    setDraft({ ...draftData, league_owner_id: leagueData?.owner_id ?? '' });
 
     const [membersRes, existingRes] = await Promise.all([
       supabase
@@ -309,6 +319,29 @@ export default function ManageParticipants() {
             ))}
           </div>
         </div>
+      )}
+
+      {draft.status === 'pending' && user?.id === draft.league_owner_id && (
+        <Link
+          to={`/drafts/${draft.id}/import`}
+          style={{
+            display: 'block',
+            width: '100%',
+            padding: '14px',
+            marginBottom: '12px',
+            background: 'white',
+            color: '#1d4ed8',
+            border: '1px solid #bfdbfe',
+            borderRadius: '8px',
+            fontWeight: '600',
+            fontSize: '16px',
+            textAlign: 'center',
+            textDecoration: 'none',
+            boxSizing: 'border-box',
+          }}
+        >
+          Import ESPN / Sleeper League
+        </Link>
       )}
 
       <button
