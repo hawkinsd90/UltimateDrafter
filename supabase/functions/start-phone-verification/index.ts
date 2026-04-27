@@ -171,9 +171,20 @@ Deno.serve(async (req: Request) => {
     // process-notifications-outbox is NOT used for OTP delivery.
     // notifications_outbox is written as an audit record only, after the Twilio attempt.
 
-    const twilioAccountSid = Deno.env.get("TWILIO_ACCOUNT_SID");
-    const twilioAuthToken = Deno.env.get("TWILIO_AUTH_TOKEN");
-    const twilioFromNumber = Deno.env.get("TWILIO_FROM_NUMBER");
+    const twilioAccountSid = Deno.env.get("TWILIO_ACCOUNT_SID")?.trim();
+    const twilioAuthToken = Deno.env.get("TWILIO_AUTH_TOKEN")?.trim();
+    const twilioFromNumber = Deno.env.get("TWILIO_FROM_NUMBER")?.trim();
+
+    // Temporary diagnostic logging — token value is never logged
+    console.log("[start-phone-verification] Twilio credential check:", {
+      hasAccountSid: !!twilioAccountSid,
+      accountSidPrefix: twilioAccountSid ? twilioAccountSid.slice(0, 2) : null,
+      accountSidLength: twilioAccountSid?.length ?? 0,
+      hasAuthToken: !!twilioAuthToken,
+      authTokenLength: twilioAuthToken?.length ?? 0,
+      hasFromNumber: !!twilioFromNumber,
+      fromNumber: twilioFromNumber ?? null,
+    });
 
     if (!twilioAccountSid || !twilioAuthToken || !twilioFromNumber) {
       console.error("[start-phone-verification] Twilio credentials not configured");
