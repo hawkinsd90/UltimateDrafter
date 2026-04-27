@@ -57,13 +57,7 @@ export default function ManageParticipants() {
       return;
     }
 
-    const { data: leagueData } = await supabase
-      .from('leagues')
-      .select('owner_id')
-      .eq('id', draftData.league_id)
-      .maybeSingle();
-
-    setDraft({ ...draftData, league_owner_id: leagueData?.owner_id ?? '' });
+    setDraft({ ...draftData, league_owner_id: '' }); // filled after members load
 
     const [membersRes, existingRes] = await Promise.all([
       supabase
@@ -80,6 +74,13 @@ export default function ManageParticipants() {
 
     const members: LeagueMember[] = membersRes.data ?? [];
     setLeagueMembers(members);
+
+    // Derive owner from league_members — avoids a separate leagues query
+    // and works regardless of leagues RLS policy variations.
+    const ownerMember = members.find(m => m.role === 'owner');
+    if (ownerMember?.user_id) {
+      setDraft(prev => prev ? { ...prev, league_owner_id: ownerMember.user_id! } : prev);
+    }
 
     if (existingRes.data && existingRes.data.length > 0) {
       const saved: Participant[] = existingRes.data.map((p: any) => {
