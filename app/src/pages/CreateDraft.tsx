@@ -57,7 +57,7 @@ export default function CreateDraft() {
         league_id: leagueId!,
         name,
         draft_type: leagueSettings.draft_format,
-        status: 'setup',
+        status: 'pending',
         current_pick_number: 1,
         pick_time_seconds: leagueSettings.pick_timer_seconds,
         settings: {}
