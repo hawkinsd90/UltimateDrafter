@@ -286,14 +286,25 @@ export default function ManageParticipants() {
                   {p.draftPosition}
                 </span>
                 <span style={{ color: '#9ca3af', fontSize: '20px', flexShrink: 0, lineHeight: 1 }}>⠿</span>
-                <input
-                  type="text"
-                  value={p.displayName}
-                  onChange={(e) => updateName(p.memberId, e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  style={{ flex: 1, padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', color: '#111827' }}
-                />
+                <div style={{ flex: 1 }}>
+                  <input
+                    type="text"
+                    value={p.displayName}
+                    onChange={(e) => updateName(p.memberId, e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '14px', color: '#111827', boxSizing: 'border-box' }}
+                  />
+                  {(() => {
+                    const member = leagueMembers.find(m => m.id === p.memberId);
+                    const label = member?.display_name ?? member?.phone_e164 ?? null;
+                    return label ? (
+                      <div style={{ marginTop: '3px', fontSize: '12px', color: '#6b7280', paddingLeft: '2px' }}>
+                        {label}
+                      </div>
+                    ) : null;
+                  })()}
+                </div>
               </div>
             ))}
           </div>
