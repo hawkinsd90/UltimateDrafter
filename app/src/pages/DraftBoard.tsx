@@ -76,10 +76,20 @@ export default function DraftBoard() {
     setLoading(false);
   }
 
+  function reloadPicks() {
+    supabase
+      .from('draft_picks')
+      .select('*, player:sports_players(display_name, fantasy_position, position, team:sports_teams(abbreviation))')
+      .eq('draft_id', draftId!)
+      .order('pick_number', { ascending: true })
+      .then(({ data }) => {
+        if (data) setPicks(data as Pick[]);
+      });
+  }
+
   function subscribeToLiveUpdates() {
-    // Listen for any change to this draft row (status, current pick, current participant)
-    const draftSub = supabase
-      .channel(`draft-${draftId}`)
+    const channel = supabase
+      .channel(`draft-board-${draftId}`)
       .on('postgres_changes', {
         event: 'UPDATE',
         schema: 'public',
@@ -90,28 +100,35 @@ export default function DraftBoard() {
         setDraft(updated);
         const current = participantsRef.current.find(p => p.id === updated.current_participant_id) ?? null;
         setCurrentParticipant(current);
+        // Reload picks in case the draft advance happened from another client
+        reloadPicks();
       })
-      // Listen for new picks being inserted
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
         table: 'draft_picks',
         filter: `draft_id=eq.${draftId}`,
       }, () => {
-        // Reload picks with player join — realtime payload doesn't include joined data
-        supabase
-          .from('draft_picks')
-          .select('*, player:sports_players(display_name, fantasy_position, position, team:sports_teams(abbreviation))')
-          .eq('draft_id', draftId!)
-          .order('pick_number', { ascending: true })
-          .then(({ data }) => {
-            if (data) setPicks(data as Pick[]);
-          });
+        reloadPicks();
       })
-      .subscribe();
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'draft_picks',
+        filter: `draft_id=eq.${draftId}`,
+      }, () => {
+        reloadPicks();
+      })
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          // Re-subscribe on error
+          supabase.removeChannel(channel);
+          subscribeToLiveUpdates();
+        }
+      });
 
     return () => {
-      supabase.removeChannel(draftSub);
+      supabase.removeChannel(channel);
     };
   }
 
@@ -230,6 +247,17 @@ export default function DraftBoard() {
   if (!draft) return <div style={{ padding: '40px', color: '#0f172a' }}>Draft not found</div>;
 
   const isOwner = user && league && league.owner_id === user.id;
+
+  // Round / rounds-remaining calculations
+  const totalRounds = draftSettings
+    ? (draftSettings.roster_qb ?? 0) + (draftSettings.roster_rb ?? 0) + (draftSettings.roster_wr ?? 0) +
+      (draftSettings.roster_te ?? 0) + (draftSettings.roster_flex ?? 0) + (draftSettings.roster_k ?? 0) +
+      (draftSettings.roster_dst ?? 0) + (draftSettings.bench ?? 0)
+    : null;
+  const currentRound = participants.length > 0
+    ? Math.ceil(draft.current_pick_number / participants.length)
+    : 1;
+  const roundsRemaining = totalRounds != null ? Math.max(0, totalRounds - currentRound + 1) : null;
   // The logged-in user's participant record in this draft
   const myParticipant = participants.find(p => p.user_id === user?.id) ?? null;
   const isMyTurn = currentParticipant && myParticipant && currentParticipant.id === myParticipant.id;
@@ -268,6 +296,11 @@ export default function DraftBoard() {
         </div>
         <p style={{ margin: '0 0 6px 0', color: '#0f172a' }}>
           <strong>Pick #{draft.current_pick_number}</strong>
+          {totalRounds != null && (
+            <span style={{ marginLeft: '12px', color: '#475569', fontWeight: '400', fontSize: '14px' }}>
+              Round {currentRound} of {totalRounds} · {roundsRemaining} round{roundsRemaining !== 1 ? 's' : ''} remaining
+            </span>
+          )}
         </p>
         {draftSettings && (
           <p style={{ margin: '0 0 6px 0', fontSize: '14px', color: '#475569' }}>
