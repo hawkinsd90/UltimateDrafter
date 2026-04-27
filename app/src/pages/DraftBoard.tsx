@@ -11,7 +11,12 @@ type League = Database['public']['Tables']['leagues']['Row'];
 type DraftSettings = Database['public']['Tables']['draft_settings']['Row'];
 type Participant = Database['public']['Tables']['draft_participants']['Row'];
 type Pick = Database['public']['Tables']['draft_picks']['Row'] & {
-  player?: { name: string; position: string; team: string | null };
+  player?: {
+    display_name: string;
+    fantasy_position: string | null;
+    position: string | null;
+    team: { abbreviation: string | null } | null;
+  } | null;
 };
 
 export default function DraftBoard() {
@@ -42,7 +47,7 @@ export default function DraftBoard() {
 
     const [participantsRes, picksRes, leagueRes, settingsRes] = await Promise.all([
       supabase.from('draft_participants').select('*').eq('draft_id', draftId!).order('draft_position', { ascending: true }),
-      supabase.from('draft_picks').select('*, player:players(name, position, team)').eq('draft_id', draftId!).order('pick_number', { ascending: true }),
+      supabase.from('draft_picks').select('*, player:sports_players(display_name, fantasy_position, position, team:sports_teams(abbreviation))').eq('draft_id', draftId!).order('pick_number', { ascending: true }),
       supabase.from('leagues').select('*').eq('id', draftRes.data.league_id).single(),
       supabase.from('draft_settings').select('*').eq('draft_id', draftId!).maybeSingle()
     ]);
@@ -307,9 +312,10 @@ export default function DraftBoard() {
                     <strong>Pick {pick.pick_number}</strong> (Rd {pick.round}, Pick {pick.pick_in_round})
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontWeight: '600' }}>{pick.player?.name || 'Unknown Player'}</div>
+                    <div style={{ fontWeight: '600' }}>{pick.player?.display_name ?? 'Unknown Player'}</div>
                     <div style={{ color: '#6b7280', fontSize: '14px' }}>
-                      {pick.player?.position} - {pick.player?.team || 'FA'}
+                      {pick.player?.fantasy_position ?? pick.player?.position ?? '—'}
+                      {pick.player?.team?.abbreviation ? ` - ${pick.player.team.abbreviation}` : ''}
                     </div>
                   </div>
                 </div>

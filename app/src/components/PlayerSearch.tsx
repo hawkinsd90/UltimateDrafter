@@ -1,8 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import type { Database } from '../types/supabase';
 
-type Player = Database['public']['Tables']['players']['Row'];
+type DraftPoolPlayer = {
+  id: string;
+  display_name: string;
+  fantasy_position: string | null;
+  position: string | null;
+  status: string | null;
+  injury_status: string | null;
+  team_abbr: string | null;
+  team_name: string | null;
+  headshot_url: string | null;
+  years_exp: number | null;
+};
 
 interface PlayerSearchProps {
   draftId: string;
@@ -10,23 +20,37 @@ interface PlayerSearchProps {
   onClose: () => void;
 }
 
+const POSITIONS = ['All', 'QB', 'RB', 'WR', 'TE', 'K', 'DST'] as const;
+type PositionFilter = typeof POSITIONS[number];
+
+const INJURY_COLORS: Record<string, string> = {
+  'Questionable': '#d97706',
+  'Doubtful':     '#dc2626',
+  'Out':          '#dc2626',
+  'IR':           '#7c3aed',
+};
+
 export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: PlayerSearchProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [players, setPlayers] = useState<Player[]>([]);
+  const [positionFilter, setPositionFilter] = useState<PositionFilter>('All');
+  const [players, setPlayers] = useState<DraftPoolPlayer[]>([]);
   const [pickedPlayerIds, setPickedPlayerIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     loadPickedPlayers();
   }, [draftId]);
 
   useEffect(() => {
-    if (searchTerm.length >= 2) {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
       searchPlayers();
-    } else {
-      setPlayers([]);
-    }
-  }, [searchTerm]);
+    }, 250);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [searchTerm, positionFilter]);
 
   async function loadPickedPlayers() {
     const { data } = await supabase
@@ -42,118 +66,209 @@ export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: Playe
 
   async function searchPlayers() {
     setLoading(true);
-    const { data } = await supabase
-      .from('players')
-      .select('*')
-      .ilike('name', `%${searchTerm}%`)
-      .order('name')
-      .limit(20);
 
-    if (data) {
-      setPlayers(data);
+    let query = supabase
+      .from('nfl_draft_player_pool')
+      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, team_name, headshot_url, years_exp')
+      .order('display_name')
+      .limit(50);
+
+    if (positionFilter !== 'All') {
+      query = query.eq('fantasy_position', positionFilter);
     }
+
+    if (searchTerm.length >= 2) {
+      query = query.ilike('display_name', `%${searchTerm}%`);
+    } else if (searchTerm.length > 0) {
+      setPlayers([]);
+      setLoading(false);
+      return;
+    }
+
+    const { data } = await query;
+    setPlayers((data as DraftPoolPlayer[]) ?? []);
     setLoading(false);
   }
+
+  const showResults = searchTerm.length >= 2 || positionFilter !== 'All';
 
   return (
     <div
       style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0, 0, 0, 0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 1000,
       }}
       onClick={onClose}
     >
       <div
         style={{
-          background: 'white',
-          borderRadius: '8px',
-          padding: '30px',
-          maxWidth: '600px',
-          width: '90%',
-          maxHeight: '80vh',
-          overflow: 'auto'
+          background: 'white', borderRadius: '10px', padding: '24px',
+          maxWidth: '640px', width: '94%', maxHeight: '85vh',
+          display: 'flex', flexDirection: 'column',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
         }}
-        onClick={(e) => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h2 style={{ margin: 0 }}>Select Player</h2>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#0f172a' }}>Select Player</h2>
           <button
             onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: '24px',
-              cursor: 'pointer',
-              color: '#6b7280'
-            }}
+            style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer', color: '#94a3b8', lineHeight: 1, padding: '4px' }}
           >
             ×
           </button>
         </div>
 
+        {/* Search input */}
         <input
           type="text"
           value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          placeholder="Search players..."
+          onChange={e => setSearchTerm(e.target.value)}
+          placeholder="Search by name…"
           autoFocus
           style={{
-            width: '100%',
-            padding: '12px',
-            border: '1px solid #d1d5db',
-            borderRadius: '6px',
-            fontSize: '16px',
-            marginBottom: '20px'
+            width: '100%', padding: '10px 14px',
+            border: '1px solid #cbd5e1', borderRadius: '7px',
+            fontSize: '15px', color: '#0f172a', boxSizing: 'border-box',
+            marginBottom: '12px', outline: 'none',
           }}
         />
 
-        {loading && <p style={{ color: '#6b7280' }}>Searching...</p>}
+        {/* Position filter tabs */}
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
+          {POSITIONS.map(pos => (
+            <button
+              key={pos}
+              onClick={() => setPositionFilter(pos)}
+              style={{
+                padding: '5px 13px',
+                borderRadius: '20px',
+                border: positionFilter === pos ? 'none' : '1px solid #e2e8f0',
+                background: positionFilter === pos ? '#2563eb' : 'white',
+                color: positionFilter === pos ? 'white' : '#475569',
+                fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+              }}
+            >
+              {pos}
+            </button>
+          ))}
+        </div>
 
-        {searchTerm.length < 2 && (
-          <p style={{ color: '#6b7280' }}>Type at least 2 characters to search</p>
-        )}
+        {/* Results */}
+        <div style={{ overflowY: 'auto', flex: 1 }}>
+          {loading && (
+            <p style={{ color: '#94a3b8', fontSize: '14px', textAlign: 'center', padding: '20px 0' }}>Searching…</p>
+          )}
 
-        {players.length === 0 && searchTerm.length >= 2 && !loading && (
-          <p style={{ color: '#6b7280' }}>No players found</p>
-        )}
+          {!loading && !showResults && (
+            <p style={{ color: '#94a3b8', fontSize: '14px', textAlign: 'center', padding: '20px 0' }}>
+              Type at least 2 characters or select a position to browse.
+            </p>
+          )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {players.map(player => {
-            const isAlreadyPicked = pickedPlayerIds.has(player.id);
-            return (
-              <button
-                key={player.id}
-                onClick={() => !isAlreadyPicked && onSelectPlayer(player.id)}
-                disabled={isAlreadyPicked}
-                style={{
-                  padding: '15px',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '6px',
-                  background: isAlreadyPicked ? '#f3f4f6' : 'white',
-                  cursor: isAlreadyPicked ? 'not-allowed' : 'pointer',
-                  textAlign: 'left',
-                  opacity: isAlreadyPicked ? 0.5 : 1
-                }}
-              >
-                <div style={{ fontWeight: '600', marginBottom: '5px' }}>
-                  {player.name} {isAlreadyPicked && '(Picked)'}
-                </div>
-                <div style={{ color: '#6b7280', fontSize: '14px' }}>
-                  {player.position} - {player.team || 'Free Agent'}
-                </div>
-              </button>
-            );
-          })}
+          {!loading && showResults && players.length === 0 && (
+            <p style={{ color: '#94a3b8', fontSize: '14px', textAlign: 'center', padding: '20px 0' }}>No players found.</p>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {players.map(player => {
+              const isPicked = pickedPlayerIds.has(player.id);
+              const injuryLabel = player.injury_status;
+              const injuryColor = injuryLabel ? (INJURY_COLORS[injuryLabel] ?? '#64748b') : null;
+
+              return (
+                <button
+                  key={player.id}
+                  onClick={() => !isPicked && onSelectPlayer(player.id)}
+                  disabled={isPicked}
+                  style={{
+                    padding: '11px 14px',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '7px',
+                    background: isPicked ? '#f8fafc' : 'white',
+                    cursor: isPicked ? 'not-allowed' : 'pointer',
+                    textAlign: 'left',
+                    opacity: isPicked ? 0.5 : 1,
+                    display: 'flex', alignItems: 'center', gap: '12px',
+                  }}
+                >
+                  {/* Headshot */}
+                  {player.headshot_url ? (
+                    <img
+                      src={player.headshot_url}
+                      alt=""
+                      style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0, background: '#f1f5f9' }}
+                      onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                    />
+                  ) : (
+                    <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#e2e8f0', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', color: '#94a3b8' }}>
+                      {player.fantasy_position === 'DST' ? 'D' : '?'}
+                    </div>
+                  )}
+
+                  {/* Info */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: '600', fontSize: '14px', color: '#0f172a' }}>
+                        {player.display_name}
+                        {isPicked && <span style={{ marginLeft: '6px', fontSize: '12px', color: '#94a3b8' }}>(Picked)</span>}
+                      </span>
+                      {injuryLabel && injuryColor && (
+                        <span style={{ fontSize: '11px', fontWeight: '600', color: injuryColor }}>
+                          {injuryLabel}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
+                      {player.team_abbr
+                        ? `${player.team_abbr} · ${player.fantasy_position ?? player.position ?? '—'}`
+                        : (player.fantasy_position ?? player.position ?? '—')
+                      }
+                    </div>
+                  </div>
+
+                  {/* Position badge */}
+                  <span style={{
+                    padding: '3px 9px', borderRadius: '5px', fontSize: '12px', fontWeight: '700',
+                    background: positionBadgeBg(player.fantasy_position),
+                    color: positionBadgeColor(player.fantasy_position),
+                    flexShrink: 0,
+                  }}>
+                    {player.fantasy_position ?? player.position ?? '—'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
   );
+}
+
+function positionBadgeBg(pos: string | null): string {
+  switch (pos) {
+    case 'QB':  return '#dbeafe';
+    case 'RB':  return '#dcfce7';
+    case 'WR':  return '#fef9c3';
+    case 'TE':  return '#ffedd5';
+    case 'K':   return '#f3e8ff';
+    case 'DST': return '#fee2e2';
+    default:    return '#f1f5f9';
+  }
+}
+
+function positionBadgeColor(pos: string | null): string {
+  switch (pos) {
+    case 'QB':  return '#1d4ed8';
+    case 'RB':  return '#166534';
+    case 'WR':  return '#854d0e';
+    case 'TE':  return '#9a3412';
+    case 'K':   return '#6b21a8';
+    case 'DST': return '#991b1b';
+    default:    return '#475569';
+  }
 }

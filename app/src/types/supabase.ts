@@ -512,7 +512,23 @@ export interface Database {
       }
     }
     Views: {
-      [_ in never]: never
+      nfl_draft_player_pool: {
+        Row: {
+          id: string
+          provider: string
+          provider_player_id: string
+          display_name: string
+          position: string | null
+          fantasy_position: string | null
+          status: string | null
+          injury_status: string | null
+          team_abbr: string | null
+          team_name: string | null
+          headshot_url: string | null
+          years_exp: number | null
+          updated_at: string
+        }
+      }
     }
     Functions: {
       [_ in never]: never
