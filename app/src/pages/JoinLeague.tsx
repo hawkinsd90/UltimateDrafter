@@ -53,48 +53,20 @@ export default function JoinLeague() {
     setStatus('joining');
     setErrorMsg('');
 
-    // mark invite accepted
-    const { data: invite, error: inviteError } = await supabase
-      .from('league_invites')
-      .update({ accepted_at: new Date().toISOString() })
-      .eq('id', inviteId)
-      .select()
-      .single();
+    const name = displayName.trim() || user.email?.split('@')[0] || 'Member';
+    const { data: leagueId, error } = await supabase.rpc('accept_league_invite', {
+      p_invite_id: inviteId,
+      p_display_name: name,
+    });
 
-    if (inviteError || !invite) {
-      setErrorMsg('Failed to accept invite: ' + (inviteError?.message ?? 'unknown'));
+    if (error || !leagueId) {
+      setErrorMsg('Failed to join league: ' + (error?.message ?? 'unknown'));
       setStatus('ready');
       return;
     }
 
-    // check if already a member
-    const { data: existing } = await supabase
-      .from('league_members')
-      .select('id')
-      .eq('league_id', invite.league_id)
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (!existing) {
-      const { error: memberError } = await supabase
-        .from('league_members')
-        .insert({
-          league_id: invite.league_id,
-          user_id: user.id,
-          display_name: displayName.trim() || user.email?.split('@')[0] || 'Member',
-          phone_e164: invite.phone_e164 ?? undefined,
-          role: 'member',
-        });
-
-      if (memberError) {
-        setErrorMsg('Failed to join league: ' + memberError.message);
-        setStatus('ready');
-        return;
-      }
-    }
-
     setStatus('done');
-    setTimeout(() => navigate(`/leagues/${invite.league_id}`), 1500);
+    setTimeout(() => navigate(`/leagues/${leagueId}`), 1500);
   }
 
   if (status === 'loading') {
@@ -177,3 +149,6 @@ export default function JoinLeague() {
     </div>
   );
 }
+
+
+export default JoinLeague
