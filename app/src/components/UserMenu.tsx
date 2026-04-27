@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function UserMenu() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, isAdmin } = useAuth();
 
   if (!user) return null;
 
@@ -17,6 +17,23 @@ export default function UserMenu() {
       fontSize: '14px'
     }}>
       <span style={{ color: '#cbd5e0' }}>{user.email}</span>
+      {isAdmin && (
+        <Link
+          to="/admin"
+          style={{
+            padding: '6px 12px',
+            background: '#1a2332',
+            color: '#f6ad55',
+            border: '1px solid #744210',
+            borderRadius: '4px',
+            textDecoration: 'none',
+            fontSize: '14px',
+            fontWeight: '500'
+          }}
+        >
+          Admin
+        </Link>
+      )}
       <Link
         to="/settings/notifications"
         style={{
