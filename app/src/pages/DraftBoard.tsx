@@ -201,7 +201,18 @@ export default function DraftBoard() {
     }
 
     setShowPlayerSearch(false);
-    // Real-time subscription handles UI update; no manual reload needed
+
+    // Update local state immediately so the picker sees the result without waiting for real-time
+    setDraft(prev => prev ? { ...prev, current_pick_number: nextPickNumber, current_participant_id: nextParticipant?.id ?? null } : prev);
+    setCurrentParticipant(nextParticipant ?? null);
+
+    // Reload picks with full player join (real-time INSERT event doesn't carry joined data)
+    const { data: freshPicks } = await supabase
+      .from('draft_picks')
+      .select('*, player:sports_players(display_name, fantasy_position, position, team:sports_teams(abbreviation))')
+      .eq('draft_id', draftId!)
+      .order('pick_number', { ascending: true });
+    if (freshPicks) setPicks(freshPicks as Pick[]);
   }
 
   function getNextParticipant(currentPickNumber: number): Participant | null {
