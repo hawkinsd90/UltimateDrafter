@@ -8,6 +8,8 @@ import type { Database } from '../types/supabase';
 type League = Database['public']['Tables']['leagues']['Row'];
 type LeagueSettings = Database['public']['Tables']['league_settings']['Row'];
 type Draft = Database['public']['Tables']['drafts']['Row'];
+type LeagueMember = Database['public']['Tables']['league_members']['Row'];
+type LeagueInvite = Database['public']['Tables']['league_invites']['Row'];
 
 type Tab = 'drafts' | 'members' | 'settings';
 
@@ -18,10 +20,19 @@ export default function LeagueDetail() {
   const [league, setLeague] = useState<League | null>(null);
   const [leagueSettings, setLeagueSettings] = useState<LeagueSettings | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [members, setMembers] = useState<LeagueMember[]>([]);
+  const [invites, setInvites] = useState<LeagueInvite[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>('drafts');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+
+  // members tab state
+  const [phoneInput, setPhoneInput] = useState('');
+  const [addingPhone, setAddingPhone] = useState(false);
+  const [memberError, setMemberError] = useState('');
+  const [memberSuccess, setMemberSuccess] = useState('');
+  const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     draft_format: 'snake',
@@ -73,10 +84,12 @@ export default function LeagueDetail() {
 
   async function loadLeagueData() {
     try {
-      const [leagueResult, settingsResult, draftsResult] = await Promise.all([
+      const [leagueResult, settingsResult, draftsResult, membersResult, invitesResult] = await Promise.all([
         supabase.from('leagues').select('*').eq('id', leagueId).maybeSingle(),
         supabase.from('league_settings').select('*').eq('league_id', leagueId).maybeSingle(),
-        supabase.from('drafts').select('*').eq('league_id', leagueId).order('created_at', { ascending: false })
+        supabase.from('drafts').select('*').eq('league_id', leagueId).order('created_at', { ascending: false }),
+        supabase.from('league_members').select('*').eq('league_id', leagueId).order('joined_at', { ascending: true }),
+        supabase.from('league_invites').select('*').eq('league_id', leagueId).is('accepted_at', null).order('created_at', { ascending: false }),
       ]);
 
       if (leagueResult.error) {
@@ -91,9 +104,14 @@ export default function LeagueDetail() {
       if (!settingsResult.error && settingsResult.data) {
         setLeagueSettings(settingsResult.data);
       }
-
       if (!draftsResult.error && draftsResult.data) {
         setDrafts(draftsResult.data);
+      }
+      if (!membersResult.error && membersResult.data) {
+        setMembers(membersResult.data);
+      }
+      if (!invitesResult.error && invitesResult.data) {
+        setInvites(invitesResult.data);
       }
     } catch (error) {
       console.error('Error loading league data:', error);
@@ -101,6 +119,82 @@ export default function LeagueDetail() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function createInviteLink() {
+    if (!leagueId || !user) return;
+    setMemberError('');
+    const { data, error } = await supabase
+      .from('league_invites')
+      .insert({ league_id: leagueId, invited_by: user.id })
+      .select()
+      .single();
+    if (error || !data) {
+      setMemberError('Failed to create invite link: ' + (error?.message ?? 'unknown error'));
+      return;
+    }
+    const inviteUrl = `${window.location.origin}/leagues/join/${data.id}`;
+    await navigator.clipboard.writeText(inviteUrl).catch(() => {});
+    setCopiedInviteId(data.id);
+    setTimeout(() => setCopiedInviteId(null), 3000);
+    await loadLeagueData();
+  }
+
+  async function addMemberByPhone(e: React.FormEvent) {
+    e.preventDefault();
+    if (!leagueId || !user) return;
+    setAddingPhone(true);
+    setMemberError('');
+    setMemberSuccess('');
+
+    const phone = phoneInput.trim();
+    if (!phone.match(/^\+[1-9]\d{1,14}$/)) {
+      setMemberError('Enter a valid phone number in E.164 format, e.g. +12125551234');
+      setAddingPhone(false);
+      return;
+    }
+
+    // Create invite tied to this phone number
+    const { data: invite, error: inviteError } = await supabase
+      .from('league_invites')
+      .insert({ league_id: leagueId, invited_by: user.id, phone_e164: phone })
+      .select()
+      .single();
+
+    if (inviteError || !invite) {
+      setMemberError('Failed to create invite: ' + (inviteError?.message ?? 'unknown error'));
+      setAddingPhone(false);
+      return;
+    }
+
+    // Also add as a pending member row (phone-only, no user_id yet)
+    const { error: memberError } = await supabase
+      .from('league_members')
+      .insert({ league_id: leagueId, phone_e164: phone, display_name: phone });
+
+    if (memberError) {
+      setMemberError('Failed to add member: ' + memberError.message);
+    } else {
+      const inviteUrl = `${window.location.origin}/leagues/join/${invite.id}`;
+      setMemberSuccess(`Added! Share this link with them: ${inviteUrl}`);
+      setPhoneInput('');
+      await loadLeagueData();
+    }
+    setAddingPhone(false);
+  }
+
+  async function removeMember(memberId: string) {
+    const { error } = await supabase.from('league_members').delete().eq('id', memberId);
+    if (error) {
+      setMemberError('Failed to remove member: ' + error.message);
+    } else {
+      await loadLeagueData();
+    }
+  }
+
+  async function revokeInvite(inviteId: string) {
+    const { error } = await supabase.from('league_invites').delete().eq('id', inviteId);
+    if (!error) await loadLeagueData();
   }
 
   async function handleSaveSettings(e: React.FormEvent) {
@@ -345,18 +439,164 @@ export default function LeagueDetail() {
 
       {activeTab === 'members' && (
         <div>
-          <h2 style={{ margin: '0 0 20px 0' }}>Members</h2>
-          <div style={{
-            padding: '40px',
-            background: '#f9fafb',
-            border: '2px dashed #d1d5db',
-            borderRadius: '8px',
-            textAlign: 'center'
-          }}>
-            <p style={{ margin: '0', color: '#6b7280' }}>
-              Member management will be available in a future update. For now, members are managed at the draft level.
-            </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <h2 style={{ margin: '0' }}>Members ({members.length})</h2>
+            {isOwner && (
+              <button
+                onClick={createInviteLink}
+                style={{
+                  padding: '10px 20px',
+                  background: '#059669',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: '500',
+                  fontSize: '14px',
+                }}
+              >
+                {copiedInviteId ? 'Link Copied!' : 'Copy Invite Link'}
+              </button>
+            )}
           </div>
+
+          {memberError && (
+            <div style={{ padding: '12px', background: '#fee2e2', border: '1px solid #ef4444', borderRadius: '6px', color: '#dc2626', marginBottom: '16px' }}>
+              {memberError}
+            </div>
+          )}
+          {memberSuccess && (
+            <div style={{ padding: '12px', background: '#f0fdf4', border: '1px solid #22c55e', borderRadius: '6px', color: '#166534', marginBottom: '16px', wordBreak: 'break-all' }}>
+              {memberSuccess}
+            </div>
+          )}
+
+          {isOwner && (
+            <div style={{ marginBottom: '24px', padding: '20px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+              <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: '#374151' }}>Add by Phone Number</h3>
+              <p style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#6b7280' }}>
+                Enter their number in E.164 format (e.g. +12125551234). They'll receive an invite link via SMS once you send it to them.
+              </p>
+              <form onSubmit={addMemberByPhone} style={{ display: 'flex', gap: '10px' }}>
+                <input
+                  type="tel"
+                  value={phoneInput}
+                  onChange={(e) => setPhoneInput(e.target.value)}
+                  placeholder="+12125551234"
+                  required
+                  style={{ flex: 1, padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px', color: '#111827', background: 'white' }}
+                />
+                <button
+                  type="submit"
+                  disabled={addingPhone}
+                  style={{
+                    padding: '10px 20px',
+                    background: addingPhone ? '#9ca3af' : '#2563eb',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: addingPhone ? 'not-allowed' : 'pointer',
+                    fontWeight: '500',
+                  }}
+                >
+                  Add
+                </button>
+              </form>
+            </div>
+          )}
+
+          {members.length === 0 ? (
+            <div style={{ padding: '40px', background: '#f9fafb', border: '2px dashed #d1d5db', borderRadius: '8px', textAlign: 'center' }}>
+              <p style={{ margin: '0', color: '#6b7280' }}>No members yet. Use the invite link or add by phone number above.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px' }}>
+              {members.map(m => (
+                <div key={m.id} style={{
+                  padding: '14px 18px',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '8px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  background: 'white',
+                }}>
+                  <div>
+                    <span style={{ fontWeight: '500', color: '#111827' }}>{m.display_name || m.phone_e164 || 'Unknown'}</span>
+                    {m.phone_e164 && m.display_name !== m.phone_e164 && (
+                      <span style={{ marginLeft: '10px', fontSize: '13px', color: '#6b7280' }}>{m.phone_e164}</span>
+                    )}
+                    <span style={{
+                      marginLeft: '10px',
+                      fontSize: '12px',
+                      padding: '2px 8px',
+                      borderRadius: '9999px',
+                      background: m.role === 'owner' ? '#dbeafe' : '#f3f4f6',
+                      color: m.role === 'owner' ? '#1d4ed8' : '#374151',
+                    }}>
+                      {m.role}
+                    </span>
+                    {!m.user_id && (
+                      <span style={{ marginLeft: '8px', fontSize: '12px', color: '#f59e0b' }}>pending</span>
+                    )}
+                  </div>
+                  {isOwner && m.role !== 'owner' && (
+                    <button
+                      onClick={() => removeMember(m.id)}
+                      style={{ padding: '6px 12px', background: 'none', border: '1px solid #ef4444', color: '#ef4444', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {isOwner && invites.filter(i => !i.accepted_at).length > 0 && (
+            <div>
+              <h3 style={{ fontSize: '16px', color: '#374151', marginBottom: '12px' }}>Pending Invites</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {invites.filter(i => !i.accepted_at).map(inv => {
+                  const inviteUrl = `${window.location.origin}/leagues/join/${inv.id}`;
+                  return (
+                    <div key={inv.id} style={{
+                      padding: '12px 16px',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      background: '#fafafa',
+                    }}>
+                      <div>
+                        <span style={{ fontSize: '13px', color: '#374151' }}>
+                          {inv.phone_e164 ? `Phone: ${inv.phone_e164}` : 'General invite'}
+                        </span>
+                        <span style={{ marginLeft: '10px', fontSize: '12px', color: '#9ca3af' }}>
+                          Expires {new Date(inv.expires_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(inviteUrl); setCopiedInviteId(inv.id); setTimeout(() => setCopiedInviteId(null), 3000); }}
+                          style={{ padding: '6px 12px', background: '#f3f4f6', border: '1px solid #d1d5db', color: '#374151', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
+                        >
+                          {copiedInviteId === inv.id ? 'Copied!' : 'Copy Link'}
+                        </button>
+                        <button
+                          onClick={() => revokeInvite(inv.id)}
+                          style={{ padding: '6px 12px', background: 'none', border: '1px solid #ef4444', color: '#ef4444', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
+                        >
+                          Revoke
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

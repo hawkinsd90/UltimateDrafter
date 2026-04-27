@@ -11,6 +11,7 @@ import DraftList from './pages/DraftList';
 import CreateDraft from './pages/CreateDraft';
 import ManageParticipants from './pages/ManageParticipants';
 import DraftBoard from './pages/DraftBoard';
+import JoinLeague from './pages/JoinLeague';
 import NotificationSettings from './pages/NotificationSettings';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
@@ -32,6 +33,7 @@ export default function App() {
             <Route path="/leagues/:leagueId/drafts/create" element={<ProtectedRoute><CreateDraft /></ProtectedRoute>} />
             <Route path="/drafts/:draftId" element={<ProtectedRoute><DraftBoard /></ProtectedRoute>} />
             <Route path="/drafts/:draftId/participants" element={<ProtectedRoute><ManageParticipants /></ProtectedRoute>} />
+            <Route path="/leagues/join/:inviteId" element={<ProtectedRoute><JoinLeague /></ProtectedRoute>} />
             <Route path="/settings/notifications" element={<ProtectedRoute><NotificationSettings /></ProtectedRoute>} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />

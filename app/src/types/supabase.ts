@@ -452,6 +452,64 @@ export interface Database {
           updated_at?: string
         }
       }
+      league_members: {
+        Row: {
+          id: string
+          league_id: string
+          user_id: string | null
+          display_name: string
+          phone_e164: string | null
+          role: string
+          joined_at: string
+        }
+        Insert: {
+          id?: string
+          league_id: string
+          user_id?: string | null
+          display_name?: string
+          phone_e164?: string | null
+          role?: string
+          joined_at?: string
+        }
+        Update: {
+          id?: string
+          league_id?: string
+          user_id?: string | null
+          display_name?: string
+          phone_e164?: string | null
+          role?: string
+          joined_at?: string
+        }
+      }
+      league_invites: {
+        Row: {
+          id: string
+          league_id: string
+          invited_by: string
+          phone_e164: string | null
+          accepted_at: string | null
+          expires_at: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          league_id: string
+          invited_by: string
+          phone_e164?: string | null
+          accepted_at?: string | null
+          expires_at?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          league_id?: string
+          invited_by?: string
+          phone_e164?: string | null
+          accepted_at?: string | null
+          expires_at?: string
+          created_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never

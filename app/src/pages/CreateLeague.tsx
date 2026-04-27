@@ -107,6 +107,14 @@ export default function CreateLeague() {
     }
   }
 
+  const cardStyle: React.CSSProperties = {
+    display: 'flex', flexDirection: 'column', gap: '20px',
+    padding: '20px', background: 'white', borderRadius: '8px',
+    border: '1px solid #e5e7eb', color: '#111827',
+  };
+  const labelStyle: React.CSSProperties = { display: 'block', marginBottom: '5px', fontWeight: '500', color: '#374151' };
+  const inputStyle: React.CSSProperties = { width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px', color: '#111827', background: 'white' };
+
   return (
     <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -114,33 +122,29 @@ export default function CreateLeague() {
         <UserMenu />
       </div>
 
-      <h1>Create League</h1>
+      <h1 style={{ color: '#f9fafb' }}>Create League</h1>
 
       <form onSubmit={handleSubmit} style={{ maxWidth: '900px', display: 'flex', flexDirection: 'column', gap: '30px' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px', background: '#f9fafb', borderRadius: '8px' }}>
-          <h2 style={{ margin: '0', fontSize: '20px' }}>Basic Information</h2>
+        <div style={cardStyle}>
+          <h2 style={{ margin: '0', fontSize: '20px', color: '#111827' }}>Basic Information</h2>
 
           <div>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>
-              League Name
-            </label>
+            <label style={labelStyle}>League Name</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
-              style={{ width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px' }}
+              style={inputStyle}
             />
           </div>
 
           <div>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>
-              Sport
-            </label>
+            <label style={labelStyle}>Sport</label>
             <select
               value={sport}
               onChange={(e) => setSport(e.target.value)}
-              style={{ width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px' }}
+              style={inputStyle}
             >
               <option value="football">Football</option>
               <option value="basketball">Basketball</option>
@@ -150,27 +154,23 @@ export default function CreateLeague() {
           </div>
 
           <div>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500', color: '#6b7280' }}>
-              Season
-            </label>
-            <div style={{ padding: '10px', background: 'white', border: '1px solid #e5e7eb', borderRadius: '6px', color: '#374151' }}>
+            <label style={{ ...labelStyle, color: '#6b7280' }}>Season</label>
+            <div style={{ padding: '10px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '6px', color: '#374151' }}>
               {season}
             </div>
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px', background: '#f9fafb', borderRadius: '8px' }}>
-            <h2 style={{ margin: '0', fontSize: '20px' }}>Draft Settings</h2>
+          <div style={cardStyle}>
+            <h2 style={{ margin: '0', fontSize: '20px', color: '#111827' }}>Draft Settings</h2>
 
             <div>
-              <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>
-                Draft Format
-              </label>
+              <label style={labelStyle}>Draft Format</label>
               <select
                 value={settings.draft_format}
                 onChange={(e) => setSettings({ ...settings, draft_format: e.target.value })}
-                style={{ width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px' }}
+                style={inputStyle}
               >
                 <option value="snake">Snake Draft</option>
                 <option value="linear">Linear Draft</option>
@@ -178,13 +178,11 @@ export default function CreateLeague() {
             </div>
 
             <div>
-              <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>
-                Pick Timer
-              </label>
+              <label style={labelStyle}>Pick Timer</label>
               <select
                 value={settings.pick_timer_seconds}
                 onChange={(e) => setSettings({ ...settings, pick_timer_seconds: parseInt(e.target.value) })}
-                style={{ width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px' }}
+                style={inputStyle}
               >
                 <option value="30">30 seconds</option>
                 <option value="60">60 seconds</option>
@@ -195,7 +193,7 @@ export default function CreateLeague() {
             </div>
 
             <div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: '#374151' }}>
                 <input
                   type="checkbox"
                   checked={settings.allow_pauses}
@@ -206,7 +204,7 @@ export default function CreateLeague() {
             </div>
 
             <div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '10px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '10px', color: '#374151' }}>
                 <input
                   type="checkbox"
                   checked={settings.drafting_hours_enabled}
@@ -217,54 +215,36 @@ export default function CreateLeague() {
               {settings.drafting_hours_enabled && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginLeft: '30px' }}>
                   <div>
-                    <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px' }}>Start Time</label>
-                    <input
-                      type="time"
-                      value={settings.drafting_hours_start}
-                      onChange={(e) => setSettings({ ...settings, drafting_hours_start: e.target.value })}
-                      style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '6px' }}
-                    />
+                    <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', color: '#374151' }}>Start Time</label>
+                    <input type="time" value={settings.drafting_hours_start} onChange={(e) => setSettings({ ...settings, drafting_hours_start: e.target.value })} style={inputStyle} />
                   </div>
                   <div>
-                    <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px' }}>End Time</label>
-                    <input
-                      type="time"
-                      value={settings.drafting_hours_end}
-                      onChange={(e) => setSettings({ ...settings, drafting_hours_end: e.target.value })}
-                      style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: '6px' }}
-                    />
+                    <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', color: '#374151' }}>End Time</label>
+                    <input type="time" value={settings.drafting_hours_end} onChange={(e) => setSettings({ ...settings, drafting_hours_end: e.target.value })} style={inputStyle} />
                   </div>
                 </div>
               )}
             </div>
 
-            <h3 style={{ margin: '10px 0 0 0', fontSize: '18px' }}>League Behavior</h3>
+            <h3 style={{ margin: '10px 0 0 0', fontSize: '18px', color: '#111827' }}>League Behavior</h3>
 
             <div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={settings.allow_trades}
-                  onChange={(e) => setSettings({ ...settings, allow_trades: e.target.checked })}
-                />
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: '#374151' }}>
+                <input type="checkbox" checked={settings.allow_trades} onChange={(e) => setSettings({ ...settings, allow_trades: e.target.checked })} />
                 <span>Allow player trades</span>
               </label>
             </div>
 
             <div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={settings.allow_pick_trades}
-                  onChange={(e) => setSettings({ ...settings, allow_pick_trades: e.target.checked })}
-                />
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: '#374151' }}>
+                <input type="checkbox" checked={settings.allow_pick_trades} onChange={(e) => setSettings({ ...settings, allow_pick_trades: e.target.checked })} />
                 <span>Allow draft pick trades</span>
               </label>
             </div>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '20px', background: '#f9fafb', borderRadius: '8px' }}>
-            <h2 style={{ margin: '0', fontSize: '20px' }}>Roster Settings</h2>
+          <div style={cardStyle}>
+            <h2 style={{ margin: '0', fontSize: '20px', color: '#111827' }}>Roster Settings</h2>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
               {[
@@ -278,7 +258,7 @@ export default function CreateLeague() {
                 { key: 'bench', label: 'Bench' },
               ].map(({ key, label }) => (
                 <div key={key}>
-                  <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500', fontSize: '14px' }}>
+                  <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500', fontSize: '14px', color: '#374151' }}>
                     {label}
                   </label>
                   <input
@@ -286,7 +266,7 @@ export default function CreateLeague() {
                     min="0"
                     value={settings[key as keyof typeof settings] as number}
                     onChange={(e) => setSettings({ ...settings, [key]: parseInt(e.target.value) || 0 })}
-                    style={{ width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px' }}
+                    style={inputStyle}
                   />
                 </div>
               ))}

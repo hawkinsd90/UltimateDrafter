@@ -158,6 +158,7 @@ export default function ManageParticipants() {
         <button
           onClick={startDraft}
           disabled={participants.length < 2}
+          title={participants.length < 2 ? 'Add at least 2 participants to start the draft' : undefined}
           style={{
             marginTop: '30px',
             padding: '12px 24px',
@@ -174,7 +175,7 @@ export default function ManageParticipants() {
         </button>
         {participants.length < 2 && (
           <p style={{ marginTop: '10px', color: '#6b7280', fontSize: '14px' }}>
-            Add at least 2 participants to start the draft
+            At least 2 participants are required before you can start the draft. Add team names above, or first add members to the league from the Members tab.
           </p>
         )}
       </div>
