@@ -20,15 +20,17 @@ interface ImportedTeam {
   currentPolicy: PlayerPoolPolicy;
 }
 
-interface Participant {
-  id: string;
-  teamName: string;
+// League member — the source of truth for who can be mapped to a team.
+// When a member is mapped, a draft_participant row is auto-created on save.
+interface LeagueMember {
+  id: string;           // league_members.id
   userId: string | null;
+  displayName: string;
 }
 
 interface TeamDecision {
   action: MappingAction;
-  participantId: string; // only used when action === 'map'
+  memberId: string; // league_members.id, only used when action === 'map'
 }
 
 interface SaveSummary {
@@ -52,7 +54,7 @@ export default function TeamMapping() {
   const [isOwner, setIsOwner] = useState(false);
 
   const [importedTeams, setImportedTeams] = useState<ImportedTeam[]>([]);
-  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [leagueMembers, setLeagueMembers] = useState<LeagueMember[]>([]);
   const [decisions, setDecisions] = useState<Record<string, TeamDecision>>({});
 
   const [saving, setSaving] = useState(false);
@@ -67,7 +69,6 @@ export default function TeamMapping() {
     setLoading(true);
     setLoadError('');
 
-    // Load draft + league owner check
     const { data: draft } = await supabase
       .from('drafts')
       .select('id, name, status, league_id')
@@ -88,21 +89,53 @@ export default function TeamMapping() {
     // Load import link
     const { data: link } = await supabase
       .from('external_league_links')
-      .select('id, import_status, display_name')
+      .select('id, import_status')
       .eq('draft_id', draftId!)
       .maybeSingle();
 
     if (!link) { setLoadError('No import found for this draft. Go back and run the import first.'); setLoading(false); return; }
     setLinkId(link.id);
 
-    // Load imported teams
+    // Load league members — these are the available mapping targets
+    const { data: membersData } = await supabase
+      .from('league_members')
+      .select('id, user_id, display_name, phone_e164')
+      .eq('league_id', draft.league_id)
+      .order('joined_at', { ascending: true });
+
+    const members: LeagueMember[] = (membersData ?? []).map(m => ({
+      id: m.id,
+      userId: m.user_id,
+      displayName: m.display_name ?? m.phone_e164 ?? 'Member',
+    }));
+    setLeagueMembers(members);
+
+    // Load existing draft_participants so we can initialise prior decisions
+    const { data: existingParticipants } = await supabase
+      .from('draft_participants')
+      .select('id, user_id, team_name')
+      .eq('draft_id', draftId!);
+
+    // Build a lookup: user_id → league_member.id
+    const userIdToMemberId: Record<string, string> = {};
+    for (const m of members) {
+      if (m.userId) userIdToMemberId[m.userId] = m.id;
+    }
+    // Also map participant id → member id via user_id
+    const participantIdToMemberId: Record<string, string> = {};
+    for (const p of existingParticipants ?? []) {
+      if (p.user_id && userIdToMemberId[p.user_id]) {
+        participantIdToMemberId[p.id] = userIdToMemberId[p.user_id];
+      }
+    }
+
+    // Load imported teams + roster counts
     const { data: teams } = await supabase
       .from('external_league_teams')
       .select('id, external_team_id, external_team_name, external_owner_name, mapping_status, draft_participant_id, player_pool_policy')
       .eq('link_id', link.id)
       .order('external_team_name', { ascending: true });
 
-    // Load roster counts per team
     const { data: rosterRows } = await supabase
       .from('external_roster_players')
       .select('external_team_id')
@@ -125,31 +158,19 @@ export default function TeamMapping() {
     }));
     setImportedTeams(teamsNorm);
 
-    // Load draft participants
-    const { data: parts } = await supabase
-      .from('draft_participants')
-      .select('id, team_name, user_id')
-      .eq('draft_id', draftId!)
-      .order('draft_position', { ascending: true });
-
-    setParticipants((parts ?? []).map(p => ({
-      id: p.id,
-      teamName: p.team_name,
-      userId: p.user_id,
-    })));
-
-    // Initialise decisions from existing saved state
+    // Initialise decisions from previously-saved state
     const initial: Record<string, TeamDecision> = {};
     for (const t of teamsNorm) {
       if (t.currentMappingStatus === 'mapped' && t.currentParticipantId) {
-        initial[t.id] = { action: 'map', participantId: t.currentParticipantId };
+        const memberId = participantIdToMemberId[t.currentParticipantId] ?? '';
+        initial[t.id] = { action: 'map', memberId };
       } else if (t.currentMappingStatus === 'ignored') {
         initial[t.id] = {
           action: t.currentPolicy === 'unavailable' ? 'ignore_unavailable' : 'ignore_available',
-          participantId: '',
+          memberId: '',
         };
       } else {
-        initial[t.id] = { action: 'ignore_available', participantId: '' };
+        initial[t.id] = { action: 'ignore_available', memberId: '' };
       }
     }
     setDecisions(initial);
@@ -160,14 +181,14 @@ export default function TeamMapping() {
   function setDecision(teamId: string, action: MappingAction) {
     setDecisions(prev => ({
       ...prev,
-      [teamId]: { action, participantId: action === 'map' ? prev[teamId]?.participantId ?? '' : '' },
+      [teamId]: { action, memberId: action === 'map' ? prev[teamId]?.memberId ?? '' : '' },
     }));
   }
 
-  function setParticipantForTeam(teamId: string, participantId: string) {
+  function setMemberForTeam(teamId: string, memberId: string) {
     setDecisions(prev => ({
       ...prev,
-      [teamId]: { ...prev[teamId], participantId },
+      [teamId]: { ...prev[teamId], memberId },
     }));
   }
 
@@ -175,8 +196,8 @@ export default function TeamMapping() {
     for (const team of importedTeams) {
       const d = decisions[team.id];
       if (!d) return `No decision set for team "${team.externalTeamName}".`;
-      if (d.action === 'map' && !d.participantId) {
-        return `Select a participant for "${team.externalTeamName}" or choose an ignore option.`;
+      if (d.action === 'map' && !d.memberId) {
+        return `Select a league member for "${team.externalTeamName}" or choose an ignore option.`;
       }
     }
     return null;
@@ -194,16 +215,59 @@ export default function TeamMapping() {
     let ignoredAvailableCount = 0;
     let ignoredUnavailableCount = 0;
 
-    // Process each team
+    // Load existing participants once upfront to avoid repeated queries
+    const { data: existingParts } = await supabase
+      .from('draft_participants')
+      .select('id, user_id, draft_position')
+      .eq('draft_id', draftId!);
+
+    const existingPartsByUserId: Record<string, string> = {};
+    let maxPosition = 0;
+    for (const p of existingParts ?? []) {
+      if (p.user_id) existingPartsByUserId[p.user_id] = p.id;
+      if (p.draft_position > maxPosition) maxPosition = p.draft_position;
+    }
+
     for (const team of importedTeams) {
       const d = decisions[team.id];
 
       if (d.action === 'map') {
+        const member = leagueMembers.find(m => m.id === d.memberId);
+        if (!member) { setSaveError('Member not found for team ' + team.externalTeamName); setSaving(false); return; }
+
+        // Find or create draft_participant for this league member
+        let participantId: string | null = member.userId ? existingPartsByUserId[member.userId] ?? null : null;
+
+        if (!participantId) {
+          maxPosition += 1;
+          const { data: newPart, error: partErr } = await supabase
+            .from('draft_participants')
+            .insert({
+              draft_id: draftId!,
+              user_id: member.userId,
+              team_name: member.displayName,
+              draft_position: maxPosition,
+              notification_preferences: {},
+            })
+            .select('id')
+            .single();
+
+          if (partErr || !newPart) {
+            setSaveError('Failed to create participant for ' + member.displayName + ': ' + (partErr?.message ?? 'unknown'));
+            setSaving(false);
+            return;
+          }
+          participantId = newPart.id;
+          // Cache it so subsequent teams don't re-create for the same user
+          const uid = member.userId;
+          if (uid) existingPartsByUserId[uid] = participantId as string;
+        }
+
         const { error } = await supabase
           .from('external_league_teams')
           .update({
             mapping_status: 'mapped',
-            draft_participant_id: d.participantId,
+            draft_participant_id: participantId,
             player_pool_policy: 'available',
             mapped_at: new Date().toISOString(),
           })
@@ -211,7 +275,7 @@ export default function TeamMapping() {
 
         if (error) { setSaveError('Failed to save mapping for ' + team.externalTeamName + ': ' + error.message); setSaving(false); return; }
 
-        // Remove any existing exclusions for this team (in case it was previously ignored/unavailable)
+        // Clear any prior exclusions for this team
         await supabase
           .from('draft_player_exclusions')
           .delete()
@@ -235,7 +299,7 @@ export default function TeamMapping() {
 
         if (error) { setSaveError('Failed to save ignore decision for ' + team.externalTeamName + ': ' + error.message); setSaving(false); return; }
 
-        // Always clear old exclusions for this team first
+        // Clear old exclusions then re-create if unavailable
         await supabase
           .from('draft_player_exclusions')
           .delete()
@@ -243,7 +307,6 @@ export default function TeamMapping() {
           .eq('external_league_team_id', team.id);
 
         if (policy === 'unavailable') {
-          // Fetch resolved roster players for this team and insert exclusions
           const { data: rosterPlayers } = await supabase
             .from('external_roster_players')
             .select('id, sports_player_id')
@@ -279,13 +342,11 @@ export default function TeamMapping() {
       }
     }
 
-    // Count total exclusions saved
     const { count: excludedCount } = await supabase
       .from('draft_player_exclusions')
       .select('id', { count: 'exact', head: true })
       .eq('draft_id', draftId!);
 
-    // Mark import link as mapped
     await supabase
       .from('external_league_links')
       .update({ import_status: 'mapped' })
@@ -327,7 +388,7 @@ export default function TeamMapping() {
         <p style={{ color: '#6b7280', fontSize: '15px', margin: '0 0 24px 0' }}>{draftName}</p>
 
         <div style={s.card}>
-          <SummaryRow label="Teams mapped to participants" value={String(saveSummary.mappedCount)} />
+          <SummaryRow label="Teams mapped to league members" value={String(saveSummary.mappedCount)} />
           <SummaryRow label="Teams ignored (players available)" value={String(saveSummary.ignoredAvailableCount)} />
           <SummaryRow label="Teams ignored (players unavailable)" value={String(saveSummary.ignoredUnavailableCount)} />
           <SummaryRow label="Players excluded from draft pool" value={String(saveSummary.excludedPlayerCount)} highlight={saveSummary.excludedPlayerCount > 0} />
@@ -335,7 +396,7 @@ export default function TeamMapping() {
 
         <div style={{ display: 'flex', gap: '12px', marginTop: '24px', flexWrap: 'wrap' }}>
           <Link to={`/drafts/${draftId}/participants`} style={s.btnSecondary}>
-            Back to Participants
+            View Participants
           </Link>
           <span style={s.btnDisabled} title="Keeper selection coming soon">
             Next: Select Keepers (coming soon)
@@ -345,17 +406,17 @@ export default function TeamMapping() {
     );
   }
 
-  // Compute which participants are already mapped (to disable in other dropdowns)
-  const mappedParticipantIds = new Set(
+  // Compute which members are already mapped (to mark as taken in other dropdowns)
+  const mappedMemberIds = new Set(
     importedTeams
-      .filter(t => decisions[t.id]?.action === 'map' && decisions[t.id]?.participantId)
-      .map(t => decisions[t.id].participantId)
+      .filter(t => decisions[t.id]?.action === 'map' && decisions[t.id]?.memberId)
+      .map(t => decisions[t.id].memberId)
   );
 
   const allDecided = importedTeams.every(t => {
     const d = decisions[t.id];
     if (!d) return false;
-    if (d.action === 'map') return !!d.participantId;
+    if (d.action === 'map') return !!d.memberId;
     return true;
   });
 
@@ -369,7 +430,8 @@ export default function TeamMapping() {
       <h1 style={s.heading}>Map Imported Teams</h1>
       <p style={{ color: '#6b7280', fontSize: '15px', margin: '0 0 6px 0' }}>{draftName}</p>
       <p style={{ color: '#9ca3af', fontSize: '13px', margin: '0 0 28px 0' }}>
-        For each imported team, choose a draft participant to map it to, or decide how to handle its players.
+        Map each imported team to a league member, or decide how to handle its players.
+        Mapped members will be automatically added as draft participants.
       </p>
 
       {!isOwner && (
@@ -382,28 +444,17 @@ export default function TeamMapping() {
         <div style={{ ...s.errorBox, marginBottom: '20px' }}>{saveError}</div>
       )}
 
-      {participants.length === 0 && (
-        <div style={{ padding: '16px 18px', background: '#fffbeb', border: '2px solid #f59e0b', borderRadius: '8px', color: '#92400e', fontSize: '14px', marginBottom: '24px' }}>
-          <div style={{ fontWeight: '700', marginBottom: '6px', fontSize: '15px' }}>No draft participants found</div>
-          <div style={{ marginBottom: '12px' }}>
-            You need to add participants to this draft before you can map imported teams to them.
-            You can still set ignore options below and come back to map teams after adding participants.
-          </div>
-          <Link
-            to={`/drafts/${draftId}/participants`}
-            style={{ display: 'inline-block', padding: '8px 16px', background: '#d97706', color: '#fff', borderRadius: '6px', fontWeight: '700', fontSize: '14px', textDecoration: 'none' }}
-          >
-            Add Participants Now
-          </Link>
+      {leagueMembers.length === 0 && (
+        <div style={{ padding: '14px 16px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', color: '#92400e', fontSize: '14px', marginBottom: '20px' }}>
+          No league members found. Invite members to the league before mapping teams.
         </div>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '28px' }}>
         {importedTeams.map(team => {
-          const d = decisions[team.id] ?? { action: 'ignore_available' as MappingAction, participantId: '' };
+          const d = decisions[team.id] ?? { action: 'ignore_available' as MappingAction, memberId: '' };
           return (
             <div key={team.id} style={s.teamCard}>
-              {/* Team info */}
               <div style={{ marginBottom: '12px' }}>
                 <div style={{ fontWeight: '700', fontSize: '15px', color: '#111827' }}>
                   {team.externalTeamName}
@@ -414,43 +465,31 @@ export default function TeamMapping() {
                 </div>
               </div>
 
-              {/* Action selector */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <ActionOption
                   teamId={team.id}
                   value="map"
                   current={d.action}
-                  label="Map to participant"
-                  description={participants.length === 0 ? 'No participants added yet — add participants first.' : undefined}
+                  label="Map to league member"
                   onChange={setDecision}
-                  disabled={!isOwner || participants.length === 0}
+                  disabled={!isOwner}
                 />
-                {d.action === 'map' && participants.length === 0 && (
-                  <div style={{ marginLeft: '28px', padding: '10px 14px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', fontSize: '13px', color: '#92400e' }}>
-                    No draft participants exist for this draft yet.{' '}
-                    <Link to={`/drafts/${draftId}/participants`} style={{ color: '#92400e', fontWeight: '700', textDecoration: 'underline' }}>
-                      Add participants
-                    </Link>
-                    {' '}then come back to map teams.
-                  </div>
-                )}
-                {d.action === 'map' && participants.length > 0 && (
+                {d.action === 'map' && (
                   <select
-                    value={d.participantId}
-                    onChange={e => setParticipantForTeam(team.id, e.target.value)}
+                    value={d.memberId}
+                    onChange={e => setMemberForTeam(team.id, e.target.value)}
                     disabled={!isOwner}
                     style={{ ...s.select, marginLeft: '28px', maxWidth: '280px' }}
                   >
-                    <option value="">— Select participant —</option>
-                    {participants.map(p => (
-                      <option
-                        key={p.id}
-                        value={p.id}
-                        disabled={mappedParticipantIds.has(p.id) && d.participantId !== p.id}
-                      >
-                        {p.teamName}{mappedParticipantIds.has(p.id) && d.participantId !== p.id ? ' (taken)' : ''}
-                      </option>
-                    ))}
+                    <option value="">— Select league member —</option>
+                    {leagueMembers.map(m => {
+                      const taken = mappedMemberIds.has(m.id) && d.memberId !== m.id;
+                      return (
+                        <option key={m.id} value={m.id} disabled={taken}>
+                          {m.displayName}{taken ? ' (taken)' : ''}
+                        </option>
+                      );
+                    })}
                   </select>
                 )}
 
@@ -554,3 +593,6 @@ const s = {
   btnDisabled: { display: 'inline-block', padding: '11px 20px', background: '#f3f4f6', color: '#9ca3af', border: '1px solid #e5e7eb', borderRadius: '8px', fontWeight: '600', fontSize: '15px', cursor: 'not-allowed', textDecoration: 'none' } as React.CSSProperties,
   linkBlue: { color: '#2563eb', textDecoration: 'none', fontSize: '14px' } as React.CSSProperties,
 } as const;
+
+
+export default TeamMapping
