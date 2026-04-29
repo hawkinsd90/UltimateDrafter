@@ -354,6 +354,19 @@ export default function DraftBoard() {
             Resume Draft
           </button>
         )}
+        {myParticipant && (
+          <Link
+            to={`/drafts/${draftId}/my-team`}
+            style={{
+              padding: '10px 22px', background: 'transparent', color: '#94a3b8',
+              border: '1px solid #334155', borderRadius: '7px', fontWeight: '600',
+              fontSize: '15px', textDecoration: 'none', lineHeight: '1',
+              display: 'inline-flex', alignItems: 'center',
+            }}
+          >
+            My Team
+          </Link>
+        )}
       </div>
 
       {draft.status === 'paused' && (
