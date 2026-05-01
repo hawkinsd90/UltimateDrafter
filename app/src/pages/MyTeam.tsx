@@ -54,6 +54,15 @@ interface KeptPlayer {
   teamAbbr: string | null;
 }
 
+interface ImportedRosterPlayer {
+  id: string;
+  externalPlayerName: string;
+  displayName: string;
+  fantasyPosition: string | null;
+  teamAbbr: string | null;
+  resolutionStatus: string;
+}
+
 // ── Position grouping helpers ─────────────────────────────────────────────────
 
 const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DST', 'BE', 'IR'];
@@ -115,6 +124,7 @@ export default function MyTeam() {
   const [participant, setParticipant] = useState<Participant | null>(null);
   const [picks, setPicks] = useState<PickedPlayer[]>([]);
   const [keepers, setKeepers] = useState<KeptPlayer[]>([]);
+  const [importedRoster, setImportedRoster] = useState<ImportedRosterPlayer[]>([]);
   const [rosterSettings, setRosterSettings] = useState<RosterSettings | null>(null);
   const [totalPicksMade, setTotalPicksMade] = useState(0);
   const [totalParticipants, setTotalParticipants] = useState(0);
@@ -126,6 +136,43 @@ export default function MyTeam() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const effectiveParticipantId = viewingId ?? participant?.id ?? null;
+
+  const loadImportedRoster = useCallback(async (participantId: string, draftIdVal: string) => {
+    // Find the external_league_team mapped to this participant for this draft
+    const { data: linkData } = await supabase
+      .from('external_league_links')
+      .select('id')
+      .eq('draft_id', draftIdVal)
+      .maybeSingle();
+
+    if (!linkData) { setImportedRoster([]); return; }
+
+    const { data: teamData } = await supabase
+      .from('external_league_teams')
+      .select('id, external_team_id')
+      .eq('link_id', linkData.id)
+      .eq('draft_participant_id', participantId)
+      .maybeSingle();
+
+    if (!teamData) { setImportedRoster([]); return; }
+
+    const { data: rosterData } = await supabase
+      .from('external_roster_players')
+      .select('id, external_player_name, external_position, resolution_status, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
+      .eq('link_id', linkData.id)
+      .eq('external_team_id', teamData.external_team_id)
+      .neq('resolution_status', 'skipped');
+
+    const mapped: ImportedRosterPlayer[] = (rosterData ?? []).map((r: any) => ({
+      id: r.id,
+      externalPlayerName: r.external_player_name,
+      displayName: r.player?.display_name ?? r.external_player_name ?? 'Unknown Player',
+      fantasyPosition: r.player?.fantasy_position ?? r.external_position ?? null,
+      teamAbbr: r.player?.team?.abbreviation ?? null,
+      resolutionStatus: r.resolution_status,
+    }));
+    setImportedRoster(mapped);
+  }, []);
 
   const loadPicks = useCallback(async (participantId: string, draftIdVal: string) => {
     const { data } = await supabase
@@ -189,14 +236,16 @@ export default function MyTeam() {
     if (targetId) {
       await loadPicks(targetId, draftId);
 
-      // Load keeper assignments for this participant
-      const { data: keeperData } = await supabase
-        .from('draft_keeper_assignments')
-        .select('id, sports_player_id, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
-        .eq('draft_id', draftId)
-        .eq('participant_id', targetId);
+      const [keeperRes] = await Promise.all([
+        supabase
+          .from('draft_keeper_assignments')
+          .select('id, sports_player_id, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
+          .eq('draft_id', draftId)
+          .eq('participant_id', targetId),
+        loadImportedRoster(targetId, draftId),
+      ]);
 
-      const mappedKeepers: KeptPlayer[] = (keeperData ?? []).map((k: any) => ({
+      const mappedKeepers: KeptPlayer[] = (keeperRes.data ?? []).map((k: any) => ({
         id: k.id,
         sportsPlayerId: k.sports_player_id,
         displayName: k.player?.display_name ?? 'Unknown Player',
@@ -246,6 +295,7 @@ export default function MyTeam() {
   useEffect(() => {
     if (!viewingId || !draftId) return;
     loadPicks(viewingId, draftId);
+    loadImportedRoster(viewingId, draftId);
 
     supabase
       .from('draft_keeper_assignments')
@@ -413,6 +463,30 @@ export default function MyTeam() {
                     {rosterSettings.draft_format === 'snake' ? 'Snake' : 'Linear'}
                   </span>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Imported roster from ESPN/Sleeper */}
+          {importedRoster.length > 0 && (
+            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
+              <p style={{ margin: '0 0 4px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Imported Roster ({importedRoster.length})
+              </p>
+              <p style={{ margin: '0 0 12px 0', fontSize: '12px', color: textSecondary }}>
+                Players from your previous season roster
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {importedRoster.map(p => (
+                  <PlayerRow
+                    key={p.id}
+                    name={p.displayName}
+                    position={p.fantasyPosition}
+                    team={p.teamAbbr}
+                    badge={p.resolutionStatus === 'unresolved' ? 'Unmatched' : undefined}
+                    badgeColor={p.resolutionStatus === 'unresolved' ? '#ef4444' : undefined}
+                  />
+                ))}
               </div>
             </div>
           )}
