@@ -22,6 +22,7 @@ export default function LeagueDetail() {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [members, setMembers] = useState<LeagueMember[]>([]);
   const [invites, setInvites] = useState<LeagueInvite[]>([]);
+  const [myDraftIds, setMyDraftIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>('drafts');
   const [saving, setSaving] = useState(false);
@@ -106,6 +107,18 @@ export default function LeagueDetail() {
       }
       if (!draftsResult.error && draftsResult.data) {
         setDrafts(draftsResult.data);
+        // Find which of these drafts the current user is a participant in
+        if (draftsResult.data.length > 0) {
+          const draftIds = draftsResult.data.map(d => d.id);
+          const { data: participantRows } = await supabase
+            .from('draft_participants')
+            .select('draft_id')
+            .in('draft_id', draftIds)
+            .eq('user_id', (await supabase.auth.getUser()).data.user?.id ?? '');
+          if (participantRows) {
+            setMyDraftIds(new Set(participantRows.map(r => r.draft_id)));
+          }
+        }
       }
       if (!membersResult.error && membersResult.data) {
         setMembers(membersResult.data);
@@ -461,6 +474,14 @@ export default function LeagueDetail() {
                     >
                       View Draft
                     </Link>
+                    {myDraftIds.has(draft.id) && (
+                      <Link
+                        to={`/drafts/${draft.id}/my-team`}
+                        style={{ padding: '8px 14px', background: '#0f766e', color: 'white', textDecoration: 'none', borderRadius: '6px', fontSize: '14px' }}
+                      >
+                        My Team
+                      </Link>
+                    )}
                     {isOwner && (
                       <button
                         onClick={() => deleteDraft(draft.id, draft.name)}
