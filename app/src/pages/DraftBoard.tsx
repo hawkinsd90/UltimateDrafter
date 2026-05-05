@@ -81,8 +81,6 @@ export default function DraftBoard() {
   const [boardPositionFilter, setBoardPositionFilter] = useState<PositionFilter>('All');
   const [boardAvailablePlayers, setBoardAvailablePlayers] = useState<Omit<BoardPlayer, 'rank' | 'rankingId'>[]>([]);
   const [boardAvailableLoading, setBoardAvailableLoading] = useState(false);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  const dragIndexRef = useRef<number | null>(null);
   const boardDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const participantsRef = useRef<Participant[]>([]);
@@ -318,17 +316,14 @@ export default function DraftBoard() {
     const [moved] = updated.splice(fromIndex, 1);
     updated.splice(toIndex, 0, moved);
 
-    // Optimistically update UI
     const reranked = updated.map((p, i) => ({ ...p, rank: i + 1 }));
     setBoardPlayers(reranked);
 
-    // Persist all rank changes
-    const upserts = reranked
-      .filter(p => p.rankingId)
-      .map(p => ({ id: p.rankingId!, rank: p.rank, draft_id: draftId!, user_id: user!.id, sports_player_id: p.id }));
-
-    if (upserts.length > 0) {
-      await supabase.from('draft_board_rankings').upsert(upserts, { onConflict: 'id' });
+    // Use individual updates to avoid upsert conflict errors
+    for (const p of reranked) {
+      if (p.rankingId) {
+        await supabase.from('draft_board_rankings').update({ rank: p.rank }).eq('id', p.rankingId);
+      }
     }
   }
 
@@ -691,9 +686,6 @@ export default function DraftBoard() {
           boardAvailableLoading={boardAvailableLoading}
           pickedPlayerIds={pickedPlayerIds}
           boardedPlayerIds={boardedPlayerIds}
-          dragOverIndex={dragOverIndex}
-          setDragOverIndex={setDragOverIndex}
-          dragIndexRef={dragIndexRef}
           showBoardSearch={showBoardSearch}
           onAddPlayer={addPlayerToBoard}
           onAddAllAvailable={addAllAvailableToBoard}
@@ -725,9 +717,6 @@ interface MyBoardProps {
   boardAvailableLoading: boolean;
   pickedPlayerIds: Set<string>;
   boardedPlayerIds: Set<string>;
-  dragOverIndex: number | null;
-  setDragOverIndex: (v: number | null) => void;
-  dragIndexRef: React.MutableRefObject<number | null>;
   showBoardSearch: boolean;
   onAddPlayer: (id: string) => void;
   onAddAllAvailable: () => void;
@@ -744,7 +733,6 @@ function MyBoard({
   boardPositionFilter, setBoardPositionFilter,
   boardAvailablePlayers, boardAvailableLoading,
   pickedPlayerIds, boardedPlayerIds,
-  dragOverIndex, setDragOverIndex, dragIndexRef,
   showBoardSearch, onAddPlayer, onAddAllAvailable, onRemovePlayer, onReorder, onPickFromBoard, s,
 }: MyBoardProps) {
   const border2 = '#334155';
@@ -765,7 +753,7 @@ function MyBoard({
             <div>
               <h2 style={{ color: textPrimary2, margin: '0 0 4px', fontSize: '18px' }}>My Rankings</h2>
               <p style={{ color: textSecondary2, margin: 0, fontSize: '13px' }}>
-                Drag to reorder · {boardPlayers.filter(p => !pickedPlayerIds.has(p.id)).length} available
+                Use arrows to reorder · {boardPlayers.filter(p => !pickedPlayerIds.has(p.id)).length} available
               </p>
             </div>
             {canPick && boardPlayers.some(p => !pickedPlayerIds.has(p.id)) && (
@@ -788,43 +776,49 @@ function MyBoard({
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '560px', overflowY: 'auto' }}>
               {boardPlayers.map((player, index) => {
                 const isPicked = pickedPlayerIds.has(player.id);
-                const isDropTarget = dragOverIndex === index;
                 const injuryLabel = player.injury_status;
                 const injuryColor = injuryLabel ? (INJURY_COLORS[injuryLabel] ?? '#64748b') : null;
 
                 return (
                   <div
                     key={player.id}
-                    draggable={!isPicked}
-                    onDragStart={() => { dragIndexRef.current = index; }}
-                    onDragOver={e => { e.preventDefault(); setDragOverIndex(index); }}
-                    onDragLeave={() => setDragOverIndex(null)}
-                    onDrop={() => {
-                      if (dragIndexRef.current !== null) {
-                        onReorder(dragIndexRef.current, index);
-                        dragIndexRef.current = null;
-                      }
-                      setDragOverIndex(null);
-                    }}
-                    onDragEnd={() => { dragIndexRef.current = null; setDragOverIndex(null); }}
                     style={{
                       padding: '10px 12px',
                       borderRadius: '7px',
-                      border: `1px solid ${isDropTarget ? blue2 : (isPicked ? '#1e3a5f' : border2)}`,
-                      background: isDropTarget ? '#1e3a5f' : (isPicked ? '#0c1929' : '#0f172a'),
+                      border: `1px solid ${isPicked ? '#1e3a5f' : border2}`,
+                      background: isPicked ? '#0c1929' : '#0f172a',
                       opacity: isPicked ? 0.5 : 1,
-                      cursor: isPicked ? 'default' : 'grab',
-                      display: 'flex', alignItems: 'center', gap: '10px',
-                      transition: 'border-color 0.1s, background 0.1s',
+                      display: 'flex', alignItems: 'center', gap: '8px',
                     }}
                   >
-                    {/* Rank + drag handle */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '28px' }}>
-                      <span style={{ fontSize: '13px', fontWeight: '700', color: isPicked ? textSecondary2 : textPrimary2 }}>
+                    {/* Rank + up/down buttons */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px', minWidth: '32px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: '700', color: isPicked ? textSecondary2 : textPrimary2, lineHeight: 1 }}>
                         {index + 1}
                       </span>
                       {!isPicked && (
-                        <span style={{ fontSize: '12px', color: '#475569', lineHeight: 1, marginTop: '1px' }}>⋮⋮</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                          <button
+                            onClick={() => index > 0 && onReorder(index, index - 1)}
+                            disabled={index === 0}
+                            style={{
+                              padding: '0 4px', lineHeight: '14px', fontSize: '10px', fontWeight: '700',
+                              background: 'transparent', color: index === 0 ? '#334155' : '#64748b',
+                              border: 'none', cursor: index === 0 ? 'default' : 'pointer',
+                            }}
+                            title="Move up"
+                          >▲</button>
+                          <button
+                            onClick={() => index < boardPlayers.length - 1 && onReorder(index, index + 1)}
+                            disabled={index === boardPlayers.length - 1}
+                            style={{
+                              padding: '0 4px', lineHeight: '14px', fontSize: '10px', fontWeight: '700',
+                              background: 'transparent', color: index === boardPlayers.length - 1 ? '#334155' : '#64748b',
+                              border: 'none', cursor: index === boardPlayers.length - 1 ? 'default' : 'pointer',
+                            }}
+                            title="Move down"
+                          >▼</button>
+                        </div>
                       )}
                     </div>
 
