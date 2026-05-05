@@ -229,7 +229,7 @@ export default function DraftBoard() {
     const playerIds = rankings.map(r => r.sports_player_id);
     const { data: players } = await supabase
       .from('nfl_draft_player_pool')
-      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, headshot_url')
+      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr')
       .in('id', playerIds);
 
     const playerMap = new Map((players ?? []).map(p => [p.id, p]));
@@ -237,7 +237,7 @@ export default function DraftBoard() {
     for (const r of rankings) {
       const p = playerMap.get(r.sports_player_id);
       if (!p) continue;
-      merged.push({ id: p.id, display_name: p.display_name, fantasy_position: p.fantasy_position, position: p.position, status: p.status, injury_status: p.injury_status, team_abbr: p.team_abbr, headshot_url: p.headshot_url, rank: r.rank, rankingId: r.id });
+      merged.push({ id: p.id, display_name: p.display_name, fantasy_position: p.fantasy_position, position: p.position, status: p.status, injury_status: p.injury_status, team_abbr: p.team_abbr, headshot_url: null, rank: r.rank, rankingId: r.id });
     }
 
     setBoardPlayers(merged);
@@ -250,7 +250,7 @@ export default function DraftBoard() {
 
     let query = supabase
       .from('nfl_draft_player_pool')
-      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, headshot_url')
+      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr')
       .order('display_name')
       .limit(60);
 
@@ -733,6 +733,8 @@ function MyBoard({
   pickedPlayerIds, boardedPlayerIds,
   showBoardSearch, onAddPlayer, onAddAllAvailable, onRemovePlayer, onReorder, onPickFromBoard, s,
 }: MyBoardProps) {
+  const [subTab, setSubTab] = useState<'rankings' | 'available'>('rankings');
+
   const border2 = '#334155';
   const textPrimary2 = '#f1f5f9';
   const textSecondary2 = '#94a3b8';
@@ -740,212 +742,149 @@ function MyBoard({
   const blue2 = '#3b82f6';
 
   const canPick = (isMyTurn || canForcePick) && draftStatus === 'in_progress';
+  const availableCount = boardPlayers.filter(p => !pickedPlayerIds.has(p.id)).length;
+  const addableCount = boardAvailablePlayers.filter(p => !pickedPlayerIds.has(p.id) && !boardedPlayerIds.has(p.id)).length;
+
+  const subTabStyle = (active: boolean) => ({
+    flex: 1, padding: '10px', fontSize: '14px', fontWeight: '600' as const, cursor: 'pointer',
+    border: 'none', background: 'transparent',
+    color: active ? textPrimary2 : textSecondary2,
+    borderBottom: active ? `2px solid ${blue2}` : '2px solid transparent',
+  });
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+    <div style={{ ...s.card, marginBottom: 0 }}>
+      {/* Status banner */}
+      {canPick && boardPlayers.some(p => !pickedPlayerIds.has(p.id)) && (
+        <div style={{ marginBottom: '12px', padding: '8px 12px', borderRadius: '7px', background: '#14532d', border: `1px solid #16a34a`, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: green2, boxShadow: `0 0 6px ${green2}` }} />
+          <span style={{ color: green2, fontWeight: '700', fontSize: '13px' }}>
+            {isMyTurn ? "Your turn to pick!" : `Force pick for ${currentParticipant?.team_name}`}
+          </span>
+        </div>
+      )}
 
-      {/* Left: My Rankings */}
-      <div>
-        <div style={{ ...s.card, marginBottom: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
-            <div>
-              <h2 style={{ color: textPrimary2, margin: '0 0 4px', fontSize: '18px' }}>My Rankings</h2>
-              <p style={{ color: textSecondary2, margin: 0, fontSize: '13px' }}>
-                Use arrows to reorder · {boardPlayers.filter(p => !pickedPlayerIds.has(p.id)).length} available
-              </p>
-            </div>
-            {canPick && boardPlayers.some(p => !pickedPlayerIds.has(p.id)) && (
-              <div style={{
-                padding: '4px 12px', borderRadius: '9999px', fontSize: '12px', fontWeight: '700',
-                background: '#14532d', color: green2, border: `1px solid #16a34a`,
-              }}>
-                {isMyTurn ? 'Your turn!' : `Force pick for ${currentParticipant?.team_name}`}
-              </div>
-            )}
-          </div>
+      {/* Sub-tab bar */}
+      <div style={{ display: 'flex', borderBottom: `1px solid ${border2}`, marginBottom: '14px' }}>
+        <button style={subTabStyle(subTab === 'rankings')} onClick={() => setSubTab('rankings')}>
+          My Rankings {availableCount > 0 ? `(${availableCount})` : ''}
+        </button>
+        <button style={subTabStyle(subTab === 'available')} onClick={() => setSubTab('available')}>
+          Add Players
+        </button>
+      </div>
 
+      {/* ── My Rankings tab ───────────────────────────────────────────── */}
+      {subTab === 'rankings' && (
+        <>
           {boardLoading ? (
             <p style={{ color: textSecondary2, fontSize: '14px', textAlign: 'center', padding: '30px 0' }}>Loading...</p>
           ) : boardPlayers.length === 0 ? (
-            <p style={{ color: textSecondary2, fontSize: '14px', textAlign: 'center', padding: '30px 0' }}>
-              Add players from the right to build your board.
-            </p>
+            <div style={{ textAlign: 'center', padding: '30px 0' }}>
+              <p style={{ color: textSecondary2, fontSize: '14px', margin: '0 0 12px' }}>Your board is empty.</p>
+              <button
+                onClick={() => setSubTab('available')}
+                style={{ padding: '8px 18px', background: blue2, color: '#fff', border: 'none', borderRadius: '7px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}
+              >
+                Add Players
+              </button>
+            </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '560px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               {boardPlayers.map((player, index) => {
                 const isPicked = pickedPlayerIds.has(player.id);
                 const injuryLabel = player.injury_status;
                 const injuryColor = injuryLabel ? (INJURY_COLORS[injuryLabel] ?? '#64748b') : null;
 
                 return (
-                  <div
-                    key={player.id}
-                    style={{
-                      padding: '10px 12px',
-                      borderRadius: '7px',
-                      border: `1px solid ${isPicked ? '#1e3a5f' : border2}`,
-                      background: isPicked ? '#0c1929' : '#0f172a',
-                      opacity: isPicked ? 0.5 : 1,
-                      display: 'flex', alignItems: 'center', gap: '8px',
-                    }}
-                  >
-                    {/* Rank + up/down buttons */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px', minWidth: '32px' }}>
-                      <span style={{ fontSize: '12px', fontWeight: '700', color: isPicked ? textSecondary2 : textPrimary2, lineHeight: 1 }}>
-                        {index + 1}
-                      </span>
+                  <div key={player.id} style={{
+                    padding: '10px 12px', borderRadius: '7px',
+                    border: `1px solid ${isPicked ? '#1e3a5f' : border2}`,
+                    background: isPicked ? '#0c1929' : '#0f172a',
+                    opacity: isPicked ? 0.5 : 1,
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                  }}>
+                    {/* Rank + up/down */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px', minWidth: '28px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: '700', color: isPicked ? textSecondary2 : textPrimary2, lineHeight: 1 }}>{index + 1}</span>
                       {!isPicked && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
-                          <button
-                            onClick={() => index > 0 && onReorder(index, index - 1)}
-                            disabled={index === 0}
-                            style={{
-                              padding: '0 4px', lineHeight: '14px', fontSize: '10px', fontWeight: '700',
-                              background: 'transparent', color: index === 0 ? '#334155' : '#64748b',
-                              border: 'none', cursor: index === 0 ? 'default' : 'pointer',
-                            }}
-                            title="Move up"
-                          >▲</button>
-                          <button
-                            onClick={() => index < boardPlayers.length - 1 && onReorder(index, index + 1)}
-                            disabled={index === boardPlayers.length - 1}
-                            style={{
-                              padding: '0 4px', lineHeight: '14px', fontSize: '10px', fontWeight: '700',
-                              background: 'transparent', color: index === boardPlayers.length - 1 ? '#334155' : '#64748b',
-                              border: 'none', cursor: index === boardPlayers.length - 1 ? 'default' : 'pointer',
-                            }}
-                            title="Move down"
-                          >▼</button>
+                          <button onClick={() => index > 0 && onReorder(index, index - 1)} disabled={index === 0} style={{ padding: '0 4px', lineHeight: '14px', fontSize: '10px', background: 'transparent', color: index === 0 ? '#334155' : '#64748b', border: 'none', cursor: index === 0 ? 'default' : 'pointer' }}>▲</button>
+                          <button onClick={() => index < boardPlayers.length - 1 && onReorder(index, index + 1)} disabled={index === boardPlayers.length - 1} style={{ padding: '0 4px', lineHeight: '14px', fontSize: '10px', background: 'transparent', color: index === boardPlayers.length - 1 ? '#334155' : '#64748b', border: 'none', cursor: index === boardPlayers.length - 1 ? 'default' : 'pointer' }}>▼</button>
                         </div>
                       )}
                     </div>
 
-                    {/* Headshot */}
-                    {player.headshot_url ? (
-                      <img src={player.headshot_url} alt="" style={{ width: '34px', height: '34px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0, background: '#334155' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
-                    ) : (
-                      <div style={{ width: '34px', height: '34px', borderRadius: '50%', background: '#334155', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', color: textSecondary2 }}>
-                        {player.fantasy_position === 'DST' ? 'D' : '?'}
-                      </div>
-                    )}
-
                     {/* Info */}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                        <span style={{ fontWeight: '600', fontSize: '13px', color: isPicked ? textSecondary2 : textPrimary2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '120px' }}>
-                          {player.display_name}
-                        </span>
-                        {isPicked && <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 6px', borderRadius: '4px', background: '#1e3a8a', color: '#93c5fd' }}>Drafted</span>}
-                        {injuryLabel && injuryColor && !isPicked && (
-                          <span style={{ fontSize: '10px', fontWeight: '600', color: injuryColor }}>{injuryLabel}</span>
-                        )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: '600', fontSize: '13px', color: isPicked ? textSecondary2 : textPrimary2 }}>{player.display_name}</span>
+                        {isPicked && <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '4px', background: '#1e3a8a', color: '#93c5fd' }}>Drafted</span>}
+                        {injuryLabel && injuryColor && !isPicked && <span style={{ fontSize: '10px', fontWeight: '600', color: injuryColor }}>{injuryLabel}</span>}
                       </div>
-                      <div style={{ fontSize: '11px', color: textSecondary2, marginTop: '1px' }}>
+                      <div style={{ fontSize: '11px', color: textSecondary2 }}>
                         {player.team_abbr ? `${player.team_abbr} · ` : ''}{player.fantasy_position ?? player.position ?? '—'}
                       </div>
                     </div>
 
                     {/* Position badge */}
-                    <span style={{
-                      padding: '2px 7px', borderRadius: '4px', fontSize: '11px', fontWeight: '700',
-                      background: positionBadgeBg(player.fantasy_position), color: positionBadgeColor(player.fantasy_position), flexShrink: 0,
-                    }}>
+                    <span style={{ padding: '2px 7px', borderRadius: '4px', fontSize: '11px', fontWeight: '700', background: positionBadgeBg(player.fantasy_position), color: positionBadgeColor(player.fantasy_position), flexShrink: 0 }}>
                       {player.fantasy_position ?? player.position ?? '—'}
                     </span>
 
-                    {/* Action buttons */}
-                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                    {/* Actions */}
+                    <div style={{ display: 'flex', gap: '5px', flexShrink: 0 }}>
                       {canPick && !isPicked && (
-                        <button
-                          onClick={() => onPickFromBoard(player.id)}
-                          style={{
-                            padding: '4px 10px', fontSize: '12px', fontWeight: '700',
-                            background: '#14532d', color: green2, border: `1px solid #16a34a`,
-                            borderRadius: '5px', cursor: 'pointer',
-                          }}
-                          title="Pick this player"
-                        >
+                        <button onClick={() => onPickFromBoard(player.id)} style={{ padding: '4px 10px', fontSize: '12px', fontWeight: '700', background: '#14532d', color: green2, border: `1px solid #16a34a`, borderRadius: '5px', cursor: 'pointer' }}>
                           Pick
                         </button>
                       )}
-                      <button
-                        onClick={() => player.rankingId && onRemovePlayer(player.rankingId)}
-                        style={{
-                          padding: '4px 8px', fontSize: '14px', background: 'transparent',
-                          color: '#64748b', border: 'none', cursor: 'pointer', lineHeight: 1,
-                          borderRadius: '4px',
-                        }}
-                        title="Remove from board"
-                      >
-                        ×
-                      </button>
+                      <button onClick={() => player.rankingId && onRemovePlayer(player.rankingId)} style={{ padding: '4px 8px', fontSize: '14px', background: 'transparent', color: '#64748b', border: 'none', cursor: 'pointer', lineHeight: 1 }}>×</button>
                     </div>
                   </div>
                 );
               })}
             </div>
           )}
-        </div>
-      </div>
+        </>
+      )}
 
-      {/* Right: Available Players */}
-      <div>
-        <div style={{ ...s.card, marginBottom: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-            <h2 style={{ color: textPrimary2, margin: 0, fontSize: '18px' }}>Available Players</h2>
-            {(() => {
-              const addableCount = boardAvailablePlayers.filter(p => !pickedPlayerIds.has(p.id) && !boardedPlayerIds.has(p.id)).length;
-              return addableCount > 0 ? (
-                <button
-                  onClick={onAddAllAvailable}
-                  style={{
-                    padding: '5px 12px', fontSize: '12px', fontWeight: '600',
-                    background: 'transparent', color: blue2, border: `1px solid ${blue2}`,
-                    borderRadius: '6px', cursor: 'pointer',
-                  }}
-                >
-                  + Add All ({addableCount})
-                </button>
-              ) : null;
-            })()}
+      {/* ── Available Players tab ─────────────────────────────────────── */}
+      {subTab === 'available' && (
+        <>
+          {/* Search + add all row */}
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+            <input
+              type="text"
+              value={boardSearch}
+              onChange={e => setBoardSearch(e.target.value)}
+              placeholder="Search by name..."
+              style={{ flex: 1, padding: '9px 12px', border: `1px solid ${border2}`, borderRadius: '7px', fontSize: '14px', color: textPrimary2, background: '#0f172a', outline: 'none' }}
+            />
+            {addableCount > 0 && (
+              <button onClick={onAddAllAvailable} style={{ padding: '9px 12px', fontSize: '12px', fontWeight: '600', background: 'transparent', color: blue2, border: `1px solid ${blue2}`, borderRadius: '7px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                + Add All ({addableCount})
+              </button>
+            )}
           </div>
 
-          {/* Search */}
-          <input
-            type="text"
-            value={boardSearch}
-            onChange={e => setBoardSearch(e.target.value)}
-            placeholder="Search by name..."
-            style={{
-              width: '100%', padding: '9px 12px', border: `1px solid ${border2}`,
-              borderRadius: '7px', fontSize: '14px', color: textPrimary2,
-              background: '#0f172a', boxSizing: 'border-box', marginBottom: '10px', outline: 'none',
-            }}
-          />
-
-          {/* Position tabs */}
+          {/* Position filter */}
           <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '12px' }}>
             {POSITIONS.map(pos => (
-              <button
-                key={pos}
-                onClick={() => setBoardPositionFilter(pos)}
-                style={{
-                  padding: '4px 11px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', cursor: 'pointer',
-                  border: boardPositionFilter === pos ? 'none' : `1px solid ${border2}`,
-                  background: boardPositionFilter === pos ? blue2 : 'transparent',
-                  color: boardPositionFilter === pos ? 'white' : textSecondary2,
-                }}
-              >
+              <button key={pos} onClick={() => setBoardPositionFilter(pos)} style={{
+                padding: '4px 11px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', cursor: 'pointer',
+                border: boardPositionFilter === pos ? 'none' : `1px solid ${border2}`,
+                background: boardPositionFilter === pos ? blue2 : 'transparent',
+                color: boardPositionFilter === pos ? 'white' : textSecondary2,
+              }}>
                 {pos}
               </button>
             ))}
           </div>
 
           {/* Player list */}
-          <div style={{ maxHeight: '480px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {boardAvailableLoading && (
-              <p style={{ color: textSecondary2, fontSize: '13px', textAlign: 'center', padding: '20px 0' }}>Searching...</p>
-            )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {boardAvailableLoading && <p style={{ color: textSecondary2, fontSize: '13px', textAlign: 'center', padding: '20px 0' }}>Searching...</p>}
 
             {!boardAvailableLoading && !showBoardSearch && (
               <p style={{ color: textSecondary2, fontSize: '13px', textAlign: 'center', padding: '20px 0' }}>
@@ -964,84 +903,47 @@ function MyBoard({
               const injuryColor = injuryLabel ? (INJURY_COLORS[injuryLabel] ?? '#64748b') : null;
 
               return (
-                <div
-                  key={player.id}
-                  style={{
-                    padding: '10px 12px', borderRadius: '7px',
-                    border: `1px solid ${border2}`,
-                    background: '#0f172a',
-                    opacity: isPicked ? 0.45 : 1,
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                  }}
-                >
-                  {/* Headshot */}
-                  {player.headshot_url ? (
-                    <img src={player.headshot_url} alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0, background: '#334155' }} onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
-                  ) : (
-                    <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#334155', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', color: textSecondary2 }}>
-                      {player.fantasy_position === 'DST' ? 'D' : '?'}
-                    </div>
-                  )}
-
-                  {/* Info */}
+                <div key={player.id} style={{
+                  padding: '10px 12px', borderRadius: '7px', border: `1px solid ${border2}`,
+                  background: '#0f172a', opacity: isPicked ? 0.45 : 1,
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                      <span style={{ fontWeight: '600', fontSize: '13px', color: textPrimary2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '120px' }}>
-                        {player.display_name}
-                      </span>
-                      {isPicked && <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 6px', borderRadius: '4px', background: '#1e3a8a', color: '#93c5fd' }}>Drafted</span>}
-                      {isOnBoard && !isPicked && <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 6px', borderRadius: '4px', background: '#064e3b', color: '#6ee7b7' }}>On Board</span>}
-                      {injuryLabel && injuryColor && !isPicked && (
-                        <span style={{ fontSize: '10px', fontWeight: '600', color: injuryColor }}>{injuryLabel}</span>
-                      )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: '600', fontSize: '13px', color: textPrimary2 }}>{player.display_name}</span>
+                      {isPicked && <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '4px', background: '#1e3a8a', color: '#93c5fd' }}>Drafted</span>}
+                      {isOnBoard && !isPicked && <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '4px', background: '#064e3b', color: '#6ee7b7' }}>On Board</span>}
+                      {injuryLabel && injuryColor && !isPicked && <span style={{ fontSize: '10px', fontWeight: '600', color: injuryColor }}>{injuryLabel}</span>}
                     </div>
-                    <div style={{ fontSize: '11px', color: textSecondary2, marginTop: '1px' }}>
+                    <div style={{ fontSize: '11px', color: textSecondary2 }}>
                       {player.team_abbr ? `${player.team_abbr} · ` : ''}{player.fantasy_position ?? player.position ?? '—'}
                     </div>
                   </div>
 
-                  {/* Position badge */}
-                  <span style={{
-                    padding: '2px 7px', borderRadius: '4px', fontSize: '11px', fontWeight: '700',
-                    background: positionBadgeBg(player.fantasy_position), color: positionBadgeColor(player.fantasy_position), flexShrink: 0,
-                  }}>
+                  <span style={{ padding: '2px 7px', borderRadius: '4px', fontSize: '11px', fontWeight: '700', background: positionBadgeBg(player.fantasy_position), color: positionBadgeColor(player.fantasy_position), flexShrink: 0 }}>
                     {player.fantasy_position ?? player.position ?? '—'}
                   </span>
 
-                  {/* Add / Pick button */}
                   {!isPicked && !isOnBoard && (
-                    <button
-                      onClick={() => onAddPlayer(player.id)}
-                      style={{
-                        padding: '4px 10px', fontSize: '12px', fontWeight: '600',
-                        background: 'transparent', color: blue2, border: `1px solid ${blue2}`,
-                        borderRadius: '5px', cursor: 'pointer', flexShrink: 0,
-                      }}
-                    >
+                    <button onClick={() => onAddPlayer(player.id)} style={{ padding: '4px 10px', fontSize: '12px', fontWeight: '600', background: 'transparent', color: blue2, border: `1px solid ${blue2}`, borderRadius: '5px', cursor: 'pointer', flexShrink: 0 }}>
                       + Add
                     </button>
                   )}
                   {!isPicked && isOnBoard && canPick && (
-                    <button
-                      onClick={() => onPickFromBoard(player.id)}
-                      style={{
-                        padding: '4px 10px', fontSize: '12px', fontWeight: '700',
-                        background: '#14532d', color: green2, border: `1px solid #16a34a`,
-                        borderRadius: '5px', cursor: 'pointer', flexShrink: 0,
-                      }}
-                    >
+                    <button onClick={() => onPickFromBoard(player.id)} style={{ padding: '4px 10px', fontSize: '12px', fontWeight: '700', background: '#14532d', color: green2, border: `1px solid #16a34a`, borderRadius: '5px', cursor: 'pointer', flexShrink: 0 }}>
                       Pick
                     </button>
                   )}
-                  {isPicked && (
-                    <span style={{ fontSize: '12px', color: textSecondary2, flexShrink: 0 }}>Drafted</span>
+                  {!isPicked && isOnBoard && !canPick && (
+                    <span style={{ fontSize: '11px', color: '#6ee7b7', flexShrink: 0 }}>On Board</span>
                   )}
+                  {isPicked && <span style={{ fontSize: '12px', color: textSecondary2, flexShrink: 0 }}>Drafted</span>}
                 </div>
               );
             })}
           </div>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }

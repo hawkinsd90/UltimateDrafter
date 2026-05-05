@@ -46,46 +46,57 @@ interface PickedPlayer {
   isKeeper: boolean;
 }
 
-interface KeptPlayer {
-  id: string;
-  sportsPlayerId: string;
-  displayName: string;
-  fantasyPosition: string | null;
-  teamAbbr: string | null;
+// ── Slot building ─────────────────────────────────────────────────────────────
+
+interface RosterSlot {
+  slotLabel: string;
+  slotType: 'QB' | 'RB' | 'WR' | 'TE' | 'FLEX' | 'K' | 'DST' | 'Bench';
+  player: PickedPlayer | null;
 }
 
-interface ImportedRosterPlayer {
-  id: string;
-  externalPlayerName: string;
-  displayName: string;
-  fantasyPosition: string | null;
-  teamAbbr: string | null;
-  resolutionStatus: string;
+const FLEX_ELIGIBLE = ['RB', 'WR', 'TE'];
+
+function buildRoster(picks: PickedPlayer[], settings: RosterSettings | null): RosterSlot[] {
+  if (!settings) {
+    // No settings — just list all picks as bench
+    return picks.map((p, i) => ({ slotLabel: `BN ${i + 1}`, slotType: 'Bench', player: p }));
+  }
+
+  const slots: RosterSlot[] = [];
+  const used = new Set<string>();
+
+  const add = (type: RosterSlot['slotType'], count: number, eligible: string[]) => {
+    for (let i = 0; i < count; i++) {
+      const label = count > 1 ? `${type} ${i + 1}` : type;
+      const player = picks.find(p => !used.has(p.pickId) && eligible.includes(p.fantasyPosition ?? '')) ?? null;
+      if (player) used.add(player.pickId);
+      slots.push({ slotLabel: label, slotType: type, player });
+    }
+  };
+
+  add('QB', settings.roster_qb ?? 0, ['QB']);
+  add('RB', settings.roster_rb ?? 0, ['RB']);
+  add('WR', settings.roster_wr ?? 0, ['WR']);
+  add('TE', settings.roster_te ?? 0, ['TE']);
+  add('FLEX', settings.roster_flex ?? 0, FLEX_ELIGIBLE);
+  add('K', settings.roster_k ?? 0, ['K']);
+  add('DST', settings.roster_dst ?? 0, ['DST', 'DEF']);
+
+  // Bench — all remaining picks
+  const benchCount = settings.bench ?? 0;
+  const remaining = picks.filter(p => !used.has(p.pickId));
+  for (let i = 0; i < Math.max(benchCount, remaining.length); i++) {
+    slots.push({
+      slotLabel: `BN`,
+      slotType: 'Bench',
+      player: remaining[i] ?? null,
+    });
+  }
+
+  return slots;
 }
 
-// ── Position grouping helpers ─────────────────────────────────────────────────
-
-const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DST', 'BE', 'IR'];
-
-function positionSortKey(pos: string | null): number {
-  const idx = POSITION_ORDER.indexOf(pos ?? '');
-  return idx === -1 ? 99 : idx;
-}
-
-function slotLabel(settings: RosterSettings): Array<{ slot: string; count: number }> {
-  return [
-    { slot: 'QB', count: settings.roster_qb ?? 0 },
-    { slot: 'RB', count: settings.roster_rb ?? 0 },
-    { slot: 'WR', count: settings.roster_wr ?? 0 },
-    { slot: 'TE', count: settings.roster_te ?? 0 },
-    { slot: 'FLEX', count: settings.roster_flex ?? 0 },
-    { slot: 'K', count: settings.roster_k ?? 0 },
-    { slot: 'DST', count: settings.roster_dst ?? 0 },
-    { slot: 'Bench', count: settings.bench ?? 0 },
-  ].filter(s => s.count > 0);
-}
-
-// ── Colours (match DraftBoard) ────────────────────────────────────────────────
+// ── Colours ───────────────────────────────────────────────────────────────────
 
 const bg = '#0f172a';
 const card = '#1e293b';
@@ -96,19 +107,19 @@ const green = '#22c55e';
 const blue = '#3b82f6';
 const amber = '#f59e0b';
 
-const POSITION_COLORS: Record<string, { bg: string; text: string }> = {
-  QB:   { bg: '#7c2d12', text: '#fed7aa' },
-  RB:   { bg: '#14532d', text: '#bbf7d0' },
-  WR:   { bg: '#1e3a5f', text: '#bfdbfe' },
-  TE:   { bg: '#3b1a5f', text: '#e9d5ff' },
-  FLEX: { bg: '#1e293b', text: '#94a3b8' },
-  K:    { bg: '#1a2e1a', text: '#86efac' },
-  DST:  { bg: '#1c1a2e', text: '#a5b4fc' },
-  DEF:  { bg: '#1c1a2e', text: '#a5b4fc' },
+const SLOT_COLORS: Record<string, { bg: string; text: string }> = {
+  QB:    { bg: '#7c2d12', text: '#fed7aa' },
+  RB:    { bg: '#14532d', text: '#bbf7d0' },
+  WR:    { bg: '#1e3a5f', text: '#bfdbfe' },
+  TE:    { bg: '#3b1a5f', text: '#e9d5ff' },
+  FLEX:  { bg: '#1e293b', text: '#94a3b8' },
+  K:     { bg: '#1a2e1a', text: '#86efac' },
+  DST:   { bg: '#1c1a2e', text: '#a5b4fc' },
+  Bench: { bg: '#1e293b', text: '#64748b' },
 };
 
-function posColor(pos: string | null) {
-  return POSITION_COLORS[pos ?? ''] ?? { bg: '#1e293b', text: '#94a3b8' };
+function slotColor(type: string) {
+  return SLOT_COLORS[type] ?? { bg: '#1e293b', text: '#94a3b8' };
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -119,81 +130,17 @@ export default function MyTeam() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
   const [draft, setDraft] = useState<DraftInfo | null>(null);
   const [participant, setParticipant] = useState<Participant | null>(null);
   const [picks, setPicks] = useState<PickedPlayer[]>([]);
-  const [keepers, setKeepers] = useState<KeptPlayer[]>([]);
-  const [importedRoster, setImportedRoster] = useState<ImportedRosterPlayer[]>([]);
-  const [importedRosterBroken, setImportedRosterBroken] = useState(false);
   const [rosterSettings, setRosterSettings] = useState<RosterSettings | null>(null);
   const [totalPicksMade, setTotalPicksMade] = useState(0);
   const [totalParticipants, setTotalParticipants] = useState(0);
-
-  // For viewing other teams (owner view)
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [viewingId, setViewingId] = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   const effectiveParticipantId = viewingId ?? participant?.id ?? null;
-
-  const loadImportedRoster = useCallback(async (participantId: string, draftIdVal: string) => {
-    setImportedRosterBroken(false);
-
-    const { data: linkData } = await supabase
-      .from('external_league_links')
-      .select('id')
-      .eq('draft_id', draftIdVal)
-      .maybeSingle();
-
-    if (!linkData) { setImportedRoster([]); return; }
-
-    // Primary lookup: via draft_participant_id
-    let teamData: { id: string; external_team_id: string } | null = null;
-    const { data: byParticipant } = await supabase
-      .from('external_league_teams')
-      .select('id, external_team_id')
-      .eq('link_id', linkData.id)
-      .eq('draft_participant_id', participantId)
-      .maybeSingle();
-
-    teamData = byParticipant;
-
-    // Fallback: if participant_id linkage is broken, check how many mapped teams exist.
-    // If exactly one mapped team exists and this is the only participant with no mapping, show a warning.
-    if (!teamData) {
-      const { data: allMapped } = await supabase
-        .from('external_league_teams')
-        .select('id, external_team_id, draft_participant_id')
-        .eq('link_id', linkData.id)
-        .eq('mapping_status', 'mapped');
-
-      const unlinked = (allMapped ?? []).filter(t => !t.draft_participant_id);
-      if (unlinked.length > 0) {
-        setImportedRosterBroken(true);
-      }
-      setImportedRoster([]);
-      return;
-    }
-
-    const { data: rosterData } = await supabase
-      .from('external_roster_players')
-      .select('id, external_player_name, external_position, resolution_status, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
-      .eq('link_id', linkData.id)
-      .eq('external_team_id', teamData.external_team_id)
-      .neq('resolution_status', 'skipped');
-
-    const mapped: ImportedRosterPlayer[] = (rosterData ?? []).map((r: any) => ({
-      id: r.id,
-      externalPlayerName: r.external_player_name,
-      displayName: r.player?.display_name ?? r.external_player_name ?? 'Unknown Player',
-      fantasyPosition: r.player?.fantasy_position ?? r.external_position ?? null,
-      teamAbbr: r.player?.team?.abbreviation ?? null,
-      resolutionStatus: r.resolution_status,
-    }));
-    setImportedRoster(mapped);
-  }, []);
 
   const loadPicks = useCallback(async (participantId: string, draftIdVal: string) => {
     const { data } = await supabase
@@ -231,16 +178,8 @@ export default function MyTeam() {
     setDraft(draftData);
 
     const [participantsRes, settingsRes] = await Promise.all([
-      supabase
-        .from('draft_participants')
-        .select('id, user_id, team_name, draft_position')
-        .eq('draft_id', draftId)
-        .order('draft_position', { ascending: true }),
-      supabase
-        .from('draft_settings')
-        .select('roster_qb, roster_rb, roster_wr, roster_te, roster_flex, roster_k, roster_dst, bench, draft_format')
-        .eq('draft_id', draftId)
-        .maybeSingle(),
+      supabase.from('draft_participants').select('id, user_id, team_name, draft_position').eq('draft_id', draftId).order('draft_position', { ascending: true }),
+      supabase.from('draft_settings').select('roster_qb, roster_rb, roster_wr, roster_te, roster_flex, roster_k, roster_dst, bench, draft_format').eq('draft_id', draftId).maybeSingle(),
     ]);
 
     const allParticipants: Participant[] = participantsRes.data ?? [];
@@ -249,191 +188,95 @@ export default function MyTeam() {
 
     const myPart = allParticipants.find(p => p.user_id === user.id) ?? null;
     setParticipant(myPart);
-
     if (settingsRes.data) setRosterSettings(settingsRes.data);
 
     const targetId = viewingId ?? myPart?.id ?? null;
+    if (targetId) await loadPicks(targetId, draftId);
 
-    if (targetId) {
-      await loadPicks(targetId, draftId);
-
-      const [keeperRes] = await Promise.all([
-        supabase
-          .from('draft_keeper_assignments')
-          .select('id, sports_player_id, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
-          .eq('draft_id', draftId)
-          .eq('participant_id', targetId),
-        loadImportedRoster(targetId, draftId),
-      ]);
-
-      const mappedKeepers: KeptPlayer[] = (keeperRes.data ?? []).map((k: any) => ({
-        id: k.id,
-        sportsPlayerId: k.sports_player_id,
-        displayName: k.player?.display_name ?? 'Unknown Player',
-        fantasyPosition: k.player?.fantasy_position ?? null,
-        teamAbbr: k.player?.team?.abbreviation ?? null,
-      }));
-      setKeepers(mappedKeepers);
-    }
-
-    // Count total picks made in this draft
-    const { count } = await supabase
-      .from('draft_picks')
-      .select('id', { count: 'exact', head: true })
-      .eq('draft_id', draftId);
+    const { count } = await supabase.from('draft_picks').select('id', { count: 'exact', head: true }).eq('draft_id', draftId);
     setTotalPicksMade(count ?? 0);
-
     setLoading(false);
   }
 
   useEffect(() => {
     loadData();
 
-    // Poll for live updates during active drafts
     pollRef.current = setInterval(async () => {
       if (!draftId) return;
-      const { data } = await supabase
-        .from('drafts')
-        .select('id, name, status, league_id, current_pick_number, current_participant_id')
-        .eq('id', draftId)
-        .maybeSingle();
+      const { data } = await supabase.from('drafts').select('id, name, status, league_id, current_pick_number, current_participant_id').eq('id', draftId).maybeSingle();
       if (data) setDraft(data);
-
       const targetId = viewingId ?? participant?.id ?? null;
       if (targetId) await loadPicks(targetId, draftId);
-
-      const { count } = await supabase
-        .from('draft_picks')
-        .select('id', { count: 'exact', head: true })
-        .eq('draft_id', draftId);
+      const { count } = await supabase.from('draft_picks').select('id', { count: 'exact', head: true }).eq('draft_id', draftId);
       setTotalPicksMade(count ?? 0);
     }, 8000);
 
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [draftId, user?.id]);
 
-  // Reload picks when viewingId changes
   useEffect(() => {
     if (!viewingId || !draftId) return;
     loadPicks(viewingId, draftId);
-    loadImportedRoster(viewingId, draftId);
-
-    supabase
-      .from('draft_keeper_assignments')
-      .select('id, sports_player_id, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
-      .eq('draft_id', draftId)
-      .eq('participant_id', viewingId)
-      .then(({ data }) => {
-        const mapped: KeptPlayer[] = (data ?? []).map((k: any) => ({
-          id: k.id,
-          sportsPlayerId: k.sports_player_id,
-          displayName: k.player?.display_name ?? 'Unknown Player',
-          fantasyPosition: k.player?.fantasy_position ?? null,
-          teamAbbr: k.player?.team?.abbreviation ?? null,
-        }));
-        setKeepers(mapped);
-      });
   }, [viewingId, draftId]);
 
   if (loading) return (
-    <div style={{ padding: '40px', background: bg, minHeight: '100vh', color: textPrimary, fontFamily: 'system-ui, sans-serif' }}>
-      Loading...
-    </div>
+    <div style={{ padding: '40px', background: bg, minHeight: '100vh', color: textPrimary, fontFamily: 'system-ui, sans-serif' }}>Loading...</div>
   );
 
   if (error || !draft) return (
-    <div style={{ padding: '40px', background: bg, minHeight: '100vh', color: '#ef4444', fontFamily: 'system-ui, sans-serif' }}>
-      {error || 'Draft not found.'}
-    </div>
+    <div style={{ padding: '40px', background: bg, minHeight: '100vh', color: '#ef4444', fontFamily: 'system-ui, sans-serif' }}>{error || 'Draft not found.'}</div>
   );
 
-  const viewingParticipant = effectiveParticipantId
-    ? participants.find(p => p.id === effectiveParticipantId) ?? null
-    : null;
-
+  const viewingParticipant = effectiveParticipantId ? participants.find(p => p.id === effectiveParticipantId) ?? null : null;
   const isMyTeam = viewingParticipant?.id === participant?.id;
   const isOnClock = draft.current_participant_id === effectiveParticipantId;
-  const totalRounds = rosterSettings
+
+  const totalSlots = rosterSettings
     ? (rosterSettings.roster_qb ?? 0) + (rosterSettings.roster_rb ?? 0) +
       (rosterSettings.roster_wr ?? 0) + (rosterSettings.roster_te ?? 0) +
       (rosterSettings.roster_flex ?? 0) + (rosterSettings.roster_k ?? 0) +
       (rosterSettings.roster_dst ?? 0) + (rosterSettings.bench ?? 0)
     : null;
 
-  const currentRound = totalParticipants > 0
-    ? Math.ceil(draft.current_pick_number / totalParticipants)
-    : 1;
-
-  // Sort picks by position priority
-  const sortedPicks = [...picks].sort((a, b) =>
-    positionSortKey(a.fantasyPosition) - positionSortKey(b.fantasyPosition)
-  );
-
-  // Slots remaining
-  const pickedCount = picks.length;
-  const totalSlots = totalRounds ?? 0;
-  const slotsRemaining = Math.max(0, totalSlots - pickedCount);
+  const currentRound = totalParticipants > 0 ? Math.ceil(draft.current_pick_number / totalParticipants) : 1;
+  const roster = buildRoster(picks, rosterSettings);
+  const starters = roster.filter(s => s.slotType !== 'Bench');
+  const bench = roster.filter(s => s.slotType === 'Bench');
 
   return (
-    <div style={{ padding: '24px 20px', fontFamily: 'system-ui, sans-serif', color: textPrimary, background: bg, minHeight: '100vh', maxWidth: '700px', margin: '0 auto' }}>
+    <div style={{ padding: '16px', fontFamily: 'system-ui, sans-serif', color: textPrimary, background: bg, minHeight: '100vh', maxWidth: '600px', margin: '0 auto' }}>
 
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <Link to={`/drafts/${draftId}`} style={{ color: blue, textDecoration: 'none', fontSize: '14px' }}>
-          ← Back to Draft Board
-        </Link>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <Link to={`/drafts/${draftId}`} style={{ color: blue, textDecoration: 'none', fontSize: '14px' }}>← Back</Link>
         <UserMenu />
       </div>
 
-      <h1 style={{ margin: '0 0 4px 0', fontSize: '24px', fontWeight: '700', color: textPrimary }}>
+      <h1 style={{ margin: '0 0 2px', fontSize: '22px', fontWeight: '700' }}>
         {isMyTeam ? 'My Team' : (viewingParticipant?.team_name ?? 'Team Roster')}
       </h1>
-      <p style={{ margin: '0 0 20px 0', color: textSecondary, fontSize: '14px' }}>
+      <p style={{ margin: '0 0 16px', color: textSecondary, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
         {draft.name}
-        {draft.status === 'in_progress' && (
-          <span style={{ marginLeft: '10px', padding: '2px 10px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', background: '#14532d', color: green, border: `1px solid #16a34a` }}>
-            Live
-          </span>
-        )}
-        {draft.status === 'paused' && (
-          <span style={{ marginLeft: '10px', padding: '2px 10px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', background: '#451a03', color: amber, border: `1px solid ${amber}` }}>
-            Paused
-          </span>
-        )}
-        {draft.status === 'completed' && (
-          <span style={{ marginLeft: '10px', padding: '2px 10px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', background: '#1e293b', color: textSecondary, border: `1px solid ${border}` }}>
-            Final
-          </span>
-        )}
+        {draft.status === 'in_progress' && <StatusPill color={green} bg="#14532d" border="#16a34a" label="Live" />}
+        {draft.status === 'paused' && <StatusPill color={amber} bg="#451a03" border={amber} label="Paused" />}
+        {draft.status === 'completed' && <StatusPill color={textSecondary} bg={card} border={border} label="Final" />}
       </p>
 
-      {/* Team selector — all participants */}
+      {/* Team selector */}
       {participants.length > 1 && (
-        <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
-          <p style={{ margin: '0 0 10px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            View Team
-          </p>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '12px', marginBottom: '16px' }}>
+          <p style={{ margin: '0 0 8px', fontSize: '12px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>View Team</p>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
             {participants.map(p => {
-              const isMe = p.id === participant?.id;
               const active = (viewingId ?? participant?.id) === p.id;
               return (
-                <button
-                  key={p.id}
-                  onClick={() => setViewingId(p.id)}
-                  style={{
-                    padding: '6px 14px',
-                    borderRadius: '9999px',
-                    fontSize: '13px',
-                    fontWeight: '600',
-                    cursor: 'pointer',
-                    border: `1px solid ${active ? blue : border}`,
-                    background: active ? '#1d4ed8' : 'transparent',
-                    color: active ? '#fff' : textSecondary,
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  {p.team_name}{isMe ? ' (you)' : ''}
+                <button key={p.id} onClick={() => setViewingId(p.id)} style={{
+                  padding: '5px 12px', borderRadius: '9999px', fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+                  border: `1px solid ${active ? blue : border}`,
+                  background: active ? '#1d4ed8' : 'transparent',
+                  color: active ? '#fff' : textSecondary,
+                }}>
+                  {p.team_name}{p.id === participant?.id ? ' (you)' : ''}
                 </button>
               );
             })}
@@ -447,195 +290,61 @@ export default function MyTeam() {
         </div>
       ) : (
         <>
-          {/* On the clock banner */}
+          {/* On the clock */}
           {isOnClock && draft.status === 'in_progress' && (
-            <div style={{ background: '#052e16', border: `2px solid ${green}`, borderRadius: '10px', padding: '14px 18px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: green, boxShadow: `0 0 8px ${green}` }} />
-              <span style={{ color: green, fontWeight: '700', fontSize: '15px' }}>
+            <div style={{ background: '#052e16', border: `2px solid ${green}`, borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: green, boxShadow: `0 0 8px ${green}` }} />
+              <span style={{ color: green, fontWeight: '700', fontSize: '14px' }}>
                 {isMyTeam ? "It's your turn to pick!" : `${viewingParticipant?.team_name} is on the clock`}
               </span>
             </div>
           )}
 
-          {/* Stats bar */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '20px' }}>
-            <StatBox label="Picks Made" value={String(pickedCount)} />
-            <StatBox label="Slots Left" value={totalSlots > 0 ? String(slotsRemaining) : '—'} highlight={slotsRemaining === 0 && totalSlots > 0} />
-            <StatBox label="Draft Round" value={draft.status === 'pending' ? '—' : String(currentRound) + (totalRounds ? `/${totalRounds}` : '')} />
+          {/* Stats */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '16px' }}>
+            <StatBox label="Picks" value={String(picks.length)} />
+            <StatBox label="Slots Left" value={totalSlots ? String(Math.max(0, totalSlots - picks.length)) : '—'} highlight={totalSlots !== null && picks.length >= totalSlots} />
+            <StatBox label="Round" value={draft.status === 'pending' ? '—' : `${currentRound}${totalSlots ? `/${totalSlots}` : ''}`} />
           </div>
 
-          {/* Roster settings */}
-          {rosterSettings && (
-            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '14px 16px', marginBottom: '20px' }}>
-              <p style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Roster Format
-              </p>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                {slotLabel(rosterSettings).map(s => (
-                  <span key={s.slot} style={{
-                    padding: '3px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '600',
-                    background: '#0f172a', color: textSecondary, border: `1px solid ${border}`,
-                  }}>
-                    {s.count} {s.slot}
-                  </span>
-                ))}
-                {rosterSettings.draft_format && (
-                  <span style={{ marginLeft: 'auto', padding: '3px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '600', background: '#0f172a', color: textSecondary, border: `1px solid ${border}` }}>
-                    {rosterSettings.draft_format === 'snake' ? 'Snake' : 'Linear'}
-                  </span>
-                )}
-              </div>
+          {/* Starters */}
+          <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden', marginBottom: '12px' }}>
+            <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}` }}>
+              <span style={{ fontSize: '12px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Starters
+              </span>
             </div>
-          )}
-
-          {/* Broken mapping warning */}
-          {importedRosterBroken && (
-            <div style={{ background: '#451a03', border: `1px solid #92400e`, borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
-              <p style={{ margin: '0 0 6px 0', fontSize: '13px', fontWeight: '700', color: amber, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Imported Roster Not Linked
-              </p>
-              <p style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#fde68a', lineHeight: '1.5' }}>
-                This draft has imported ESPN/Sleeper teams, but they haven't been linked to participants yet. The league owner needs to re-save the team mapping.
-              </p>
-              <Link
-                to={`/drafts/${draftId}/map-teams`}
-                style={{ display: 'inline-block', padding: '7px 14px', background: amber, color: '#111827', borderRadius: '6px', fontSize: '13px', fontWeight: '600', textDecoration: 'none' }}
-              >
-                Go to Team Mapping
-              </Link>
-            </div>
-          )}
-
-          {/* Imported roster from ESPN/Sleeper */}
-          {importedRoster.length > 0 && (
-            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
-              <p style={{ margin: '0 0 4px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Imported Roster ({importedRoster.length})
-              </p>
-              <p style={{ margin: '0 0 12px 0', fontSize: '12px', color: textSecondary }}>
-                Players from your previous season roster
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {importedRoster.map(p => (
-                  <PlayerRow
-                    key={p.id}
-                    name={p.displayName}
-                    position={p.fantasyPosition}
-                    team={p.teamAbbr}
-                    badge={p.resolutionStatus === 'unresolved' ? 'Unmatched' : undefined}
-                    badgeColor={p.resolutionStatus === 'unresolved' ? '#ef4444' : undefined}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Keepers */}
-          {keepers.length > 0 && (
-            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
-              <p style={{ margin: '0 0 12px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Keepers ({keepers.length})
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {keepers.map(k => (
-                  <PlayerRow
-                    key={k.id}
-                    name={k.displayName}
-                    position={k.fantasyPosition}
-                    team={k.teamAbbr}
-                    badge="Keeper"
-                    badgeColor={amber}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Drafted players */}
-          <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
-            <p style={{ margin: '0 0 12px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Drafted Players ({picks.length})
-            </p>
-
-            {picks.length === 0 ? (
-              <p style={{ color: textSecondary, fontSize: '14px', margin: 0 }}>
-                {draft.status === 'pending' ? 'Draft has not started yet.' : 'No picks made yet.'}
+            {starters.length === 0 ? (
+              <p style={{ padding: '16px 14px', color: textSecondary, fontSize: '13px', margin: 0 }}>
+                {draft.status === 'pending' ? 'Draft has not started.' : 'No starters yet.'}
               </p>
             ) : (
-              <>
-                {/* Grouped by position */}
-                {POSITION_ORDER.filter(pos =>
-                  sortedPicks.some(p => (p.fantasyPosition ?? '').toUpperCase() === pos || (pos === 'BE' && p.fantasyPosition == null))
-                ).map(pos => {
-                  const group = sortedPicks.filter(p =>
-                    pos === 'BE'
-                      ? p.fantasyPosition == null
-                      : (p.fantasyPosition ?? '').toUpperCase() === pos
-                  );
-                  if (group.length === 0) return null;
-                  return (
-                    <div key={pos} style={{ marginBottom: '12px' }}>
-                      <p style={{ margin: '0 0 6px 0', fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                        {pos === 'BE' ? 'Other' : pos}
-                      </p>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        {group.map(pick => (
-                          <PlayerRow
-                            key={pick.pickId}
-                            name={pick.displayName}
-                            position={pick.fantasyPosition}
-                            team={pick.teamAbbr}
-                            badge={`Rd ${pick.round}, Pk ${pick.pickInRound}`}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {/* Remaining empty slots */}
-                {slotsRemaining > 0 && draft.status !== 'completed' && (
-                  <div style={{ marginTop: '8px', borderTop: `1px solid ${border}`, paddingTop: '12px' }}>
-                    <p style={{ margin: '0 0 6px 0', fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                      Empty Slots ({slotsRemaining})
-                    </p>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {Array.from({ length: slotsRemaining }).map((_, i) => (
-                        <div key={i} style={{
-                          padding: '10px 14px', borderRadius: '8px',
-                          border: `1px dashed ${border}`, background: 'transparent',
-                          display: 'flex', alignItems: 'center', gap: '10px',
-                        }}>
-                          <span style={{ fontSize: '12px', color: border }}>— Empty —</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
+              starters.map((slot, i) => <SlotRow key={i} slot={slot} />)
             )}
           </div>
 
-          {/* Draft order context */}
-          {totalParticipants > 0 && draft.status !== 'pending' && (
-            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '14px 16px' }}>
-              <p style={{ margin: '0 0 10px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Overall Draft Progress
-              </p>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ flex: 1, height: '6px', background: '#0f172a', borderRadius: '3px', overflow: 'hidden' }}>
-                  <div style={{
-                    height: '100%',
-                    width: totalSlots > 0
-                      ? `${Math.min(100, (totalPicksMade / (totalSlots * totalParticipants)) * 100)}%`
-                      : '0%',
-                    background: green,
-                    borderRadius: '3px',
-                    transition: 'width 0.5s ease',
-                  }} />
+          {/* Bench */}
+          {bench.length > 0 && (
+            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden', marginBottom: '16px' }}>
+              <div style={{ padding: '10px 14px', borderBottom: `1px solid ${border}` }}>
+                <span style={{ fontSize: '12px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  Bench
+                </span>
+              </div>
+              {bench.map((slot, i) => <SlotRow key={i} slot={slot} />)}
+            </div>
+          )}
+
+          {/* Draft progress */}
+          {totalParticipants > 0 && draft.status !== 'pending' && totalSlots && (
+            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '12px 14px' }}>
+              <p style={{ margin: '0 0 8px', fontSize: '12px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Overall Progress</p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ flex: 1, height: '5px', background: '#0f172a', borderRadius: '3px', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.min(100, (totalPicksMade / (totalSlots * totalParticipants)) * 100)}%`, background: green, borderRadius: '3px', transition: 'width 0.5s' }} />
                 </div>
-                <span style={{ fontSize: '13px', color: textSecondary, whiteSpace: 'nowrap' }}>
-                  {totalPicksMade} / {totalSlots * totalParticipants} picks
+                <span style={{ fontSize: '12px', color: textSecondary, whiteSpace: 'nowrap' }}>
+                  {totalPicksMade} / {totalSlots * totalParticipants}
                 </span>
               </div>
             </div>
@@ -648,50 +357,55 @@ export default function MyTeam() {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
+function StatusPill({ color, bg: bgColor, border: borderColor, label }: { color: string; bg: string; border: string; label: string }) {
+  return (
+    <span style={{ padding: '2px 8px', borderRadius: '9999px', fontSize: '11px', fontWeight: '600', background: bgColor, color, border: `1px solid ${borderColor}` }}>
+      {label}
+    </span>
+  );
+}
+
 function StatBox({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '14px', textAlign: 'center' }}>
-      <div style={{ fontSize: '22px', fontWeight: '700', color: highlight ? green : textPrimary }}>{value}</div>
-      <div style={{ fontSize: '12px', color: textSecondary, marginTop: '2px' }}>{label}</div>
+    <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '8px', padding: '12px', textAlign: 'center' }}>
+      <div style={{ fontSize: '20px', fontWeight: '700', color: highlight ? green : textPrimary }}>{value}</div>
+      <div style={{ fontSize: '11px', color: textSecondary, marginTop: '2px' }}>{label}</div>
     </div>
   );
 }
 
-function PlayerRow({
-  name, position, team, badge, badgeColor,
-}: {
-  name: string;
-  position: string | null;
-  team: string | null;
-  badge?: string;
-  badgeColor?: string;
-}) {
-  const col = posColor(position ? position.toUpperCase() : null);
+function SlotRow({ slot }: { slot: RosterSlot }) {
+  const col = slotColor(slot.slotType);
+  const isEmpty = !slot.player;
+
   return (
     <div style={{
-      padding: '10px 14px', borderRadius: '8px',
-      border: `1px solid ${border}`, background: '#0f172a',
       display: 'flex', alignItems: 'center', gap: '10px',
+      padding: '10px 14px',
+      borderBottom: `1px solid ${border}`,
+      background: isEmpty ? 'transparent' : '#0f172a',
+      opacity: isEmpty ? 0.6 : 1,
     }}>
-      {position && (
-        <span style={{
-          padding: '2px 8px', borderRadius: '5px', fontSize: '11px', fontWeight: '700',
-          background: col.bg, color: col.text, minWidth: '36px', textAlign: 'center',
-        }}>
-          {position.toUpperCase()}
-        </span>
-      )}
-      <span style={{ flex: 1, fontWeight: '600', color: textPrimary, fontSize: '14px' }}>{name}</span>
-      {team && <span style={{ fontSize: '12px', color: textSecondary }}>{team}</span>}
-      {badge && (
-        <span style={{
-          fontSize: '11px', fontWeight: '600',
-          color: badgeColor ?? textSecondary,
-          padding: '2px 8px', borderRadius: '9999px',
-          border: `1px solid ${badgeColor ?? border}`,
-        }}>
-          {badge}
-        </span>
+      {/* Slot label */}
+      <span style={{
+        minWidth: '40px', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700',
+        textAlign: 'center', background: col.bg, color: col.text,
+      }}>
+        {slot.slotLabel}
+      </span>
+
+      {isEmpty ? (
+        <span style={{ flex: 1, fontSize: '13px', color: '#475569' }}>— Empty —</span>
+      ) : (
+        <>
+          <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: textPrimary }}>{slot.player!.displayName}</span>
+          {slot.player!.teamAbbr && (
+            <span style={{ fontSize: '12px', color: textSecondary }}>{slot.player!.teamAbbr}</span>
+          )}
+          <span style={{ fontSize: '11px', color: textSecondary }}>
+            Rd {slot.player!.round}
+          </span>
+        </>
       )}
     </div>
   );
