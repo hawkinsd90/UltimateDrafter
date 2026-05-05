@@ -32,9 +32,13 @@ type BoardPlayer = {
   injury_status: string | null;
   team_abbr: string | null;
   headshot_url: string | null;
+  espn_rank: number | null;
+  sleeper_rank: number | null;
   rank: number;
   rankingId: string | null;
 };
+
+type SortMode = 'name' | 'espn' | 'sleeper';
 
 const bg = '#0f172a';
 const card = '#1e293b';
@@ -81,6 +85,7 @@ export default function DraftBoard() {
   const [boardPositionFilter, setBoardPositionFilter] = useState<PositionFilter>('All');
   const [boardAvailablePlayers, setBoardAvailablePlayers] = useState<Omit<BoardPlayer, 'rank' | 'rankingId'>[]>([]);
   const [boardAvailableLoading, setBoardAvailableLoading] = useState(false);
+  const [boardSortMode, setBoardSortMode] = useState<SortMode>('name');
   const boardDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const participantsRef = useRef<Participant[]>([]);
@@ -152,7 +157,7 @@ export default function DraftBoard() {
     return () => {
       if (boardDebounceRef.current) clearTimeout(boardDebounceRef.current);
     };
-  }, [boardSearch, boardPositionFilter, activeTab]);
+  }, [boardSearch, boardPositionFilter, boardSortMode, activeTab]);
 
   async function loadData() {
     const draftRes = await supabase.from('drafts').select('*').eq('id', draftId!).single();
@@ -237,7 +242,7 @@ export default function DraftBoard() {
     for (const r of rankings) {
       const p = playerMap.get(r.sports_player_id);
       if (!p) continue;
-      merged.push({ id: p.id, display_name: p.display_name, fantasy_position: p.fantasy_position, position: p.position, status: p.status, injury_status: p.injury_status, team_abbr: p.team_abbr, headshot_url: null, rank: r.rank, rankingId: r.id });
+      merged.push({ id: p.id, display_name: p.display_name, fantasy_position: p.fantasy_position, position: p.position, status: p.status, injury_status: p.injury_status, team_abbr: p.team_abbr, headshot_url: null, espn_rank: null, sleeper_rank: null, rank: r.rank, rankingId: r.id });
     }
 
     setBoardPlayers(merged);
@@ -248,11 +253,14 @@ export default function DraftBoard() {
     if (activeTab !== 'myboard') return;
     setBoardAvailableLoading(true);
 
+    const sortColumn = boardSortMode === 'espn' ? 'espn_rank' : boardSortMode === 'sleeper' ? 'sleeper_rank' : 'display_name';
+    const sortNullsLast = boardSortMode !== 'name';
+
     let query = supabase
       .from('nfl_draft_player_pool')
-      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr')
-      .order('display_name')
-      .limit(60);
+      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, espn_rank, sleeper_rank')
+      .order(sortColumn, { ascending: true, nullsFirst: !sortNullsLast })
+      .limit(100);
 
     if (boardPositionFilter !== 'All') {
       query = query.eq('fantasy_position', boardPositionFilter);
@@ -287,6 +295,12 @@ export default function DraftBoard() {
   async function removePlayerFromBoard(rankingId: string) {
     await supabase.from('draft_board_rankings').delete().eq('id', rankingId);
     await loadBoardRankings();
+  }
+
+  async function removeAllFromBoard() {
+    if (!user || !draftId) return;
+    await supabase.from('draft_board_rankings').delete().eq('draft_id', draftId).eq('user_id', user.id);
+    setBoardPlayers([]);
   }
 
   async function addAllAvailableToBoard() {
@@ -680,6 +694,8 @@ export default function DraftBoard() {
           setBoardSearch={setBoardSearch}
           boardPositionFilter={boardPositionFilter}
           setBoardPositionFilter={setBoardPositionFilter}
+          boardSortMode={boardSortMode}
+          setBoardSortMode={setBoardSortMode}
           boardAvailablePlayers={boardAvailablePlayers}
           boardAvailableLoading={boardAvailableLoading}
           pickedPlayerIds={pickedPlayerIds}
@@ -688,6 +704,7 @@ export default function DraftBoard() {
           onAddPlayer={addPlayerToBoard}
           onAddAllAvailable={addAllAvailableToBoard}
           onRemovePlayer={removePlayerFromBoard}
+          onRemoveAll={removeAllFromBoard}
           onReorder={reorderBoard}
           onPickFromBoard={makePick}
           s={s}
@@ -711,6 +728,8 @@ interface MyBoardProps {
   setBoardSearch: (v: string) => void;
   boardPositionFilter: PositionFilter;
   setBoardPositionFilter: (v: PositionFilter) => void;
+  boardSortMode: SortMode;
+  setBoardSortMode: (v: SortMode) => void;
   boardAvailablePlayers: Omit<BoardPlayer, 'rank' | 'rankingId'>[];
   boardAvailableLoading: boolean;
   pickedPlayerIds: Set<string>;
@@ -719,6 +738,7 @@ interface MyBoardProps {
   onAddPlayer: (id: string) => void;
   onAddAllAvailable: () => void;
   onRemovePlayer: (rankingId: string) => void;
+  onRemoveAll: () => void;
   onReorder: (from: number, to: number) => void;
   onPickFromBoard: (playerId: string) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -729,9 +749,10 @@ function MyBoard({
   isMyTurn, canForcePick, currentParticipant, draftStatus,
   boardPlayers, boardLoading, boardSearch, setBoardSearch,
   boardPositionFilter, setBoardPositionFilter,
+  boardSortMode, setBoardSortMode,
   boardAvailablePlayers, boardAvailableLoading,
   pickedPlayerIds, boardedPlayerIds,
-  showBoardSearch, onAddPlayer, onAddAllAvailable, onRemovePlayer, onReorder, onPickFromBoard, s,
+  showBoardSearch, onAddPlayer, onAddAllAvailable, onRemovePlayer, onRemoveAll, onReorder, onPickFromBoard, s,
 }: MyBoardProps) {
   const [subTab, setSubTab] = useState<'rankings' | 'available'>('rankings');
 
@@ -777,6 +798,16 @@ function MyBoard({
       {/* ── My Rankings tab ───────────────────────────────────────────── */}
       {subTab === 'rankings' && (
         <>
+          {boardPlayers.length > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
+              <button
+                onClick={onRemoveAll}
+                style={{ padding: '5px 12px', fontSize: '12px', fontWeight: '600', background: 'transparent', color: '#ef4444', border: '1px solid #ef4444', borderRadius: '6px', cursor: 'pointer' }}
+              >
+                Remove All
+              </button>
+            </div>
+          )}
           {boardLoading ? (
             <p style={{ color: textSecondary2, fontSize: '14px', textAlign: 'center', padding: '30px 0' }}>Loading...</p>
           ) : boardPlayers.length === 0 ? (
@@ -869,7 +900,7 @@ function MyBoard({
           </div>
 
           {/* Position filter */}
-          <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '10px' }}>
             {POSITIONS.map(pos => (
               <button key={pos} onClick={() => setBoardPositionFilter(pos)} style={{
                 padding: '4px 11px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', cursor: 'pointer',
@@ -880,6 +911,25 @@ function MyBoard({
                 {pos}
               </button>
             ))}
+          </div>
+
+          {/* Sort controls */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
+            <span style={{ fontSize: '11px', color: textSecondary2, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Sort:</span>
+            {(['name', 'espn', 'sleeper'] as SortMode[]).map(mode => {
+              const labels: Record<SortMode, string> = { name: 'A–Z', espn: 'ESPN', sleeper: 'Sleeper' };
+              const active = boardSortMode === mode;
+              return (
+                <button key={mode} onClick={() => setBoardSortMode(mode)} style={{
+                  padding: '3px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', cursor: 'pointer',
+                  border: active ? 'none' : `1px solid ${border2}`,
+                  background: active ? '#0f4c81' : 'transparent',
+                  color: active ? '#93c5fd' : textSecondary2,
+                }}>
+                  {labels[mode]}
+                </button>
+              );
+            })}
           </div>
 
           {/* Player list */}
@@ -917,6 +967,8 @@ function MyBoard({
                     </div>
                     <div style={{ fontSize: '11px', color: textSecondary2 }}>
                       {player.team_abbr ? `${player.team_abbr} · ` : ''}{player.fantasy_position ?? player.position ?? '—'}
+                      {boardSortMode === 'espn' && (player as any).espn_rank != null && <span style={{ marginLeft: '6px', color: '#60a5fa' }}>ESPN #{(player as any).espn_rank}</span>}
+                      {boardSortMode === 'sleeper' && (player as any).sleeper_rank != null && <span style={{ marginLeft: '6px', color: '#34d399' }}>Sleeper #{(player as any).sleeper_rank}</span>}
                     </div>
                   </div>
 
