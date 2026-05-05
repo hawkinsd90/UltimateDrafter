@@ -198,7 +198,7 @@ export default function MyTeam() {
   const loadPicks = useCallback(async (participantId: string, draftIdVal: string) => {
     const { data } = await supabase
       .from('draft_picks')
-      .select('id, pick_number, round, pick_in_round, player_id, is_keeper, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
+      .select('id, pick_number, round, pick_in_round, player_id, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
       .eq('draft_id', draftIdVal)
       .eq('participant_id', participantId)
       .order('pick_number', { ascending: true });
@@ -212,7 +212,7 @@ export default function MyTeam() {
       displayName: p.player?.display_name ?? 'Unknown Player',
       fantasyPosition: p.player?.fantasy_position ?? null,
       teamAbbr: p.player?.team?.abbreviation ?? null,
-      isKeeper: p.is_keeper ?? false,
+      isKeeper: false,
     }));
     setPicks(mapped);
   }, []);

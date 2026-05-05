@@ -290,7 +290,25 @@ export default function DraftBoard() {
 
   async function removePlayerFromBoard(rankingId: string) {
     await supabase.from('draft_board_rankings').delete().eq('id', rankingId);
-    // Renormalize ranks after removal
+    await loadBoardRankings();
+  }
+
+  async function addAllAvailableToBoard() {
+    if (!user || !draftId) return;
+    const currentPickedIds = new Set(picksRef.current.map(p => p.player_id).filter(Boolean) as string[]);
+    const currentBoardedIds = new Set(boardPlayers.map(p => p.id));
+    const toAdd = boardAvailablePlayers.filter(p => !currentPickedIds.has(p.id) && !currentBoardedIds.has(p.id));
+    if (toAdd.length === 0) return;
+
+    const startRank = boardPlayers.length > 0 ? Math.max(...boardPlayers.map(p => p.rank)) + 1 : 1;
+    const rows = toAdd.map((p, i) => ({
+      draft_id: draftId,
+      user_id: user.id,
+      sports_player_id: p.id,
+      rank: startRank + i,
+    }));
+
+    await supabase.from('draft_board_rankings').upsert(rows, { onConflict: 'draft_id,user_id,sports_player_id', ignoreDuplicates: true });
     await loadBoardRankings();
   }
 
@@ -678,6 +696,7 @@ export default function DraftBoard() {
           dragIndexRef={dragIndexRef}
           showBoardSearch={showBoardSearch}
           onAddPlayer={addPlayerToBoard}
+          onAddAllAvailable={addAllAvailableToBoard}
           onRemovePlayer={removePlayerFromBoard}
           onReorder={reorderBoard}
           onPickFromBoard={makePick}
@@ -711,6 +730,7 @@ interface MyBoardProps {
   dragIndexRef: React.MutableRefObject<number | null>;
   showBoardSearch: boolean;
   onAddPlayer: (id: string) => void;
+  onAddAllAvailable: () => void;
   onRemovePlayer: (rankingId: string) => void;
   onReorder: (from: number, to: number) => void;
   onPickFromBoard: (playerId: string) => void;
@@ -725,7 +745,7 @@ function MyBoard({
   boardAvailablePlayers, boardAvailableLoading,
   pickedPlayerIds, boardedPlayerIds,
   dragOverIndex, setDragOverIndex, dragIndexRef,
-  showBoardSearch, onAddPlayer, onRemovePlayer, onReorder, onPickFromBoard, s,
+  showBoardSearch, onAddPlayer, onAddAllAvailable, onRemovePlayer, onReorder, onPickFromBoard, s,
 }: MyBoardProps) {
   const border2 = '#334155';
   const textPrimary2 = '#f1f5f9';
@@ -879,7 +899,21 @@ function MyBoard({
       {/* Right: Available Players */}
       <div>
         <div style={{ ...s.card, marginBottom: 0 }}>
-          <h2 style={{ color: textPrimary2, margin: '0 0 14px', fontSize: '18px' }}>Available Players</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+            <h2 style={{ color: textPrimary2, margin: 0, fontSize: '18px' }}>Available Players</h2>
+            {showBoardSearch && boardAvailablePlayers.filter(p => !pickedPlayerIds.has(p.id) && !boardedPlayerIds.has(p.id)).length > 0 && (
+              <button
+                onClick={onAddAllAvailable}
+                style={{
+                  padding: '5px 12px', fontSize: '12px', fontWeight: '600',
+                  background: 'transparent', color: blue2, border: `1px solid ${blue2}`,
+                  borderRadius: '6px', cursor: 'pointer',
+                }}
+              >
+                + Add All ({boardAvailablePlayers.filter(p => !pickedPlayerIds.has(p.id) && !boardedPlayerIds.has(p.id)).length})
+              </button>
+            )}
+          </div>
 
           {/* Search */}
           <input
