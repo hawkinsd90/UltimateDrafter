@@ -250,7 +250,7 @@ export default function TeamMapping() {
             .insert({
               draft_id: draftId!,
               user_id: member.userId,
-              team_name: member.displayName,
+              team_name: team.externalTeamName || member.displayName,
               draft_position: maxPosition,
               notification_preferences: {},
             })
@@ -279,6 +279,12 @@ export default function TeamMapping() {
           .eq('id', team.id);
 
         if (error) { setSaveError('Failed to save mapping for ' + team.externalTeamName + ': ' + error.message); setSaving(false); return; }
+
+        // Sync team name from ESPN to the participant
+        await supabase
+          .from('draft_participants')
+          .update({ team_name: team.externalTeamName })
+          .eq('id', participantId);
 
         // Clear any prior exclusions for this team
         await supabase

@@ -226,29 +226,98 @@ export async function mapRosterPlayers(
   return results;
 }
 
+// NFL team nickname → full team name prefix (for D/ST matching)
+// ESPN sends "Bills D/ST", DB stores "Buffalo Bills D/ST"
+const DST_NICKNAME_MAP: Record<string, string> = {
+  "49ers":     "San Francisco 49ers",
+  "bears":     "Chicago Bears",
+  "bengals":   "Cincinnati Bengals",
+  "bills":     "Buffalo Bills",
+  "broncos":   "Denver Broncos",
+  "browns":    "Cleveland Browns",
+  "buccaneers":"Tampa Bay Buccaneers",
+  "bucs":      "Tampa Bay Buccaneers",
+  "cardinals": "Arizona Cardinals",
+  "chargers":  "Los Angeles Chargers",
+  "chiefs":    "Kansas City Chiefs",
+  "colts":     "Indianapolis Colts",
+  "commanders":"Washington Commanders",
+  "cowboys":   "Dallas Cowboys",
+  "dolphins":  "Miami Dolphins",
+  "seahawks":  "Seattle Seahawks",
+  "eagles":    "Philadelphia Eagles",
+  "falcons":   "Atlanta Falcons",
+  "giants":    "New York Giants",
+  "jaguars":   "Jacksonville Jaguars",
+  "jags":      "Jacksonville Jaguars",
+  "jets":      "New York Jets",
+  "lions":     "Detroit Lions",
+  "packers":   "Green Bay Packers",
+  "panthers":  "Carolina Panthers",
+  "patriots":  "New England Patriots",
+  "raiders":   "Las Vegas Raiders",
+  "rams":      "Los Angeles Rams",
+  "ravens":    "Baltimore Ravens",
+  "saints":    "New Orleans Saints",
+  "seahawks":  "Seattle Seahawks",
+  "steelers":  "Pittsburgh Steelers",
+  "texans":    "Houston Texans",
+  "titans":    "Tennessee Titans",
+  "vikings":   "Minnesota Vikings",
+};
+
+// Strip common name suffixes for fallback matching
+// "Brian Robinson Jr." → "Brian Robinson", "Kyle Pitts Sr." → "Kyle Pitts"
+function stripNameSuffix(name: string): string {
+  return name.replace(/\s+(Jr\.|Sr\.|II|III|IV|V)$/i, "").trim();
+}
+
+// Expand DST short form: "Bills D/ST" → "Buffalo Bills D/ST"
+function expandDstName(playerName: string): string | null {
+  const match = playerName.match(/^(.+?)\s+D\/ST$/i);
+  if (!match) return null;
+  const nickname = match[1].trim().toLowerCase();
+  const fullTeam = DST_NICKNAME_MAP[nickname];
+  if (!fullTeam) return null;
+  return `${fullTeam} D/ST`;
+}
+
 // ── Name + position exact match ───────────────────────────────────────────────
 async function matchByName(
   playerName: string,
   position: string | undefined,
   adminClient: SupabaseClient
 ): Promise<SportsPlayerRow | null> {
-  const normalized = playerName.trim().toLowerCase();
+  const namesToTry: string[] = [playerName.trim()];
 
-  let query = adminClient
-    .from("sports_players")
-    .select("id, display_name, fantasy_position, provider_player_id")
-    .ilike("display_name", normalized)
-    .limit(5);
-
-  if (position) {
-    query = query.eq("fantasy_position", position);
+  // For D/ST, also try expanding the nickname form
+  if (position === "DST") {
+    const expanded = expandDstName(playerName);
+    if (expanded) namesToTry.push(expanded);
   }
 
-  const { data } = await query;
-  if (!data || data.length === 0) return null;
-  // If multiple players share the same name+position, we cannot auto-resolve safely
-  if (data.length > 1) return null;
-  return data[0];
+  // Also try stripping Jr./Sr./II/III suffixes
+  const stripped = stripNameSuffix(playerName.trim());
+  if (stripped !== playerName.trim()) namesToTry.push(stripped);
+
+  for (const name of namesToTry) {
+    let query = adminClient
+      .from("sports_players")
+      .select("id, display_name, fantasy_position, provider_player_id")
+      .ilike("display_name", name)
+      .limit(5);
+
+    if (position) {
+      query = query.eq("fantasy_position", position);
+    }
+
+    const { data } = await query;
+    if (!data || data.length === 0) continue;
+    if (data.length > 1) continue;
+    return data[0];
+  }
+
+  return null;
 }
 
 // ── Fuzzy trigram match ───────────────────────────────────────────────────────
