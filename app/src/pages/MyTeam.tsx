@@ -34,79 +34,61 @@ interface RosterSettings {
   draft_format: string | null;
 }
 
-interface RosterPlayer {
-  id: string; // unique key (pickId, keeperId, or importedId)
+interface PickedPlayer {
+  pickId: string;
+  pickNumber: number;
+  round: number;
+  pickInRound: number;
   playerId: string | null;
   displayName: string;
   fantasyPosition: string | null;
   teamAbbr: string | null;
-  source: 'pick' | 'keeper' | 'imported';
-  badge?: string;
-  pickRound?: number;
-  pickInRound?: number;
-  unmatched?: boolean;
+  isKeeper: boolean;
 }
 
-// ── Roster slot definitions ───────────────────────────────────────────────────
-
-interface RosterSlot {
-  label: string;
-  eligible: string[]; // positions that can fill this slot
+interface KeptPlayer {
+  id: string;
+  sportsPlayerId: string;
+  displayName: string;
+  fantasyPosition: string | null;
+  teamAbbr: string | null;
 }
 
-function buildStarterSlots(s: RosterSettings): RosterSlot[] {
-  const slots: RosterSlot[] = [];
-  for (let i = 0; i < (s.roster_qb ?? 0); i++) slots.push({ label: 'QB', eligible: ['QB'] });
-  for (let i = 0; i < (s.roster_rb ?? 0); i++) slots.push({ label: 'RB', eligible: ['RB'] });
-  for (let i = 0; i < (s.roster_wr ?? 0); i++) slots.push({ label: 'WR', eligible: ['WR'] });
-  for (let i = 0; i < (s.roster_te ?? 0); i++) slots.push({ label: 'TE', eligible: ['TE'] });
-  for (let i = 0; i < (s.roster_flex ?? 0); i++) slots.push({ label: 'FLEX', eligible: ['RB', 'WR', 'TE'] });
-  for (let i = 0; i < (s.roster_k ?? 0); i++) slots.push({ label: 'K', eligible: ['K'] });
-  for (let i = 0; i < (s.roster_dst ?? 0); i++) slots.push({ label: 'D/ST', eligible: ['DST', 'DEF'] });
-  return slots;
+interface ImportedRosterPlayer {
+  id: string;
+  externalPlayerName: string;
+  displayName: string;
+  fantasyPosition: string | null;
+  teamAbbr: string | null;
+  resolutionStatus: string;
 }
 
-function canFillSlot(player: RosterPlayer, slot: RosterSlot): boolean {
-  const pos = (player.fantasyPosition ?? '').toUpperCase();
-  return slot.eligible.some(e => e.toUpperCase() === pos);
+// ── Position grouping helpers ─────────────────────────────────────────────────
+
+const POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DST', 'BE', 'IR'];
+
+function positionSortKey(pos: string | null): number {
+  const idx = POSITION_ORDER.indexOf(pos ?? '');
+  return idx === -1 ? 99 : idx;
 }
 
-// Auto-assign players to starter slots greedily, return [starterAssignments, benchPlayers]
-function assignStarters(
-  players: RosterPlayer[],
-  slots: RosterSlot[]
-): { starters: (RosterPlayer | null)[]; bench: RosterPlayer[] } {
-  const remaining = [...players];
-  const starters: (RosterPlayer | null)[] = slots.map(() => null);
-
-  // First pass: fill exact-position slots
-  for (let si = 0; si < slots.length; si++) {
-    const slot = slots[si];
-    if (slot.label === 'FLEX' || slot.label === 'D/ST') continue;
-    const idx = remaining.findIndex(p => canFillSlot(p, slot));
-    if (idx !== -1) {
-      starters[si] = remaining.splice(idx, 1)[0];
-    }
-  }
-
-  // Second pass: fill FLEX and D/ST
-  for (let si = 0; si < slots.length; si++) {
-    if (starters[si]) continue;
-    const slot = slots[si];
-    const idx = remaining.findIndex(p => canFillSlot(p, slot));
-    if (idx !== -1) {
-      starters[si] = remaining.splice(idx, 1)[0];
-    }
-  }
-
-  return { starters, bench: remaining };
+function slotLabel(settings: RosterSettings): Array<{ slot: string; count: number }> {
+  return [
+    { slot: 'QB', count: settings.roster_qb ?? 0 },
+    { slot: 'RB', count: settings.roster_rb ?? 0 },
+    { slot: 'WR', count: settings.roster_wr ?? 0 },
+    { slot: 'TE', count: settings.roster_te ?? 0 },
+    { slot: 'FLEX', count: settings.roster_flex ?? 0 },
+    { slot: 'K', count: settings.roster_k ?? 0 },
+    { slot: 'DST', count: settings.roster_dst ?? 0 },
+    { slot: 'Bench', count: settings.bench ?? 0 },
+  ].filter(s => s.count > 0);
 }
 
-// ── Colours ───────────────────────────────────────────────────────────────────
+// ── Colours (match DraftBoard) ────────────────────────────────────────────────
 
 const bg = '#0f172a';
 const card = '#1e293b';
-
 const border = '#334155';
 const textPrimary = '#f1f5f9';
 const textSecondary = '#94a3b8';
@@ -126,39 +108,7 @@ const POSITION_COLORS: Record<string, { bg: string; text: string }> = {
 };
 
 function posColor(pos: string | null) {
-  return POSITION_COLORS[(pos ?? '').toUpperCase()] ?? { bg: '#1e293b', text: '#94a3b8' };
-}
-
-function slotBadgeColor(label: string) {
-  const map: Record<string, { bg: string; text: string }> = {
-    QB:    { bg: '#7c2d12', text: '#fed7aa' },
-    RB:    { bg: '#14532d', text: '#bbf7d0' },
-    WR:    { bg: '#1e3a5f', text: '#bfdbfe' },
-    TE:    { bg: '#3b1a5f', text: '#e9d5ff' },
-    FLEX:  { bg: '#292524', text: '#d6d3d1' },
-    K:     { bg: '#1a2e1a', text: '#86efac' },
-    'D/ST':{ bg: '#1c1a2e', text: '#a5b4fc' },
-  };
-  return map[label] ?? { bg: '#1e293b', text: '#94a3b8' };
-}
-
-function totalRosterSlots(s: RosterSettings): number {
-  return (s.roster_qb ?? 0) + (s.roster_rb ?? 0) + (s.roster_wr ?? 0) +
-    (s.roster_te ?? 0) + (s.roster_flex ?? 0) + (s.roster_k ?? 0) +
-    (s.roster_dst ?? 0) + (s.bench ?? 0);
-}
-
-function slotLabel(settings: RosterSettings): Array<{ slot: string; count: number }> {
-  return [
-    { slot: 'QB', count: settings.roster_qb ?? 0 },
-    { slot: 'RB', count: settings.roster_rb ?? 0 },
-    { slot: 'WR', count: settings.roster_wr ?? 0 },
-    { slot: 'TE', count: settings.roster_te ?? 0 },
-    { slot: 'FLEX', count: settings.roster_flex ?? 0 },
-    { slot: 'K', count: settings.roster_k ?? 0 },
-    { slot: 'DST', count: settings.roster_dst ?? 0 },
-    { slot: 'Bench', count: settings.bench ?? 0 },
-  ].filter(s => s.count > 0);
+  return POSITION_COLORS[pos ?? ''] ?? { bg: '#1e293b', text: '#94a3b8' };
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -172,124 +122,99 @@ export default function MyTeam() {
 
   const [draft, setDraft] = useState<DraftInfo | null>(null);
   const [participant, setParticipant] = useState<Participant | null>(null);
-  const [draftedPlayers, setDraftedPlayers] = useState<RosterPlayer[]>([]);
-  const [importedPlayers, setImportedPlayers] = useState<RosterPlayer[]>([]);
+  const [picks, setPicks] = useState<PickedPlayer[]>([]);
+  const [keepers, setKeepers] = useState<KeptPlayer[]>([]);
+  const [importedRoster, setImportedRoster] = useState<ImportedRosterPlayer[]>([]);
   const [importedRosterBroken, setImportedRosterBroken] = useState(false);
   const [rosterSettings, setRosterSettings] = useState<RosterSettings | null>(null);
   const [totalPicksMade, setTotalPicksMade] = useState(0);
   const [totalParticipants, setTotalParticipants] = useState(0);
 
-  // 'draft' tab shows picks, 'imported' shows the ESPN roster
-  const [activeTab, setActiveTab] = useState<'draft' | 'imported'>('draft');
-
-  // For viewing other teams
+  // For viewing other teams (owner view)
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [viewingId, setViewingId] = useState<string | null>(null);
 
-  // Swap state: which player index (in full list) is selected for swapping
-  const [swapSourceIndex, setSwapSourceIndex] = useState<number | null>(null);
-
-  // Manual starter overrides: map from slotIndex → rosterPlayer.id
-  const [starterOverrides, setStarterOverrides] = useState<Record<number, string>>({});
-
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const effectiveParticipantId = viewingId ?? participant?.id ?? null;
 
-  const loadRosterPlayers = useCallback(async (participantId: string, draftIdVal: string) => {
+  const loadImportedRoster = useCallback(async (participantId: string, draftIdVal: string) => {
     setImportedRosterBroken(false);
 
-    const [picksRes, keepersRes, linkRes] = await Promise.all([
-      supabase
-        .from('draft_picks')
-        .select('id, pick_number, round, pick_in_round, player_id, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
-        .eq('draft_id', draftIdVal)
-        .eq('participant_id', participantId)
-        .order('pick_number', { ascending: true }),
-      supabase
-        .from('draft_keeper_assignments')
-        .select('id, sports_player_id, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
-        .eq('draft_id', draftIdVal)
-        .eq('participant_id', participantId),
-      supabase
-        .from('external_league_links')
-        .select('id')
-        .eq('draft_id', draftIdVal)
-        .maybeSingle(),
-    ]);
+    const { data: linkData } = await supabase
+      .from('external_league_links')
+      .select('id')
+      .eq('draft_id', draftIdVal)
+      .maybeSingle();
 
-    // Draft picks + keepers → drafted roster
-    const drafted: RosterPlayer[] = [];
+    if (!linkData) { setImportedRoster([]); return; }
 
-    for (const p of picksRes.data ?? []) {
-      drafted.push({
-        id: `pick-${p.id}`,
-        playerId: p.player_id,
-        displayName: (p as any).player?.display_name ?? 'Unknown Player',
-        fantasyPosition: (p as any).player?.fantasy_position ?? null,
-        teamAbbr: (p as any).player?.team?.abbreviation ?? null,
-        source: 'pick',
-        pickRound: p.round,
-        pickInRound: p.pick_in_round,
-      });
-    }
+    // Primary lookup: via draft_participant_id
+    let teamData: { id: string; external_team_id: string } | null = null;
+    const { data: byParticipant } = await supabase
+      .from('external_league_teams')
+      .select('id, external_team_id')
+      .eq('link_id', linkData.id)
+      .eq('draft_participant_id', participantId)
+      .maybeSingle();
 
-    for (const k of keepersRes.data ?? []) {
-      drafted.push({
-        id: `keeper-${k.id}`,
-        playerId: k.sports_player_id,
-        displayName: (k as any).player?.display_name ?? 'Unknown Player',
-        fantasyPosition: (k as any).player?.fantasy_position ?? null,
-        teamAbbr: (k as any).player?.team?.abbreviation ?? null,
-        source: 'keeper',
-        badge: 'Keeper',
-      });
-    }
+    teamData = byParticipant;
 
-    setDraftedPlayers(drafted);
-
-    // Imported roster (last season's ESPN/Sleeper team) → separate list
-    const imported: RosterPlayer[] = [];
-
-    if (linkRes.data) {
-      const { data: teamData } = await supabase
+    // Fallback: if participant_id linkage is broken, check how many mapped teams exist.
+    // If exactly one mapped team exists and this is the only participant with no mapping, show a warning.
+    if (!teamData) {
+      const { data: allMapped } = await supabase
         .from('external_league_teams')
-        .select('id, external_team_id')
-        .eq('link_id', linkRes.data.id)
-        .eq('draft_participant_id', participantId)
-        .maybeSingle();
+        .select('id, external_team_id, draft_participant_id')
+        .eq('link_id', linkData.id)
+        .eq('mapping_status', 'mapped');
 
-      if (teamData) {
-        const { data: rosterData } = await supabase
-          .from('external_roster_players')
-          .select('id, external_player_name, external_position, resolution_status, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
-          .eq('link_id', linkRes.data.id)
-          .eq('external_team_id', teamData.external_team_id)
-          .neq('resolution_status', 'skipped');
-
-        for (const r of rosterData ?? []) {
-          imported.push({
-            id: `imported-${r.id}`,
-            playerId: null,
-            displayName: (r as any).player?.display_name ?? r.external_player_name ?? 'Unknown Player',
-            fantasyPosition: (r as any).player?.fantasy_position ?? r.external_position ?? null,
-            teamAbbr: (r as any).player?.team?.abbreviation ?? null,
-            source: 'imported',
-            unmatched: r.resolution_status === 'unresolved',
-          });
-        }
-      } else {
-        const { data: allMapped } = await supabase
-          .from('external_league_teams')
-          .select('id, draft_participant_id')
-          .eq('link_id', linkRes.data.id)
-          .eq('mapping_status', 'mapped');
-        if ((allMapped ?? []).some((t: any) => !t.draft_participant_id)) {
-          setImportedRosterBroken(true);
-        }
+      const unlinked = (allMapped ?? []).filter(t => !t.draft_participant_id);
+      if (unlinked.length > 0) {
+        setImportedRosterBroken(true);
       }
+      setImportedRoster([]);
+      return;
     }
 
-    setImportedPlayers(imported);
+    const { data: rosterData } = await supabase
+      .from('external_roster_players')
+      .select('id, external_player_name, external_position, resolution_status, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
+      .eq('link_id', linkData.id)
+      .eq('external_team_id', teamData.external_team_id)
+      .neq('resolution_status', 'skipped');
+
+    const mapped: ImportedRosterPlayer[] = (rosterData ?? []).map((r: any) => ({
+      id: r.id,
+      externalPlayerName: r.external_player_name,
+      displayName: r.player?.display_name ?? r.external_player_name ?? 'Unknown Player',
+      fantasyPosition: r.player?.fantasy_position ?? r.external_position ?? null,
+      teamAbbr: r.player?.team?.abbreviation ?? null,
+      resolutionStatus: r.resolution_status,
+    }));
+    setImportedRoster(mapped);
+  }, []);
+
+  const loadPicks = useCallback(async (participantId: string, draftIdVal: string) => {
+    const { data } = await supabase
+      .from('draft_picks')
+      .select('id, pick_number, round, pick_in_round, player_id, is_keeper, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
+      .eq('draft_id', draftIdVal)
+      .eq('participant_id', participantId)
+      .order('pick_number', { ascending: true });
+
+    const mapped: PickedPlayer[] = (data ?? []).map((p: any) => ({
+      pickId: p.id,
+      pickNumber: p.pick_number,
+      round: p.round,
+      pickInRound: p.pick_in_round,
+      playerId: p.player_id,
+      displayName: p.player?.display_name ?? 'Unknown Player',
+      fantasyPosition: p.player?.fantasy_position ?? null,
+      teamAbbr: p.player?.team?.abbreviation ?? null,
+      isKeeper: p.is_keeper ?? false,
+    }));
+    setPicks(mapped);
   }, []);
 
   async function loadData() {
@@ -328,8 +253,30 @@ export default function MyTeam() {
     if (settingsRes.data) setRosterSettings(settingsRes.data);
 
     const targetId = viewingId ?? myPart?.id ?? null;
-    if (targetId) await loadRosterPlayers(targetId, draftId);
 
+    if (targetId) {
+      await loadPicks(targetId, draftId);
+
+      const [keeperRes] = await Promise.all([
+        supabase
+          .from('draft_keeper_assignments')
+          .select('id, sports_player_id, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
+          .eq('draft_id', draftId)
+          .eq('participant_id', targetId),
+        loadImportedRoster(targetId, draftId),
+      ]);
+
+      const mappedKeepers: KeptPlayer[] = (keeperRes.data ?? []).map((k: any) => ({
+        id: k.id,
+        sportsPlayerId: k.sports_player_id,
+        displayName: k.player?.display_name ?? 'Unknown Player',
+        fantasyPosition: k.player?.fantasy_position ?? null,
+        teamAbbr: k.player?.team?.abbreviation ?? null,
+      }));
+      setKeepers(mappedKeepers);
+    }
+
+    // Count total picks made in this draft
     const { count } = await supabase
       .from('draft_picks')
       .select('id', { count: 'exact', head: true })
@@ -342,6 +289,7 @@ export default function MyTeam() {
   useEffect(() => {
     loadData();
 
+    // Poll for live updates during active drafts
     pollRef.current = setInterval(async () => {
       if (!draftId) return;
       const { data } = await supabase
@@ -352,7 +300,7 @@ export default function MyTeam() {
       if (data) setDraft(data);
 
       const targetId = viewingId ?? participant?.id ?? null;
-      if (targetId) await loadRosterPlayers(targetId, draftId);
+      if (targetId) await loadPicks(targetId, draftId);
 
       const { count } = await supabase
         .from('draft_picks')
@@ -364,88 +312,28 @@ export default function MyTeam() {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [draftId, user?.id]);
 
+  // Reload picks when viewingId changes
   useEffect(() => {
     if (!viewingId || !draftId) return;
-    setStarterOverrides({});
-    setSwapSourceIndex(null);
-    setActiveTab('draft');
-    loadRosterPlayers(viewingId, draftId);
+    loadPicks(viewingId, draftId);
+    loadImportedRoster(viewingId, draftId);
+
+    supabase
+      .from('draft_keeper_assignments')
+      .select('id, sports_player_id, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
+      .eq('draft_id', draftId)
+      .eq('participant_id', viewingId)
+      .then(({ data }) => {
+        const mapped: KeptPlayer[] = (data ?? []).map((k: any) => ({
+          id: k.id,
+          sportsPlayerId: k.sports_player_id,
+          displayName: k.player?.display_name ?? 'Unknown Player',
+          fantasyPosition: k.player?.fantasy_position ?? null,
+          teamAbbr: k.player?.team?.abbreviation ?? null,
+        }));
+        setKeepers(mapped);
+      });
   }, [viewingId, draftId]);
-
-  // ── Roster layout computation ─────────────────────────────────────────────
-
-  const rosterPlayers = activeTab === 'draft' ? draftedPlayers : importedPlayers;
-
-  const starterSlots = rosterSettings ? buildStarterSlots(rosterSettings) : [];
-  const benchCount = rosterSettings?.bench ?? 0;
-
-  const { starters: autoStarters, bench: autoBench } = assignStarters(rosterPlayers, starterSlots);
-
-  // Build mutable copies respecting overrides
-  const starters: (RosterPlayer | null)[] = [...autoStarters];
-  const bench: RosterPlayer[] = [...autoBench];
-
-  // Apply overrides: if user has manually moved player X to slot i, enforce it
-  for (const [slotIdxStr, playerId] of Object.entries(starterOverrides)) {
-    const slotIdx = Number(slotIdxStr);
-    const player = rosterPlayers.find(p => p.id === playerId);
-    if (!player) continue;
-
-    // Find where this player currently sits
-    const currentStarterIdx = starters.findIndex(s => s?.id === playerId);
-    const currentBenchIdx = bench.findIndex(b => b.id === playerId);
-
-    const displaced = starters[slotIdx];
-
-    if (currentStarterIdx !== -1 && currentStarterIdx !== slotIdx) {
-      // Swap two starters
-      starters[slotIdx] = player;
-      starters[currentStarterIdx] = displaced;
-    } else if (currentBenchIdx !== -1) {
-      // Move from bench to starter slot
-      starters[slotIdx] = player;
-      bench.splice(currentBenchIdx, 1);
-      if (displaced) bench.push(displaced);
-    }
-  }
-
-  function handleSwap(playerId: string) {
-    if (swapSourceIndex === null) return;
-
-    const newOverrides = { ...starterOverrides };
-
-    // Find slot of source
-    const sourceSlotIdx = starters.findIndex(s => s?.id === rosterPlayers[swapSourceIndex]?.id);
-    const sourcePlayer = rosterPlayers[swapSourceIndex];
-    if (!sourcePlayer) { setSwapSourceIndex(null); return; }
-
-    // Find target slot (if target is in starters)
-    const targetStarterIdx = starters.findIndex(s => s?.id === playerId);
-    const targetBenchIdx = bench.findIndex(b => b.id === playerId);
-
-    if (targetStarterIdx !== -1 && sourceSlotIdx !== -1) {
-      // Swap two starters
-      newOverrides[targetStarterIdx] = sourcePlayer.id;
-      newOverrides[sourceSlotIdx] = starters[targetStarterIdx]!.id;
-    } else if (targetBenchIdx !== -1 && sourceSlotIdx !== -1) {
-      // Move starter to bench → put bench player in that slot
-      newOverrides[sourceSlotIdx] = playerId;
-    } else if (targetStarterIdx !== -1) {
-      // Source is on bench, target is in starters
-      newOverrides[targetStarterIdx] = sourcePlayer.id;
-    }
-
-    setStarterOverrides(newOverrides);
-    setSwapSourceIndex(null);
-  }
-
-  function startSwap(playerIndex: number) {
-    setSwapSourceIndex(playerIndex === swapSourceIndex ? null : playerIndex);
-  }
-
-  const swapSourcePlayer = swapSourceIndex !== null ? rosterPlayers[swapSourceIndex] : null;
-
-  // ── Loading / error ───────────────────────────────────────────────────────
 
   if (loading) return (
     <div style={{ padding: '40px', background: bg, minHeight: '100vh', color: textPrimary, fontFamily: 'system-ui, sans-serif' }}>
@@ -465,11 +353,26 @@ export default function MyTeam() {
 
   const isMyTeam = viewingParticipant?.id === participant?.id;
   const isOnClock = draft.current_participant_id === effectiveParticipantId;
-  const totalSlots = rosterSettings ? totalRosterSlots(rosterSettings) : 0;
-  const currentRound = totalParticipants > 0 ? Math.ceil(draft.current_pick_number / totalParticipants) : 1;
+  const totalRounds = rosterSettings
+    ? (rosterSettings.roster_qb ?? 0) + (rosterSettings.roster_rb ?? 0) +
+      (rosterSettings.roster_wr ?? 0) + (rosterSettings.roster_te ?? 0) +
+      (rosterSettings.roster_flex ?? 0) + (rosterSettings.roster_k ?? 0) +
+      (rosterSettings.roster_dst ?? 0) + (rosterSettings.bench ?? 0)
+    : null;
 
-  const picksCount = draftedPlayers.filter(p => p.source === 'pick').length;
-  const slotsRemaining = Math.max(0, totalSlots - picksCount);
+  const currentRound = totalParticipants > 0
+    ? Math.ceil(draft.current_pick_number / totalParticipants)
+    : 1;
+
+  // Sort picks by position priority
+  const sortedPicks = [...picks].sort((a, b) =>
+    positionSortKey(a.fantasyPosition) - positionSortKey(b.fantasyPosition)
+  );
+
+  // Slots remaining
+  const pickedCount = picks.length;
+  const totalSlots = totalRounds ?? 0;
+  const slotsRemaining = Math.max(0, totalSlots - pickedCount);
 
   return (
     <div style={{ padding: '24px 20px', fontFamily: 'system-ui, sans-serif', color: textPrimary, background: bg, minHeight: '100vh', maxWidth: '700px', margin: '0 auto' }}>
@@ -488,31 +391,48 @@ export default function MyTeam() {
       <p style={{ margin: '0 0 20px 0', color: textSecondary, fontSize: '14px' }}>
         {draft.name}
         {draft.status === 'in_progress' && (
-          <span style={{ marginLeft: '10px', padding: '2px 10px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', background: '#14532d', color: green, border: `1px solid #16a34a` }}>Live</span>
+          <span style={{ marginLeft: '10px', padding: '2px 10px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', background: '#14532d', color: green, border: `1px solid #16a34a` }}>
+            Live
+          </span>
         )}
         {draft.status === 'paused' && (
-          <span style={{ marginLeft: '10px', padding: '2px 10px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', background: '#451a03', color: amber, border: `1px solid ${amber}` }}>Paused</span>
+          <span style={{ marginLeft: '10px', padding: '2px 10px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', background: '#451a03', color: amber, border: `1px solid ${amber}` }}>
+            Paused
+          </span>
         )}
         {draft.status === 'completed' && (
-          <span style={{ marginLeft: '10px', padding: '2px 10px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', background: '#1e293b', color: textSecondary, border: `1px solid ${border}` }}>Final</span>
+          <span style={{ marginLeft: '10px', padding: '2px 10px', borderRadius: '9999px', fontSize: '12px', fontWeight: '600', background: '#1e293b', color: textSecondary, border: `1px solid ${border}` }}>
+            Final
+          </span>
         )}
       </p>
 
-      {/* Team selector */}
+      {/* Team selector — all participants */}
       {participants.length > 1 && (
         <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
-          <p style={{ margin: '0 0 10px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>View Team</p>
+          <p style={{ margin: '0 0 10px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            View Team
+          </p>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {participants.map(p => {
               const isMe = p.id === participant?.id;
               const active = (viewingId ?? participant?.id) === p.id;
               return (
-                <button key={p.id} onClick={() => setViewingId(p.id)} style={{
-                  padding: '6px 14px', borderRadius: '9999px', fontSize: '13px', fontWeight: '600',
-                  cursor: 'pointer', border: `1px solid ${active ? blue : border}`,
-                  background: active ? '#1d4ed8' : 'transparent', color: active ? '#fff' : textSecondary,
-                  transition: 'all 0.15s',
-                }}>
+                <button
+                  key={p.id}
+                  onClick={() => setViewingId(p.id)}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '9999px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    border: `1px solid ${active ? blue : border}`,
+                    background: active ? '#1d4ed8' : 'transparent',
+                    color: active ? '#fff' : textSecondary,
+                    transition: 'all 0.15s',
+                  }}
+                >
                   {p.team_name}{isMe ? ' (you)' : ''}
                 </button>
               );
@@ -527,7 +447,7 @@ export default function MyTeam() {
         </div>
       ) : (
         <>
-          {/* On the clock */}
+          {/* On the clock banner */}
           {isOnClock && draft.status === 'in_progress' && (
             <div style={{ background: '#052e16', border: `2px solid ${green}`, borderRadius: '10px', padding: '14px 18px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
               <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: green, boxShadow: `0 0 8px ${green}` }} />
@@ -537,20 +457,25 @@ export default function MyTeam() {
             </div>
           )}
 
-          {/* Stats */}
+          {/* Stats bar */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '20px' }}>
-            <StatBox label="Picks Made" value={String(picksCount)} />
+            <StatBox label="Picks Made" value={String(pickedCount)} />
             <StatBox label="Slots Left" value={totalSlots > 0 ? String(slotsRemaining) : '—'} highlight={slotsRemaining === 0 && totalSlots > 0} />
-            <StatBox label="Draft Round" value={draft.status === 'pending' ? '—' : `${currentRound}${totalSlots ? `/${totalSlots}` : ''}`} />
+            <StatBox label="Draft Round" value={draft.status === 'pending' ? '—' : String(currentRound) + (totalRounds ? `/${totalRounds}` : '')} />
           </div>
 
-          {/* Roster format */}
+          {/* Roster settings */}
           {rosterSettings && (
             <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '14px 16px', marginBottom: '20px' }}>
-              <p style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Roster Format</p>
+              <p style={{ margin: '0 0 10px 0', fontSize: '12px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Roster Format
+              </p>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 {slotLabel(rosterSettings).map(s => (
-                  <span key={s.slot} style={{ padding: '3px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '600', background: '#0f172a', color: textSecondary, border: `1px solid ${border}` }}>
+                  <span key={s.slot} style={{
+                    padding: '3px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '600',
+                    background: '#0f172a', color: textSecondary, border: `1px solid ${border}`,
+                  }}>
                     {s.count} {s.slot}
                   </span>
                 ))}
@@ -566,263 +491,148 @@ export default function MyTeam() {
           {/* Broken mapping warning */}
           {importedRosterBroken && (
             <div style={{ background: '#451a03', border: `1px solid #92400e`, borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
-              <p style={{ margin: '0 0 6px 0', fontSize: '13px', fontWeight: '700', color: amber, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Imported Roster Not Linked</p>
+              <p style={{ margin: '0 0 6px 0', fontSize: '13px', fontWeight: '700', color: amber, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Imported Roster Not Linked
+              </p>
               <p style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#fde68a', lineHeight: '1.5' }}>
                 This draft has imported ESPN/Sleeper teams, but they haven't been linked to participants yet. The league owner needs to re-save the team mapping.
               </p>
-              <Link to={`/drafts/${draftId}/map-teams`} style={{ display: 'inline-block', padding: '7px 14px', background: amber, color: '#111827', borderRadius: '6px', fontSize: '13px', fontWeight: '600', textDecoration: 'none' }}>
+              <Link
+                to={`/drafts/${draftId}/map-teams`}
+                style={{ display: 'inline-block', padding: '7px 14px', background: amber, color: '#111827', borderRadius: '6px', fontSize: '13px', fontWeight: '600', textDecoration: 'none' }}
+              >
                 Go to Team Mapping
               </Link>
             </div>
           )}
 
-          {/* Tab switcher — only show if there's an imported roster */}
-          {importedPlayers.length > 0 && (
-            <div style={{ display: 'flex', gap: '0', marginBottom: '16px', background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden' }}>
-              <button
-                onClick={() => { setActiveTab('draft'); setSwapSourceIndex(null); setStarterOverrides({}); }}
-                style={{
-                  flex: 1, padding: '10px 16px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: '600',
-                  background: activeTab === 'draft' ? blue : 'transparent',
-                  color: activeTab === 'draft' ? '#fff' : textSecondary,
-                  transition: 'all 0.15s',
-                }}
-              >
-                Draft Picks ({picksCount})
-              </button>
-              <button
-                onClick={() => { setActiveTab('imported'); setSwapSourceIndex(null); setStarterOverrides({}); }}
-                style={{
-                  flex: 1, padding: '10px 16px', border: 'none', borderLeft: `1px solid ${border}`, cursor: 'pointer', fontSize: '14px', fontWeight: '600',
-                  background: activeTab === 'imported' ? '#065f46' : 'transparent',
-                  color: activeTab === 'imported' ? '#6ee7b7' : textSecondary,
-                  transition: 'all 0.15s',
-                }}
-              >
-                Last Season ({importedPlayers.length})
-              </button>
-            </div>
-          )}
-
-          {/* Swap mode hint */}
-          {swapSourcePlayer && (
-            <div style={{ background: '#1e3a5f', border: `1px solid ${blue}`, borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ color: '#bfdbfe', fontSize: '14px' }}>
-                Select a player to swap with <strong style={{ color: textPrimary }}>{swapSourcePlayer.displayName}</strong>
-              </span>
-              <button onClick={() => setSwapSourceIndex(null)} style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', fontSize: '18px', lineHeight: 1 }}>×</button>
-            </div>
-          )}
-
-          {rosterPlayers.length === 0 ? (
-            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '32px', textAlign: 'center' }}>
-              <p style={{ color: textSecondary, margin: 0, fontSize: '14px' }}>
-                {activeTab === 'imported'
-                  ? 'No imported roster found for this team.'
-                  : draft.status === 'pending' ? 'Draft has not started yet.' : 'No picks made yet.'}
+          {/* Imported roster from ESPN/Sleeper */}
+          {importedRoster.length > 0 && (
+            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
+              <p style={{ margin: '0 0 4px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Imported Roster ({importedRoster.length})
               </p>
+              <p style={{ margin: '0 0 12px 0', fontSize: '12px', color: textSecondary }}>
+                Players from your previous season roster
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {importedRoster.map(p => (
+                  <PlayerRow
+                    key={p.id}
+                    name={p.displayName}
+                    position={p.fantasyPosition}
+                    team={p.teamAbbr}
+                    badge={p.resolutionStatus === 'unresolved' ? 'Unmatched' : undefined}
+                    badgeColor={p.resolutionStatus === 'unresolved' ? '#ef4444' : undefined}
+                  />
+                ))}
+              </div>
             </div>
-          ) : (
-            <>
-              {/* ── STARTERS ── */}
-              {starterSlots.length > 0 && (
-                <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden', marginBottom: '16px' }}>
-                  <div style={{ padding: '12px 16px', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '13px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Starters</span>
-                    <span style={{ fontSize: '12px', color: textSecondary }}>{starters.filter(Boolean).length} / {starterSlots.length}</span>
-                  </div>
-                  {starterSlots.map((slot, si) => {
-                    const player = starters[si];
-                    const slotColors = slotBadgeColor(slot.label);
-                    const playerIndex = player ? rosterPlayers.findIndex(p => p.id === player.id) : -1;
-                    const isSwapSource = swapSourcePlayer?.id === player?.id;
-                    const isSwapTarget = swapSourcePlayer !== null && player !== null && player.id !== swapSourcePlayer.id;
-                    const canSwap = swapSourcePlayer !== null && player !== null && canFillSlot(swapSourcePlayer, slot);
-
-                    return (
-                      <div
-                        key={si}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '10px',
-                          padding: '10px 16px',
-                          borderBottom: si < starterSlots.length - 1 ? `1px solid ${border}` : 'none',
-                          background: isSwapSource ? '#1e3a5f' : isSwapTarget && canSwap ? '#0f2b1a' : 'transparent',
-                          cursor: isSwapTarget && canSwap ? 'pointer' : 'default',
-                          transition: 'background 0.15s',
-                        }}
-                        onClick={() => {
-                          if (isSwapTarget && canSwap && player) handleSwap(player.id);
-                        }}
-                      >
-                        {/* Slot label */}
-                        <span style={{
-                          minWidth: '42px', padding: '3px 6px', borderRadius: '5px', fontSize: '11px', fontWeight: '700',
-                          textAlign: 'center', background: slotColors.bg, color: slotColors.text,
-                        }}>{slot.label}</span>
-
-                        {player ? (
-                          <>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ fontWeight: '600', fontSize: '14px', color: textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{player.displayName}</span>
-                                {player.badge && (
-                                  <span style={{ fontSize: '10px', fontWeight: '700', color: amber, border: `1px solid ${amber}`, borderRadius: '4px', padding: '1px 5px', whiteSpace: 'nowrap' }}>{player.badge}</span>
-                                )}
-                                {player.unmatched && (
-                                  <span style={{ fontSize: '10px', fontWeight: '700', color: '#ef4444', border: '1px solid #ef4444', borderRadius: '4px', padding: '1px 5px', whiteSpace: 'nowrap' }}>Unmatched</span>
-                                )}
-                              </div>
-                              <div style={{ fontSize: '12px', color: textSecondary, marginTop: '2px' }}>
-                                {player.fantasyPosition && <span style={{ ...posColor(player.fantasyPosition), borderRadius: '3px', padding: '0 5px', fontSize: '11px', fontWeight: '600', marginRight: '6px', background: posColor(player.fantasyPosition).bg, color: posColor(player.fantasyPosition).text }}>{player.fantasyPosition}</span>}
-                                {player.teamAbbr && <span>{player.teamAbbr}</span>}
-                                {player.source === 'pick' && player.pickRound && <span style={{ marginLeft: '6px', opacity: 0.6 }}>Rd {player.pickRound}, Pk {player.pickInRound}</span>}
-                              </div>
-                            </div>
-                            <button
-                              onClick={e => { e.stopPropagation(); startSwap(playerIndex); }}
-                              style={{
-                                padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '600',
-                                border: `1px solid ${isSwapSource ? blue : border}`,
-                                background: isSwapSource ? '#1d4ed8' : 'transparent',
-                                color: isSwapSource ? '#fff' : textSecondary,
-                                cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.15s',
-                              }}
-                            >
-                              {isSwapSource ? 'Cancel' : 'Move'}
-                            </button>
-                          </>
-                        ) : (
-                          <span style={{ flex: 1, fontSize: '13px', color: border }}>— Empty —</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* ── BENCH ── */}
-              {(bench.length > 0 || benchCount > 0) && (
-                <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden', marginBottom: '16px' }}>
-                  <div style={{ padding: '12px 16px', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '13px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Bench</span>
-                    <span style={{ fontSize: '12px', color: textSecondary }}>{bench.length}{benchCount > 0 ? ` / ${benchCount}` : ''}</span>
-                  </div>
-                  {bench.length === 0 ? (
-                    <div style={{ padding: '14px 16px' }}>
-                      <span style={{ fontSize: '13px', color: border }}>— Empty —</span>
-                    </div>
-                  ) : (
-                    bench.map((player, bi) => {
-                      const playerIndex = rosterPlayers.findIndex(p => p.id === player.id);
-                      const isSwapSource = swapSourcePlayer?.id === player.id;
-                      // Any starter slot that can accept this bench player
-                      const canMoveToBench = swapSourcePlayer !== null && player.id !== swapSourcePlayer.id;
-                      // If swap source is a starter and this bench player is the target
-                      const swapSourceIsStarter = swapSourcePlayer ? starters.some(s => s?.id === swapSourcePlayer.id) : false;
-                      const isValidBenchSwapTarget = canMoveToBench && swapSourceIsStarter;
-
-                      return (
-                        <div
-                          key={player.id}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: '10px',
-                            padding: '10px 16px',
-                            borderBottom: bi < bench.length - 1 ? `1px solid ${border}` : 'none',
-                            background: isSwapSource ? '#1e3a5f' : isValidBenchSwapTarget ? '#0f2b1a' : 'transparent',
-                            cursor: isValidBenchSwapTarget ? 'pointer' : 'default',
-                            transition: 'background 0.15s',
-                          }}
-                          onClick={() => { if (isValidBenchSwapTarget) handleSwap(player.id); }}
-                        >
-                          <span style={{ minWidth: '42px', padding: '3px 6px', borderRadius: '5px', fontSize: '11px', fontWeight: '700', textAlign: 'center', background: '#1e293b', color: textSecondary, border: `1px solid ${border}` }}>BN</span>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span style={{ fontWeight: '600', fontSize: '14px', color: textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{player.displayName}</span>
-                              {player.badge && (
-                                <span style={{ fontSize: '10px', fontWeight: '700', color: amber, border: `1px solid ${amber}`, borderRadius: '4px', padding: '1px 5px', whiteSpace: 'nowrap' }}>{player.badge}</span>
-                              )}
-                              {player.unmatched && (
-                                <span style={{ fontSize: '10px', fontWeight: '700', color: '#ef4444', border: '1px solid #ef4444', borderRadius: '4px', padding: '1px 5px', whiteSpace: 'nowrap' }}>Unmatched</span>
-                              )}
-                            </div>
-                            <div style={{ fontSize: '12px', color: textSecondary, marginTop: '2px' }}>
-                              {player.fantasyPosition && <span style={{ borderRadius: '3px', padding: '0 5px', fontSize: '11px', fontWeight: '600', marginRight: '6px', background: posColor(player.fantasyPosition).bg, color: posColor(player.fantasyPosition).text }}>{player.fantasyPosition}</span>}
-                              {player.teamAbbr && <span>{player.teamAbbr}</span>}
-                              {player.source === 'pick' && player.pickRound && <span style={{ marginLeft: '6px', opacity: 0.6 }}>Rd {player.pickRound}, Pk {player.pickInRound}</span>}
-                            </div>
-                          </div>
-                          <button
-                            onClick={e => { e.stopPropagation(); startSwap(playerIndex); }}
-                            style={{
-                              padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '600',
-                              border: `1px solid ${isSwapSource ? blue : border}`,
-                              background: isSwapSource ? '#1d4ed8' : 'transparent',
-                              color: isSwapSource ? '#fff' : textSecondary,
-                              cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.15s',
-                            }}
-                          >
-                            {isSwapSource ? 'Cancel' : 'Move'}
-                          </button>
-                        </div>
-                      );
-                    })
-                  )}
-                  {/* Empty bench slots */}
-                  {Array.from({ length: Math.max(0, benchCount - bench.length) }).map((_, i) => (
-                    <div key={`empty-bench-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 16px', borderTop: `1px solid ${border}` }}>
-                      <span style={{ minWidth: '42px', padding: '3px 6px', borderRadius: '5px', fontSize: '11px', fontWeight: '700', textAlign: 'center', background: '#1e293b', color: textSecondary, border: `1px solid ${border}` }}>BN</span>
-                      <span style={{ fontSize: '13px', color: border }}>— Empty —</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Overflow (more players than slots — e.g. imported roster is bigger) */}
-              {(() => {
-                const overflow = rosterPlayers.filter(p =>
-                  !starters.some(s => s?.id === p.id) && !bench.some(b => b.id === p.id)
-                );
-                if (overflow.length === 0) return null;
-                return (
-                  <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden', marginBottom: '16px' }}>
-                    <div style={{ padding: '12px 16px', borderBottom: `1px solid ${border}` }}>
-                      <span style={{ fontSize: '13px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Additional Players</span>
-                    </div>
-                    {overflow.map((player, oi) => {
-                      const playerIndex = rosterPlayers.findIndex(p => p.id === player.id);
-                      const isSwapSource = swapSourcePlayer?.id === player.id;
-                      return (
-                        <div key={player.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 16px', borderBottom: oi < overflow.length - 1 ? `1px solid ${border}` : 'none', background: isSwapSource ? '#1e3a5f' : 'transparent' }}>
-                          <span style={{ minWidth: '42px', padding: '3px 6px', borderRadius: '5px', fontSize: '11px', fontWeight: '700', textAlign: 'center', background: '#1e293b', color: textSecondary, border: `1px solid ${border}` }}>+</span>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span style={{ fontWeight: '600', fontSize: '14px', color: textPrimary }}>{player.displayName}</span>
-                              {player.unmatched && <span style={{ fontSize: '10px', fontWeight: '700', color: '#ef4444', border: '1px solid #ef4444', borderRadius: '4px', padding: '1px 5px' }}>Unmatched</span>}
-                            </div>
-                            <div style={{ fontSize: '12px', color: textSecondary, marginTop: '2px' }}>
-                              {player.fantasyPosition && <span style={{ borderRadius: '3px', padding: '0 5px', fontSize: '11px', fontWeight: '600', marginRight: '6px', background: posColor(player.fantasyPosition).bg, color: posColor(player.fantasyPosition).text }}>{player.fantasyPosition}</span>}
-                              {player.teamAbbr && <span>{player.teamAbbr}</span>}
-                            </div>
-                          </div>
-                          <button onClick={e => { e.stopPropagation(); startSwap(playerIndex); }} style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '12px', fontWeight: '600', border: `1px solid ${isSwapSource ? blue : border}`, background: isSwapSource ? '#1d4ed8' : 'transparent', color: isSwapSource ? '#fff' : textSecondary, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                            {isSwapSource ? 'Cancel' : 'Move'}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
-            </>
           )}
 
-          {/* Overall draft progress */}
+          {/* Keepers */}
+          {keepers.length > 0 && (
+            <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
+              <p style={{ margin: '0 0 12px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Keepers ({keepers.length})
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {keepers.map(k => (
+                  <PlayerRow
+                    key={k.id}
+                    name={k.displayName}
+                    position={k.fantasyPosition}
+                    team={k.teamAbbr}
+                    badge="Keeper"
+                    badgeColor={amber}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Drafted players */}
+          <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
+            <p style={{ margin: '0 0 12px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Drafted Players ({picks.length})
+            </p>
+
+            {picks.length === 0 ? (
+              <p style={{ color: textSecondary, fontSize: '14px', margin: 0 }}>
+                {draft.status === 'pending' ? 'Draft has not started yet.' : 'No picks made yet.'}
+              </p>
+            ) : (
+              <>
+                {/* Grouped by position */}
+                {POSITION_ORDER.filter(pos =>
+                  sortedPicks.some(p => (p.fantasyPosition ?? '').toUpperCase() === pos || (pos === 'BE' && p.fantasyPosition == null))
+                ).map(pos => {
+                  const group = sortedPicks.filter(p =>
+                    pos === 'BE'
+                      ? p.fantasyPosition == null
+                      : (p.fantasyPosition ?? '').toUpperCase() === pos
+                  );
+                  if (group.length === 0) return null;
+                  return (
+                    <div key={pos} style={{ marginBottom: '12px' }}>
+                      <p style={{ margin: '0 0 6px 0', fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                        {pos === 'BE' ? 'Other' : pos}
+                      </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {group.map(pick => (
+                          <PlayerRow
+                            key={pick.pickId}
+                            name={pick.displayName}
+                            position={pick.fantasyPosition}
+                            team={pick.teamAbbr}
+                            badge={`Rd ${pick.round}, Pk ${pick.pickInRound}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Remaining empty slots */}
+                {slotsRemaining > 0 && draft.status !== 'completed' && (
+                  <div style={{ marginTop: '8px', borderTop: `1px solid ${border}`, paddingTop: '12px' }}>
+                    <p style={{ margin: '0 0 6px 0', fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                      Empty Slots ({slotsRemaining})
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {Array.from({ length: slotsRemaining }).map((_, i) => (
+                        <div key={i} style={{
+                          padding: '10px 14px', borderRadius: '8px',
+                          border: `1px dashed ${border}`, background: 'transparent',
+                          display: 'flex', alignItems: 'center', gap: '10px',
+                        }}>
+                          <span style={{ fontSize: '12px', color: border }}>— Empty —</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Draft order context */}
           {totalParticipants > 0 && draft.status !== 'pending' && (
             <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '14px 16px' }}>
-              <p style={{ margin: '0 0 10px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Overall Draft Progress</p>
+              <p style={{ margin: '0 0 10px 0', fontSize: '13px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Overall Draft Progress
+              </p>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div style={{ flex: 1, height: '6px', background: '#0f172a', borderRadius: '3px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: totalSlots > 0 ? `${Math.min(100, (totalPicksMade / (totalSlots * totalParticipants)) * 100)}%` : '0%', background: green, borderRadius: '3px', transition: 'width 0.5s ease' }} />
+                  <div style={{
+                    height: '100%',
+                    width: totalSlots > 0
+                      ? `${Math.min(100, (totalPicksMade / (totalSlots * totalParticipants)) * 100)}%`
+                      : '0%',
+                    background: green,
+                    borderRadius: '3px',
+                    transition: 'width 0.5s ease',
+                  }} />
                 </div>
                 <span style={{ fontSize: '13px', color: textSecondary, whiteSpace: 'nowrap' }}>
                   {totalPicksMade} / {totalSlots * totalParticipants} picks
@@ -843,6 +653,46 @@ function StatBox({ label, value, highlight }: { label: string; value: string; hi
     <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '14px', textAlign: 'center' }}>
       <div style={{ fontSize: '22px', fontWeight: '700', color: highlight ? green : textPrimary }}>{value}</div>
       <div style={{ fontSize: '12px', color: textSecondary, marginTop: '2px' }}>{label}</div>
+    </div>
+  );
+}
+
+function PlayerRow({
+  name, position, team, badge, badgeColor,
+}: {
+  name: string;
+  position: string | null;
+  team: string | null;
+  badge?: string;
+  badgeColor?: string;
+}) {
+  const col = posColor(position ? position.toUpperCase() : null);
+  return (
+    <div style={{
+      padding: '10px 14px', borderRadius: '8px',
+      border: `1px solid ${border}`, background: '#0f172a',
+      display: 'flex', alignItems: 'center', gap: '10px',
+    }}>
+      {position && (
+        <span style={{
+          padding: '2px 8px', borderRadius: '5px', fontSize: '11px', fontWeight: '700',
+          background: col.bg, color: col.text, minWidth: '36px', textAlign: 'center',
+        }}>
+          {position.toUpperCase()}
+        </span>
+      )}
+      <span style={{ flex: 1, fontWeight: '600', color: textPrimary, fontSize: '14px' }}>{name}</span>
+      {team && <span style={{ fontSize: '12px', color: textSecondary }}>{team}</span>}
+      {badge && (
+        <span style={{
+          fontSize: '11px', fontWeight: '600',
+          color: badgeColor ?? textSecondary,
+          padding: '2px 8px', borderRadius: '9999px',
+          border: `1px solid ${badgeColor ?? border}`,
+        }}>
+          {badge}
+        </span>
+      )}
     </div>
   );
 }
