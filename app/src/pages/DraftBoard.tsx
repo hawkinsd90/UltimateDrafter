@@ -90,6 +90,7 @@ export default function DraftBoard() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const picksRef = useRef<Pick[]>([]);
   picksRef.current = picks;
+  const picksCountRef = useRef<number>(-1);
 
   const reloadPicks = useCallback(() => {
     supabase
@@ -132,18 +133,15 @@ export default function DraftBoard() {
     };
   }, [draftId]);
 
-  // Reload board rankings whenever picks change (player got drafted → mark unavailable)
+  // Load board rankings on tab switch or when a new pick is actually made
   useEffect(() => {
-    if (activeTab === 'myboard' && user) {
+    if (activeTab !== 'myboard' || !user) return;
+    const newCount = picks.length;
+    if (newCount !== picksCountRef.current) {
+      picksCountRef.current = newCount;
       loadBoardRankings();
     }
-  }, [picks, activeTab]);
-
-  useEffect(() => {
-    if (activeTab === 'myboard') {
-      loadBoardRankings();
-    }
-  }, [activeTab, draftId, user]);
+  }, [picks.length, activeTab, draftId, user?.id]);
 
   useEffect(() => {
     if (activeTab !== 'myboard') return;
