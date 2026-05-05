@@ -901,18 +901,21 @@ function MyBoard({
         <div style={{ ...s.card, marginBottom: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
             <h2 style={{ color: textPrimary2, margin: 0, fontSize: '18px' }}>Available Players</h2>
-            {showBoardSearch && boardAvailablePlayers.filter(p => !pickedPlayerIds.has(p.id) && !boardedPlayerIds.has(p.id)).length > 0 && (
-              <button
-                onClick={onAddAllAvailable}
-                style={{
-                  padding: '5px 12px', fontSize: '12px', fontWeight: '600',
-                  background: 'transparent', color: blue2, border: `1px solid ${blue2}`,
-                  borderRadius: '6px', cursor: 'pointer',
-                }}
-              >
-                + Add All ({boardAvailablePlayers.filter(p => !pickedPlayerIds.has(p.id) && !boardedPlayerIds.has(p.id)).length})
-              </button>
-            )}
+            {(() => {
+              const addableCount = boardAvailablePlayers.filter(p => !pickedPlayerIds.has(p.id) && !boardedPlayerIds.has(p.id)).length;
+              return addableCount > 0 ? (
+                <button
+                  onClick={onAddAllAvailable}
+                  style={{
+                    padding: '5px 12px', fontSize: '12px', fontWeight: '600',
+                    background: 'transparent', color: blue2, border: `1px solid ${blue2}`,
+                    borderRadius: '6px', cursor: 'pointer',
+                  }}
+                >
+                  + Add All ({addableCount})
+                </button>
+              ) : null;
+            })()}
           </div>
 
           {/* Search */}
