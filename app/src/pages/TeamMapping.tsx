@@ -60,6 +60,7 @@ export default function TeamMapping() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveSummary, setSaveSummary] = useState<SaveSummary | null>(null);
+  const [hasBrokenMappings, setHasBrokenMappings] = useState(false);
 
   useEffect(() => {
     if (draftId) loadData();
@@ -157,6 +158,10 @@ export default function TeamMapping() {
       currentPolicy: (t.player_pool_policy ?? 'available') as PlayerPoolPolicy,
     }));
     setImportedTeams(teamsNorm);
+
+    // Detect broken mappings: mapped teams with no participant linked
+    const broken = teamsNorm.some(t => t.currentMappingStatus === 'mapped' && !t.currentParticipantId);
+    setHasBrokenMappings(broken);
 
     // Initialise decisions from previously-saved state
     const initial: Record<string, TeamDecision> = {};
@@ -442,6 +447,12 @@ export default function TeamMapping() {
 
       {saveError && (
         <div style={{ ...s.errorBox, marginBottom: '20px' }}>{saveError}</div>
+      )}
+
+      {hasBrokenMappings && (
+        <div style={{ padding: '14px 16px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', color: '#92400e', fontSize: '14px', marginBottom: '20px' }}>
+          <strong>Action required:</strong> Some teams were previously mapped but their participant links were lost. Please re-confirm each team's mapping and click "Save Team Mapping" to fix imported rosters.
+        </div>
       )}
 
       {leagueMembers.length === 0 && (

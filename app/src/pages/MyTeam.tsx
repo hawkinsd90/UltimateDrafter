@@ -125,6 +125,7 @@ export default function MyTeam() {
   const [picks, setPicks] = useState<PickedPlayer[]>([]);
   const [keepers, setKeepers] = useState<KeptPlayer[]>([]);
   const [importedRoster, setImportedRoster] = useState<ImportedRosterPlayer[]>([]);
+  const [importedRosterBroken, setImportedRosterBroken] = useState(false);
   const [rosterSettings, setRosterSettings] = useState<RosterSettings | null>(null);
   const [totalPicksMade, setTotalPicksMade] = useState(0);
   const [totalParticipants, setTotalParticipants] = useState(0);
@@ -138,7 +139,8 @@ export default function MyTeam() {
   const effectiveParticipantId = viewingId ?? participant?.id ?? null;
 
   const loadImportedRoster = useCallback(async (participantId: string, draftIdVal: string) => {
-    // Find the external_league_team mapped to this participant for this draft
+    setImportedRosterBroken(false);
+
     const { data: linkData } = await supabase
       .from('external_league_links')
       .select('id')
@@ -147,14 +149,33 @@ export default function MyTeam() {
 
     if (!linkData) { setImportedRoster([]); return; }
 
-    const { data: teamData } = await supabase
+    // Primary lookup: via draft_participant_id
+    let teamData: { id: string; external_team_id: string } | null = null;
+    const { data: byParticipant } = await supabase
       .from('external_league_teams')
       .select('id, external_team_id')
       .eq('link_id', linkData.id)
       .eq('draft_participant_id', participantId)
       .maybeSingle();
 
-    if (!teamData) { setImportedRoster([]); return; }
+    teamData = byParticipant;
+
+    // Fallback: if participant_id linkage is broken, check how many mapped teams exist.
+    // If exactly one mapped team exists and this is the only participant with no mapping, show a warning.
+    if (!teamData) {
+      const { data: allMapped } = await supabase
+        .from('external_league_teams')
+        .select('id, external_team_id, draft_participant_id')
+        .eq('link_id', linkData.id)
+        .eq('mapping_status', 'mapped');
+
+      const unlinked = (allMapped ?? []).filter(t => !t.draft_participant_id);
+      if (unlinked.length > 0) {
+        setImportedRosterBroken(true);
+      }
+      setImportedRoster([]);
+      return;
+    }
 
     const { data: rosterData } = await supabase
       .from('external_roster_players')
@@ -464,6 +485,24 @@ export default function MyTeam() {
                   </span>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Broken mapping warning */}
+          {importedRosterBroken && (
+            <div style={{ background: '#451a03', border: `1px solid #92400e`, borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
+              <p style={{ margin: '0 0 6px 0', fontSize: '13px', fontWeight: '700', color: amber, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Imported Roster Not Linked
+              </p>
+              <p style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#fde68a', lineHeight: '1.5' }}>
+                This draft has imported ESPN/Sleeper teams, but they haven't been linked to participants yet. The league owner needs to re-save the team mapping.
+              </p>
+              <Link
+                to={`/drafts/${draftId}/map-teams`}
+                style={{ display: 'inline-block', padding: '7px 14px', background: amber, color: '#111827', borderRadius: '6px', fontSize: '13px', fontWeight: '600', textDecoration: 'none' }}
+              >
+                Go to Team Mapping
+              </Link>
             </div>
           )}
 
