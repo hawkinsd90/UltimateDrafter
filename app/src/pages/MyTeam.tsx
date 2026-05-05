@@ -172,11 +172,15 @@ export default function MyTeam() {
 
   const [draft, setDraft] = useState<DraftInfo | null>(null);
   const [participant, setParticipant] = useState<Participant | null>(null);
-  const [rosterPlayers, setRosterPlayers] = useState<RosterPlayer[]>([]);
+  const [draftedPlayers, setDraftedPlayers] = useState<RosterPlayer[]>([]);
+  const [importedPlayers, setImportedPlayers] = useState<RosterPlayer[]>([]);
   const [importedRosterBroken, setImportedRosterBroken] = useState(false);
   const [rosterSettings, setRosterSettings] = useState<RosterSettings | null>(null);
   const [totalPicksMade, setTotalPicksMade] = useState(0);
   const [totalParticipants, setTotalParticipants] = useState(0);
+
+  // 'draft' tab shows picks, 'imported' shows the ESPN roster
+  const [activeTab, setActiveTab] = useState<'draft' | 'imported'>('draft');
 
   // For viewing other teams
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -194,7 +198,6 @@ export default function MyTeam() {
   const loadRosterPlayers = useCallback(async (participantId: string, draftIdVal: string) => {
     setImportedRosterBroken(false);
 
-    // Load picks, keepers, and imported roster in parallel
     const [picksRes, keepersRes, linkRes] = await Promise.all([
       supabase
         .from('draft_picks')
@@ -214,10 +217,11 @@ export default function MyTeam() {
         .maybeSingle(),
     ]);
 
-    const players: RosterPlayer[] = [];
+    // Draft picks + keepers → drafted roster
+    const drafted: RosterPlayer[] = [];
 
     for (const p of picksRes.data ?? []) {
-      players.push({
+      drafted.push({
         id: `pick-${p.id}`,
         playerId: p.player_id,
         displayName: (p as any).player?.display_name ?? 'Unknown Player',
@@ -230,7 +234,7 @@ export default function MyTeam() {
     }
 
     for (const k of keepersRes.data ?? []) {
-      players.push({
+      drafted.push({
         id: `keeper-${k.id}`,
         playerId: k.sports_player_id,
         displayName: (k as any).player?.display_name ?? 'Unknown Player',
@@ -241,7 +245,11 @@ export default function MyTeam() {
       });
     }
 
-    // Imported roster
+    setDraftedPlayers(drafted);
+
+    // Imported roster (last season's ESPN/Sleeper team) → separate list
+    const imported: RosterPlayer[] = [];
+
     if (linkRes.data) {
       const { data: teamData } = await supabase
         .from('external_league_teams')
@@ -259,7 +267,7 @@ export default function MyTeam() {
           .neq('resolution_status', 'skipped');
 
         for (const r of rosterData ?? []) {
-          players.push({
+          imported.push({
             id: `imported-${r.id}`,
             playerId: null,
             displayName: (r as any).player?.display_name ?? r.external_player_name ?? 'Unknown Player',
@@ -270,7 +278,6 @@ export default function MyTeam() {
           });
         }
       } else {
-        // Check for broken mappings
         const { data: allMapped } = await supabase
           .from('external_league_teams')
           .select('id, draft_participant_id')
@@ -282,7 +289,7 @@ export default function MyTeam() {
       }
     }
 
-    setRosterPlayers(players);
+    setImportedPlayers(imported);
   }, []);
 
   async function loadData() {
@@ -361,15 +368,17 @@ export default function MyTeam() {
     if (!viewingId || !draftId) return;
     setStarterOverrides({});
     setSwapSourceIndex(null);
+    setActiveTab('draft');
     loadRosterPlayers(viewingId, draftId);
   }, [viewingId, draftId]);
 
   // ── Roster layout computation ─────────────────────────────────────────────
 
+  const rosterPlayers = activeTab === 'draft' ? draftedPlayers : importedPlayers;
+
   const starterSlots = rosterSettings ? buildStarterSlots(rosterSettings) : [];
   const benchCount = rosterSettings?.bench ?? 0;
 
-  // Apply auto-assignment then override with manual swaps
   const { starters: autoStarters, bench: autoBench } = assignStarters(rosterPlayers, starterSlots);
 
   // Build mutable copies respecting overrides
@@ -459,7 +468,7 @@ export default function MyTeam() {
   const totalSlots = rosterSettings ? totalRosterSlots(rosterSettings) : 0;
   const currentRound = totalParticipants > 0 ? Math.ceil(draft.current_pick_number / totalParticipants) : 1;
 
-  const picksCount = rosterPlayers.filter(p => p.source === 'pick').length;
+  const picksCount = draftedPlayers.filter(p => p.source === 'pick').length;
   const slotsRemaining = Math.max(0, totalSlots - picksCount);
 
   return (
@@ -567,6 +576,34 @@ export default function MyTeam() {
             </div>
           )}
 
+          {/* Tab switcher — only show if there's an imported roster */}
+          {importedPlayers.length > 0 && (
+            <div style={{ display: 'flex', gap: '0', marginBottom: '16px', background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden' }}>
+              <button
+                onClick={() => { setActiveTab('draft'); setSwapSourceIndex(null); setStarterOverrides({}); }}
+                style={{
+                  flex: 1, padding: '10px 16px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: '600',
+                  background: activeTab === 'draft' ? blue : 'transparent',
+                  color: activeTab === 'draft' ? '#fff' : textSecondary,
+                  transition: 'all 0.15s',
+                }}
+              >
+                Draft Picks ({picksCount})
+              </button>
+              <button
+                onClick={() => { setActiveTab('imported'); setSwapSourceIndex(null); setStarterOverrides({}); }}
+                style={{
+                  flex: 1, padding: '10px 16px', border: 'none', borderLeft: `1px solid ${border}`, cursor: 'pointer', fontSize: '14px', fontWeight: '600',
+                  background: activeTab === 'imported' ? '#065f46' : 'transparent',
+                  color: activeTab === 'imported' ? '#6ee7b7' : textSecondary,
+                  transition: 'all 0.15s',
+                }}
+              >
+                Last Season ({importedPlayers.length})
+              </button>
+            </div>
+          )}
+
           {/* Swap mode hint */}
           {swapSourcePlayer && (
             <div style={{ background: '#1e3a5f', border: `1px solid ${blue}`, borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -580,7 +617,9 @@ export default function MyTeam() {
           {rosterPlayers.length === 0 ? (
             <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '32px', textAlign: 'center' }}>
               <p style={{ color: textSecondary, margin: 0, fontSize: '14px' }}>
-                {draft.status === 'pending' ? 'Draft has not started yet.' : 'No players on this roster yet.'}
+                {activeTab === 'imported'
+                  ? 'No imported roster found for this team.'
+                  : draft.status === 'pending' ? 'Draft has not started yet.' : 'No picks made yet.'}
               </p>
             </div>
           ) : (
