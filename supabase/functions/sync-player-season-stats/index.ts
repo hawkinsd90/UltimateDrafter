@@ -54,9 +54,11 @@ const SLEEPER_KEY_MAP: Record<string, string> = {
   sack:          "sacks",
   int:           "def_interceptions",
   fum_rec:       "fumble_recoveries",
+  td:            "def_tds",           // DST total TD (TEAM_ entries)
   def_td:        "def_tds",
   def_st_td:     "def_tds",          // DST special teams TD
   fum_rec_td:    "def_tds",          // fumble recovery TD
+  fum_rec_ez_tds: "def_tds",        // fumble recovery in end zone for TD
   safe:          "safeties",
   blk_kick:      "blocks",
   // DST points allowed — Sleeper provides the total directly as "pts_allow"
@@ -112,8 +114,10 @@ const KNOWN_NON_SCORING_KEYS = new Set([
   "pts_idp",
   // Penalties
   "penalty", "penalty_yd",
+  // pass_int_td = pick-six from QB perspective; already penalized via pass_int, not a scoring accumulation
+  "pass_int_td",
   // DST / team-level non-scoring counts and efficiency
-  "td", "sack_yd", "tkl", "tkl_loss", "tkl_loss_yd", "tkl_solo", "tkl_ast",
+  "sack_yd", "tkl", "tkl_loss", "tkl_loss_yd", "tkl_solo", "tkl_ast",
   "tkl_solo_misc", "tkl_ast_misc",
   "qb_hit", "ff", "ff_misc", "fum", "int_ret_yd",
   "st_tkl_solo", "st_ff", "st_fum_rec", "st_snp",
