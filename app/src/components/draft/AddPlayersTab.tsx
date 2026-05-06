@@ -14,10 +14,10 @@ interface Props {
   showBoardSearch: boolean;
   pickedPlayerIds: Set<string>;
   boardedPlayerIds: Set<string>;
-  visibleAddableCount: number;
   canPick: boolean;
+  addAllLoading: boolean;
   onAddPlayer: (id: string) => void;
-  onAddVisible: () => void;
+  onAddAll: () => void;
   onPickPlayer: (id: string) => void;
 }
 
@@ -27,12 +27,12 @@ export default function AddPlayersTab({
   boardSortMode, setBoardSortMode,
   boardAvailablePlayers, boardAvailableLoading,
   showBoardSearch, pickedPlayerIds, boardedPlayerIds,
-  visibleAddableCount, canPick,
-  onAddPlayer, onAddVisible, onPickPlayer,
+  canPick, addAllLoading,
+  onAddPlayer, onAddAll, onPickPlayer,
 }: Props) {
   return (
     <>
-      {/* Search + add visible row */}
+      {/* Search + Add All row */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
         <input
           type="text"
@@ -41,14 +41,19 @@ export default function AddPlayersTab({
           placeholder="Search by name..."
           style={{ flex: 1, padding: '9px 12px', border: `1px solid ${dt.border}`, borderRadius: '7px', fontSize: '14px', color: dt.textPrimary, background: dt.cardInner, outline: 'none' }}
         />
-        {visibleAddableCount > 0 && (
-          <button
-            onClick={onAddVisible}
-            style={{ padding: '9px 12px', fontSize: '12px', fontWeight: '600', background: 'transparent', color: dt.blue, border: `1px solid ${dt.blue}`, borderRadius: '7px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-          >
-            + Add Visible ({visibleAddableCount})
-          </button>
-        )}
+        <button
+          onClick={onAddAll}
+          disabled={addAllLoading}
+          style={{
+            padding: '9px 12px', fontSize: '12px', fontWeight: '600',
+            background: 'transparent', color: addAllLoading ? dt.textSecondary : dt.blue,
+            border: `1px solid ${addAllLoading ? dt.border : dt.blue}`,
+            borderRadius: '7px', cursor: addAllLoading ? 'not-allowed' : 'pointer',
+            whiteSpace: 'nowrap', opacity: addAllLoading ? 0.6 : 1,
+          }}
+        >
+          {addAllLoading ? 'Adding...' : '+ Add All'}
+        </button>
       </div>
 
       {/* Position filter */}

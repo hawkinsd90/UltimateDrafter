@@ -30,8 +30,9 @@ interface Props {
   boardAvailablePlayers: AvailablePlayer[];
   boardAvailableLoading: boolean;
   showBoardSearch: boolean;
+  addAllLoading: boolean;
   onAddPlayer: (id: string) => void;
-  onAddVisible: () => void;
+  onAddAll: () => void;
 }
 
 export default function MyBoardPanel({
@@ -41,14 +42,13 @@ export default function MyBoardPanel({
   boardSearch, setBoardSearch, boardPositionFilter, setBoardPositionFilter,
   boardSortMode, setBoardSortMode,
   boardAvailablePlayers, boardAvailableLoading, showBoardSearch,
-  onAddPlayer, onAddVisible,
+  addAllLoading, onAddPlayer, onAddAll,
 }: Props) {
   const [subTab, setSubTab] = useState<'rankings' | 'available'>('rankings');
 
   const canPick = (isMyTurn || canForcePick) && draftStatus === 'in_progress';
   const availableCount = boardPlayers.filter(p => !pickedPlayerIds.has(p.id)).length;
   const boardedPlayerIds = new Set(boardPlayers.map(p => p.id));
-  const visibleAddableCount = boardAvailablePlayers.filter(p => !pickedPlayerIds.has(p.id) && !boardedPlayerIds.has(p.id)).length;
 
   const subTabStyle = (active: boolean): React.CSSProperties => ({
     flex: 1, padding: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer',
@@ -106,10 +106,10 @@ export default function MyBoardPanel({
           showBoardSearch={showBoardSearch}
           pickedPlayerIds={pickedPlayerIds}
           boardedPlayerIds={boardedPlayerIds}
-          visibleAddableCount={visibleAddableCount}
           canPick={canPick}
+          addAllLoading={addAllLoading}
           onAddPlayer={onAddPlayer}
-          onAddVisible={onAddVisible}
+          onAddAll={onAddAll}
           onPickPlayer={onPickFromBoard}
         />
       )}

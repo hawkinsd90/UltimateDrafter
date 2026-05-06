@@ -14,9 +14,10 @@ export interface UseMyDraftBoardReturn {
   boardAvailablePlayers: AvailablePlayer[];
   boardAvailableLoading: boolean;
   showBoardSearch: boolean;
+  addAllLoading: boolean;
   loadBoardRankings: () => Promise<void>;
   addPlayerToBoard: (playerId: string) => Promise<void>;
-  addVisibleToBoard: () => Promise<void>;
+  addAllAvailableToBoard: () => Promise<void>;
   removePlayerFromBoard: (rankingId: string) => Promise<void>;
   removeAllFromBoard: () => Promise<void>;
   reorderBoard: (fromIndex: number, toIndex: number) => Promise<void>;
@@ -27,7 +28,6 @@ export function useMyDraftBoard(
   userId: string | undefined,
   isMyBoardActive: boolean,
   picksLength: number,
-  pickedPlayerIds: Set<string>,
 ): UseMyDraftBoardReturn {
   const [boardPlayers, setBoardPlayers] = useState<BoardPlayer[]>([]);
   const [boardLoading, setBoardLoading] = useState(false);
@@ -36,6 +36,7 @@ export function useMyDraftBoard(
   const [boardSortMode, setBoardSortMode] = useState<SortMode>('name');
   const [boardAvailablePlayers, setBoardAvailablePlayers] = useState<AvailablePlayer[]>([]);
   const [boardAvailableLoading, setBoardAvailableLoading] = useState(false);
+  const [addAllLoading, setAddAllLoading] = useState(false);
 
   const boardDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const picksCountRef = useRef<number>(-1);
@@ -155,23 +156,71 @@ export function useMyDraftBoard(
     }
   }
 
-  async function addVisibleToBoard() {
+  async function addAllAvailableToBoard() {
     if (!userId || !draftId) return;
-    const current = boardPlayersRef.current;
-    const currentBoardedIds = new Set(current.map(p => p.id));
-    const toAdd = boardAvailablePlayers.filter(p => !pickedPlayerIds.has(p.id) && !currentBoardedIds.has(p.id));
-    if (toAdd.length === 0) return;
+    setAddAllLoading(true);
 
-    const startRank = current.length > 0 ? Math.max(...current.map(p => p.rank)) + 1 : 1;
-    const rows = toAdd.map((p, i) => ({
-      draft_id: draftId,
-      user_id: userId,
-      sports_player_id: p.id,
-      rank: startRank + i,
-    }));
+    try {
+      // Fetch current picks and boarded IDs fresh from DB to avoid stale state
+      const [picksRes, boardedRes] = await Promise.all([
+        supabase.from('draft_picks').select('player_id').eq('draft_id', draftId).not('player_id', 'is', null),
+        supabase.from('draft_board_rankings').select('sports_player_id, rank').eq('draft_id', draftId).eq('user_id', userId),
+      ]);
 
-    await supabase.from('draft_board_rankings').upsert(rows, { onConflict: 'draft_id,user_id,sports_player_id', ignoreDuplicates: true });
-    await loadBoardRankings();
+      const pickedSet = new Set((picksRes.data ?? []).map(p => p.player_id as string));
+      const boardedSet = new Set((boardedRes.data ?? []).map(r => r.sports_player_id as string));
+      const currentMaxRank = (boardedRes.data ?? []).reduce((max, r) => Math.max(max, r.rank), 0);
+
+      // Determine sort order
+      const sortColumn = boardSortMode === 'espn' ? 'espn_rank' : boardSortMode === 'sleeper' ? 'sleeper_rank' : 'display_name';
+      const nullsFirst = boardSortMode === 'name'; // name: A-Z so nulls don't apply; ranks: nulls last
+
+      // Paginate through entire pool — fetch up to 1000 at a time
+      const PAGE_SIZE = 1000;
+      let allPlayers: { id: string }[] = [];
+      let from = 0;
+
+      while (true) {
+        let query = supabase
+          .from('nfl_draft_player_pool')
+          .select('id')
+          .order(sortColumn, { ascending: true, nullsFirst })
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (boardPositionFilter !== 'All') {
+          query = query.eq('fantasy_position', boardPositionFilter);
+        }
+
+        const { data, error } = await query;
+        if (error || !data || data.length === 0) break;
+        allPlayers = allPlayers.concat(data);
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+
+      // Filter to only eligible players
+      const toAdd = allPlayers.filter(p => !pickedSet.has(p.id) && !boardedSet.has(p.id));
+      if (toAdd.length === 0) return;
+
+      // Build rows with sequential ranks starting after current max
+      const BATCH_SIZE = 500;
+      for (let i = 0; i < toAdd.length; i += BATCH_SIZE) {
+        const batch = toAdd.slice(i, i + BATCH_SIZE);
+        const rows = batch.map((p, j) => ({
+          draft_id: draftId,
+          user_id: userId!,
+          sports_player_id: p.id,
+          rank: currentMaxRank + i + j + 1,
+        }));
+        await supabase
+          .from('draft_board_rankings')
+          .upsert(rows, { onConflict: 'draft_id,user_id,sports_player_id', ignoreDuplicates: true });
+      }
+
+      await loadBoardRankings();
+    } finally {
+      setAddAllLoading(false);
+    }
   }
 
   async function removePlayerFromBoard(rankingId: string) {
@@ -211,9 +260,10 @@ export function useMyDraftBoard(
     boardSortMode, setBoardSortMode,
     boardAvailablePlayers, boardAvailableLoading,
     showBoardSearch,
+    addAllLoading,
     loadBoardRankings,
     addPlayerToBoard,
-    addVisibleToBoard,
+    addAllAvailableToBoard,
     removePlayerFromBoard,
     removeAllFromBoard,
     reorderBoard,

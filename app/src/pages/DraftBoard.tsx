@@ -27,7 +27,6 @@ export default function DraftBoard() {
     user?.id,
     activeTab === 'myboard',
     board.picks.length,
-    board.pickedPlayerIds,
   );
 
   if (board.loading) {
@@ -153,8 +152,9 @@ export default function DraftBoard() {
           boardAvailablePlayers={myBoard.boardAvailablePlayers}
           boardAvailableLoading={myBoard.boardAvailableLoading}
           showBoardSearch={myBoard.showBoardSearch}
+          addAllLoading={myBoard.addAllLoading}
           onAddPlayer={myBoard.addPlayerToBoard}
-          onAddVisible={myBoard.addVisibleToBoard}
+          onAddAll={myBoard.addAllAvailableToBoard}
         />
       )}
     </div>
