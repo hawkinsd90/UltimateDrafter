@@ -202,6 +202,14 @@ export function useMyDraftBoard(
 
   async function searchAvailablePlayers() {
     if (!isMyBoardActive) return;
+
+    // 1-char search: clear results and wait for more input (matches old behavior)
+    if (boardSearch.length === 1) {
+      setBoardAvailablePlayers([]);
+      setBoardAvailableLoading(false);
+      return;
+    }
+
     setBoardAvailableLoading(true);
 
     const { data, error } = await supabase.rpc('get_draft_player_pool_with_rankings', {

@@ -57,7 +57,7 @@ export const VALID_SCORING_FORMATS: Record<RankingSource, ScoringFormat[]> = {
 
 // Which sort modes are valid for each source
 export const VALID_SORT_MODES: Record<RankingSource, SortByMode[]> = {
-  sleeper:      ['name', 'relevance'],
+  sleeper:      ['name', 'relevance', 'position_rank'],
   espn:         ['name', 'overall_rank', 'position_rank', 'adp'],
   fantasypros:  ['name', 'overall_rank', 'position_rank', 'adp'],
   last_season:  ['name', 'fantasy_points', 'overall_rank', 'position_rank'],
