@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AdminNFLRosterImportPanel from '../components/AdminNFLRosterImportPanel';
+import AdminPlayerStatsPanel from '../components/AdminPlayerStatsPanel';
 import UserMenu from '../components/UserMenu';
 
 export default function Admin() {
@@ -44,6 +45,15 @@ export default function Admin() {
         </div>
 
         <AdminNFLRosterImportPanel />
+
+        <div style={{ marginTop: '40px', marginBottom: '28px' }}>
+          <h1 style={{ margin: '0 0 6px 0', fontSize: '24px', fontWeight: '700', color: '#1e293b' }}>Player Season Stats</h1>
+          <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>
+            Sync previous season player stats from Sleeper. Required before Last Season fantasy point rankings can be calculated.
+          </p>
+        </div>
+
+        <AdminPlayerStatsPanel />
       </div>
     </div>
   );
