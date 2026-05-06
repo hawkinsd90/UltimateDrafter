@@ -10,7 +10,6 @@ type DraftPoolPlayer = {
   injury_status: string | null;
   team_abbr: string | null;
   team_name: string | null;
-  headshot_url: string | null;
   years_exp: number | null;
 };
 
@@ -93,7 +92,7 @@ export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: Playe
 
     let query = supabase
       .from('nfl_draft_player_pool')
-      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, team_name, headshot_url, years_exp')
+      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, team_name, years_exp')
       .order('display_name')
       .limit(50);
 
@@ -228,19 +227,10 @@ export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: Playe
                     display: 'flex', alignItems: 'center', gap: '12px',
                   }}
                 >
-                  {/* Headshot */}
-                  {player.headshot_url ? (
-                    <img
-                      src={player.headshot_url}
-                      alt=""
-                      style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0, background: '#f1f5f9' }}
-                      onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                    />
-                  ) : (
-                    <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#e2e8f0', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', color: '#94a3b8' }}>
-                      {player.fantasy_position === 'DST' ? 'D' : '?'}
-                    </div>
-                  )}
+                  {/* Position avatar */}
+                  <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: positionBadgeBg(player.fantasy_position), flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: '700', color: positionBadgeColor(player.fantasy_position) }}>
+                    {player.fantasy_position ?? player.position ?? '?'}
+                  </div>
 
                   {/* Info */}
                   <div style={{ flex: 1, minWidth: 0 }}>
