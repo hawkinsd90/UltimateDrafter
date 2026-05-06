@@ -147,10 +147,15 @@ export default function DraftBoard() {
           setBoardSearch={myBoard.setBoardSearch}
           boardPositionFilter={myBoard.boardPositionFilter}
           setBoardPositionFilter={myBoard.setBoardPositionFilter}
-          boardSortMode={myBoard.boardSortMode}
-          setBoardSortMode={myBoard.setBoardSortMode}
+          rankingSource={myBoard.rankingSource}
+          setRankingSource={myBoard.setRankingSource}
+          scoringFormat={myBoard.scoringFormat}
+          setScoringFormat={myBoard.setScoringFormat}
+          sortByMode={myBoard.sortByMode}
+          setSortByMode={myBoard.setSortByMode}
           boardAvailablePlayers={myBoard.boardAvailablePlayers}
           boardAvailableLoading={myBoard.boardAvailableLoading}
+          rankingDataAvailable={myBoard.rankingDataAvailable}
           showBoardSearch={myBoard.showBoardSearch}
           addAllLoading={myBoard.addAllLoading}
           addAllError={myBoard.addAllError}

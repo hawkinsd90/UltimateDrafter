@@ -1,17 +1,18 @@
 import { useState } from 'react';
-import type { BoardPlayer, AvailablePlayer, PositionFilter, SortMode, Participant } from '../../hooks/draft/draftTypes';
+import type {
+  BoardPlayer, AvailablePlayer, PositionFilter,
+  RankingSource, ScoringFormat, SortByMode, Participant,
+} from '../../hooks/draft/draftTypes';
 import { dt } from '../../hooks/draft/draftTypes';
 import MyRankingsTab from './MyRankingsTab';
 import AddPlayersTab from './AddPlayersTab';
 
 interface Props {
-  // Turn state
   isMyTurn: boolean;
   canForcePick: boolean;
   currentParticipant: Participant | null;
   draftStatus: string;
 
-  // Rankings
   boardPlayers: BoardPlayer[];
   boardLoading: boolean;
   pickedPlayerIds: Set<string>;
@@ -20,15 +21,19 @@ interface Props {
   onRemoveAll: () => void;
   onPickFromBoard: (playerId: string) => void;
 
-  // Available players
   boardSearch: string;
   setBoardSearch: (v: string) => void;
   boardPositionFilter: PositionFilter;
   setBoardPositionFilter: (v: PositionFilter) => void;
-  boardSortMode: SortMode;
-  setBoardSortMode: (v: SortMode) => void;
+  rankingSource: RankingSource;
+  setRankingSource: (v: RankingSource) => void;
+  scoringFormat: ScoringFormat;
+  setScoringFormat: (v: ScoringFormat) => void;
+  sortByMode: SortByMode;
+  setSortByMode: (v: SortByMode) => void;
   boardAvailablePlayers: AvailablePlayer[];
   boardAvailableLoading: boolean;
+  rankingDataAvailable: boolean;
   showBoardSearch: boolean;
   addAllLoading: boolean;
   addAllError: string | null;
@@ -42,9 +47,11 @@ export default function MyBoardPanel({
   boardPlayers, boardLoading, pickedPlayerIds,
   onReorder, onRemovePlayer, onRemoveAll, onPickFromBoard,
   boardSearch, setBoardSearch, boardPositionFilter, setBoardPositionFilter,
-  boardSortMode, setBoardSortMode,
-  boardAvailablePlayers, boardAvailableLoading, showBoardSearch,
-  addAllLoading, addAllError, reorderError, onAddPlayer, onAddAll,
+  rankingSource, setRankingSource, scoringFormat, setScoringFormat,
+  sortByMode, setSortByMode,
+  boardAvailablePlayers, boardAvailableLoading, rankingDataAvailable,
+  showBoardSearch, addAllLoading, addAllError, reorderError,
+  onAddPlayer, onAddAll,
 }: Props) {
   const [subTab, setSubTab] = useState<'rankings' | 'available'>('rankings');
 
@@ -61,7 +68,6 @@ export default function MyBoardPanel({
 
   return (
     <div style={{ background: dt.card, border: `1px solid ${dt.border}`, borderRadius: '10px', padding: '20px' }}>
-      {/* On-clock banner */}
       {canPick && boardPlayers.some(p => !pickedPlayerIds.has(p.id)) && (
         <div style={{ marginBottom: '12px', padding: '8px 12px', borderRadius: '7px', background: '#14532d', border: `1px solid ${dt.greenDark}`, display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: dt.green, boxShadow: `0 0 6px ${dt.green}` }} />
@@ -71,7 +77,6 @@ export default function MyBoardPanel({
         </div>
       )}
 
-      {/* Sub-tab bar */}
       <div style={{ display: 'flex', borderBottom: `1px solid ${dt.border}`, marginBottom: '14px' }}>
         <button style={subTabStyle(subTab === 'rankings')} onClick={() => setSubTab('rankings')}>
           My Rankings {availableCount > 0 ? `(${availableCount})` : ''}
@@ -102,10 +107,15 @@ export default function MyBoardPanel({
           setBoardSearch={setBoardSearch}
           boardPositionFilter={boardPositionFilter}
           setBoardPositionFilter={setBoardPositionFilter}
-          boardSortMode={boardSortMode}
-          setBoardSortMode={setBoardSortMode}
+          rankingSource={rankingSource}
+          setRankingSource={setRankingSource}
+          scoringFormat={scoringFormat}
+          setScoringFormat={setScoringFormat}
+          sortByMode={sortByMode}
+          setSortByMode={setSortByMode}
           boardAvailablePlayers={boardAvailablePlayers}
           boardAvailableLoading={boardAvailableLoading}
+          rankingDataAvailable={rankingDataAvailable}
           showBoardSearch={showBoardSearch}
           pickedPlayerIds={pickedPlayerIds}
           boardedPlayerIds={boardedPlayerIds}

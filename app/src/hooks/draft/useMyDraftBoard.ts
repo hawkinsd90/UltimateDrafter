@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import type { BoardPlayer, AvailablePlayer, PositionFilter, SortMode } from './draftTypes';
+import type {
+  BoardPlayer, AvailablePlayer, PositionFilter,
+  RankingSource, ScoringFormat, SortByMode,
+} from './draftTypes';
+import {
+  PROVIDER_MAP, RANKING_TYPE_MAP, DEFAULT_SCORING_FORMAT,
+  VALID_SCORING_FORMATS, VALID_SORT_MODES, CURRENT_SEASON,
+} from './draftTypes';
 
 export interface UseMyDraftBoardReturn {
   boardPlayers: BoardPlayer[];
@@ -9,10 +16,15 @@ export interface UseMyDraftBoardReturn {
   setBoardSearch: (v: string) => void;
   boardPositionFilter: PositionFilter;
   setBoardPositionFilter: (v: PositionFilter) => void;
-  boardSortMode: SortMode;
-  setBoardSortMode: (v: SortMode) => void;
+  rankingSource: RankingSource;
+  setRankingSource: (v: RankingSource) => void;
+  scoringFormat: ScoringFormat;
+  setScoringFormat: (v: ScoringFormat) => void;
+  sortByMode: SortByMode;
+  setSortByMode: (v: SortByMode) => void;
   boardAvailablePlayers: AvailablePlayer[];
   boardAvailableLoading: boolean;
+  rankingDataAvailable: boolean;
   showBoardSearch: boolean;
   addAllLoading: boolean;
   addAllError: string | null;
@@ -25,6 +37,50 @@ export interface UseMyDraftBoardReturn {
   reorderBoard: (fromIndex: number, toIndex: number) => Promise<void>;
 }
 
+// RPC return row shape (must match the RETURNS TABLE in the migration)
+type RpcRow = {
+  id: string;
+  pool_provider: string;
+  provider_player_id: string;
+  display_name: string;
+  nfl_position: string | null;
+  fantasy_position: string | null;
+  status: string | null;
+  injury_status: string | null;
+  team_abbr: string | null;
+  team_name: string | null;
+  headshot_url: string | null;
+  years_exp: number | null;
+  overall_rank: number | null;
+  position_rank: number | null;
+  position_rank_label: string | null;
+  fantasy_points: number | null;
+  adp: number | null;
+  auction_value: number | null;
+  percent_owned: number | null;
+  trend_count: number | null;
+  ranking_source_label: string | null;
+  has_ranking_data: boolean;
+};
+
+function rpcRowToAvailablePlayer(row: RpcRow): AvailablePlayer {
+  return {
+    id:                   row.id,
+    display_name:         row.display_name,
+    fantasy_position:     row.fantasy_position,
+    nfl_position:         row.nfl_position,
+    status:               row.status,
+    injury_status:        row.injury_status,
+    team_abbr:            row.team_abbr,
+    overall_rank:         row.overall_rank,
+    position_rank:        row.position_rank,
+    position_rank_label:  row.position_rank_label,
+    fantasy_points:       row.fantasy_points,
+    adp:                  row.adp,
+    ranking_source_label: row.ranking_source_label,
+  };
+}
+
 export function useMyDraftBoard(
   draftId: string,
   userId: string | undefined,
@@ -35,9 +91,14 @@ export function useMyDraftBoard(
   const [boardLoading, setBoardLoading] = useState(false);
   const [boardSearch, setBoardSearch] = useState('');
   const [boardPositionFilter, setBoardPositionFilter] = useState<PositionFilter>('All');
-  const [boardSortMode, setBoardSortMode] = useState<SortMode>('name');
+
+  const [rankingSource, setRankingSourceState] = useState<RankingSource>('sleeper');
+  const [scoringFormat, setScoringFormatState] = useState<ScoringFormat>('any');
+  const [sortByMode, setSortByModeState] = useState<SortByMode>('relevance');
+
   const [boardAvailablePlayers, setBoardAvailablePlayers] = useState<AvailablePlayer[]>([]);
   const [boardAvailableLoading, setBoardAvailableLoading] = useState(false);
+  const [rankingDataAvailable, setRankingDataAvailable] = useState(true);
   const [addAllLoading, setAddAllLoading] = useState(false);
   const [addAllError, setAddAllError] = useState<string | null>(null);
   const [reorderError, setReorderError] = useState<string | null>(null);
@@ -46,6 +107,25 @@ export function useMyDraftBoard(
   const picksCountRef = useRef<number>(-1);
   const boardPlayersRef = useRef<BoardPlayer[]>([]);
   boardPlayersRef.current = boardPlayers;
+
+  // When source changes, snap scoring format and sort mode to valid defaults
+  function setRankingSource(source: RankingSource) {
+    setRankingSourceState(source);
+    const validFormats = VALID_SCORING_FORMATS[source];
+    const defaultFormat = DEFAULT_SCORING_FORMAT[source];
+    setScoringFormatState(validFormats.includes(scoringFormat) ? scoringFormat : defaultFormat);
+    const validSorts = VALID_SORT_MODES[source];
+    const defaultSort = validSorts[1] ?? validSorts[0]; // prefer first non-name option
+    setSortByModeState(validSorts.includes(sortByMode) ? sortByMode : defaultSort);
+  }
+
+  function setScoringFormat(fmt: ScoringFormat) {
+    setScoringFormatState(fmt);
+  }
+
+  function setSortByMode(mode: SortByMode) {
+    setSortByModeState(mode);
+  }
 
   // Reload rankings when tab becomes active or picks change
   useEffect(() => {
@@ -57,7 +137,7 @@ export function useMyDraftBoard(
     }
   }, [picksLength, isMyBoardActive, draftId, userId]);
 
-  // Debounced search when filter/search/sort changes
+  // Debounced search when filter/search/sort/source changes
   useEffect(() => {
     if (!isMyBoardActive) return;
     if (boardDebounceRef.current) clearTimeout(boardDebounceRef.current);
@@ -67,7 +147,7 @@ export function useMyDraftBoard(
     return () => {
       if (boardDebounceRef.current) clearTimeout(boardDebounceRef.current);
     };
-  }, [boardSearch, boardPositionFilter, boardSortMode, isMyBoardActive]);
+  }, [boardSearch, boardPositionFilter, rankingSource, scoringFormat, sortByMode, isMyBoardActive]);
 
   async function loadBoardRankings() {
     if (!userId || !draftId) return;
@@ -89,7 +169,7 @@ export function useMyDraftBoard(
     const playerIds = rankings.map(r => r.sports_player_id);
     const { data: players } = await supabase
       .from('nfl_draft_player_pool')
-      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, espn_rank, sleeper_rank')
+      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr')
       .in('id', playerIds);
 
     const playerMap = new Map((players ?? []).map(p => [p.id, p]));
@@ -98,17 +178,21 @@ export function useMyDraftBoard(
       const p = playerMap.get(r.sports_player_id);
       if (!p) continue;
       merged.push({
-        id: p.id,
-        display_name: p.display_name,
-        fantasy_position: p.fantasy_position,
-        position: p.position,
-        status: p.status,
-        injury_status: p.injury_status,
-        team_abbr: p.team_abbr,
-        espn_rank: p.espn_rank ?? null,
-        sleeper_rank: p.sleeper_rank ?? null,
-        rank: r.rank,
-        rankingId: r.id,
+        id:                   p.id,
+        display_name:         p.display_name,
+        fantasy_position:     p.fantasy_position,
+        nfl_position:         p.position ?? null,
+        status:               p.status,
+        injury_status:        p.injury_status,
+        team_abbr:            p.team_abbr,
+        overall_rank:         null,
+        position_rank:        null,
+        position_rank_label:  null,
+        fantasy_points:       null,
+        adp:                  null,
+        ranking_source_label: null,
+        rank:                 r.rank,
+        rankingId:            r.id,
       });
     }
 
@@ -120,29 +204,27 @@ export function useMyDraftBoard(
     if (!isMyBoardActive) return;
     setBoardAvailableLoading(true);
 
-    const sortColumn = boardSortMode === 'espn' ? 'espn_rank' : boardSortMode === 'sleeper' ? 'sleeper_rank' : 'display_name';
-    const sortNullsLast = boardSortMode !== 'name';
+    const { data, error } = await supabase.rpc('get_draft_player_pool_with_rankings', {
+      p_provider:       PROVIDER_MAP[rankingSource],
+      p_scoring_format: scoringFormat,
+      p_season:         CURRENT_SEASON,
+      p_ranking_type:   RANKING_TYPE_MAP[rankingSource],
+      p_position:       boardPositionFilter !== 'All' ? boardPositionFilter : null,
+      p_search:         boardSearch.length >= 2 ? boardSearch : null,
+      p_sort_mode:      sortByMode,
+      p_limit:          100,
+      p_offset:         0,
+    });
 
-    let query = supabase
-      .from('nfl_draft_player_pool')
-      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, espn_rank, sleeper_rank')
-      .order(sortColumn, { ascending: true, nullsFirst: !sortNullsLast })
-      .limit(100);
-
-    if (boardPositionFilter !== 'All') {
-      query = query.eq('fantasy_position', boardPositionFilter);
-    }
-
-    if (boardSearch.length >= 2) {
-      query = query.ilike('display_name', `%${boardSearch}%`);
-    } else if (boardSearch.length > 0) {
-      setBoardAvailablePlayers([]);
+    if (error) {
+      console.error('[searchAvailablePlayers]', error.message);
       setBoardAvailableLoading(false);
       return;
     }
 
-    const { data } = await query;
-    setBoardAvailablePlayers((data ?? []) as AvailablePlayer[]);
+    const rows = (data ?? []) as RpcRow[];
+    setRankingDataAvailable(rows.some(r => r.has_ranking_data));
+    setBoardAvailablePlayers(rows.map(rpcRowToAvailablePlayer));
     setBoardAvailableLoading(false);
   }
 
@@ -162,14 +244,13 @@ export function useMyDraftBoard(
 
   async function addAllAvailableToBoard() {
     if (!userId || !draftId) return;
-    // Guard against rapid double-invocations before React state propagates
     if (addAllLoading) return;
 
     setAddAllLoading(true);
     setAddAllError(null);
 
     try {
-      // Fetch current picks and boarded IDs fresh from DB to avoid stale state
+      // Fetch current picks and boarded IDs fresh to avoid stale state
       const [picksRes, boardedRes] = await Promise.all([
         supabase.from('draft_picks').select('player_id').eq('draft_id', draftId).not('player_id', 'is', null),
         supabase.from('draft_board_rankings').select('sports_player_id, rank').eq('draft_id', draftId).eq('user_id', userId),
@@ -188,56 +269,54 @@ export function useMyDraftBoard(
         return;
       }
 
-      const pickedSet = new Set((picksRes.data ?? []).map(p => p.player_id as string));
+      const pickedSet  = new Set((picksRes.data  ?? []).map(p => p.player_id as string));
       const boardedSet = new Set((boardedRes.data ?? []).map(r => r.sports_player_id as string));
       const currentMaxRank = (boardedRes.data ?? []).reduce((max, r) => Math.max(max, r.rank), 0);
 
-      // Determine sort order — ranks: nulls last; name: A-Z
-      const sortColumn = boardSortMode === 'espn' ? 'espn_rank' : boardSortMode === 'sleeper' ? 'sleeper_rank' : 'display_name';
-      const nullsFirst = boardSortMode === 'name';
-
-      // Paginate through entire pool, 1000 rows at a time
+      // Paginate through entire pool via RPC in the selected sort order
+      // Search text is intentionally ignored for Add All (per spec)
       const PAGE_SIZE = 1000;
-      let allPlayers: { id: string }[] = [];
-      let from = 0;
+      const allPlayers: { id: string }[] = [];
+      let offset = 0;
 
       while (true) {
-        let query = supabase
-          .from('nfl_draft_player_pool')
-          .select('id')
-          .order(sortColumn, { ascending: true, nullsFirst })
-          .range(from, from + PAGE_SIZE - 1);
+        const { data: page, error: pageError } = await supabase.rpc('get_draft_player_pool_with_rankings', {
+          p_provider:       PROVIDER_MAP[rankingSource],
+          p_scoring_format: scoringFormat,
+          p_season:         CURRENT_SEASON,
+          p_ranking_type:   RANKING_TYPE_MAP[rankingSource],
+          p_position:       boardPositionFilter !== 'All' ? boardPositionFilter : null,
+          p_search:         null,
+          p_sort_mode:      sortByMode,
+          p_limit:          PAGE_SIZE,
+          p_offset:         offset,
+        });
 
-        if (boardPositionFilter !== 'All') {
-          query = query.eq('fantasy_position', boardPositionFilter);
-        }
-
-        const { data, error } = await query;
-        if (error) {
-          const msg = `Failed to load player pool (page ${from}): ${error.message}`;
+        if (pageError) {
+          const msg = `Failed to load player pool (offset ${offset}): ${pageError.message}`;
           console.error('[addAllAvailableToBoard]', msg);
           setAddAllError(msg);
           return;
         }
-        if (!data || data.length === 0) break;
-        allPlayers = allPlayers.concat(data);
-        if (data.length < PAGE_SIZE) break;
-        from += PAGE_SIZE;
+        if (!page || page.length === 0) break;
+        allPlayers.push(...(page as RpcRow[]).map(r => ({ id: r.id })));
+        if (page.length < PAGE_SIZE) break;
+        offset += PAGE_SIZE;
       }
 
-      // Filter to only eligible players (not picked, not already on board)
+      // Filter to only eligible players
       const toAdd = allPlayers.filter(p => !pickedSet.has(p.id) && !boardedSet.has(p.id));
       if (toAdd.length === 0) return;
 
-      // Batch-upsert 500 rows at a time
+      // Batch-upsert 500 rows at a time, preserving sort order via rank assignment
       const BATCH_SIZE = 500;
       for (let i = 0; i < toAdd.length; i += BATCH_SIZE) {
         const batch = toAdd.slice(i, i + BATCH_SIZE);
         const rows = batch.map((p, j) => ({
-          draft_id: draftId,
-          user_id: userId!,
+          draft_id:         draftId,
+          user_id:          userId!,
           sports_player_id: p.id,
-          rank: currentMaxRank + i + j + 1,
+          rank:             currentMaxRank + i + j + 1,
         }));
         const { error: upsertError } = await supabase
           .from('draft_board_rankings')
@@ -251,7 +330,6 @@ export function useMyDraftBoard(
         }
       }
 
-      console.info(`[addAllAvailableToBoard] Added ${toAdd.length} players to board.`);
       await loadBoardRankings();
     } finally {
       setAddAllLoading(false);
@@ -278,25 +356,22 @@ export function useMyDraftBoard(
     const [moved] = updated.splice(fromIndex, 1);
     updated.splice(toIndex, 0, moved);
 
-    // Optimistic update so the UI feels instant
     const reranked = updated.map((p, i) => ({ ...p, rank: i + 1 }));
     setBoardPlayers(reranked);
 
-    // Build payload — only rows that have a persisted rankingId
     const payload = reranked
       .filter(p => p.rankingId !== null)
       .map(p => ({ id: p.rankingId as string, rank: p.rank }));
 
     const { error } = await supabase.rpc('reorder_draft_board_rankings', {
-      p_draft_id: draftId,
-      p_rankings: payload,
+      p_draft_id:  draftId,
+      p_rankings:  payload,
     });
 
     if (error) {
       const msg = `Reorder failed: ${error.message}`;
       console.error('[reorderBoard]', msg);
       setReorderError(msg);
-      // Roll back optimistic update to DB truth
       await loadBoardRankings();
     }
   }
@@ -307,8 +382,11 @@ export function useMyDraftBoard(
     boardPlayers, boardLoading,
     boardSearch, setBoardSearch,
     boardPositionFilter, setBoardPositionFilter,
-    boardSortMode, setBoardSortMode,
+    rankingSource, setRankingSource,
+    scoringFormat, setScoringFormat,
+    sortByMode, setSortByMode,
     boardAvailablePlayers, boardAvailableLoading,
+    rankingDataAvailable,
     showBoardSearch,
     addAllLoading,
     addAllError,

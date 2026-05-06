@@ -78,7 +78,7 @@ export default function BoardPlayerRow({
             )}
           </div>
           <div style={{ fontSize: '11px', color: dt.textSecondary }}>
-            {player.team_abbr ? `${player.team_abbr} · ` : ''}{player.fantasy_position ?? player.position ?? '—'}
+            {player.team_abbr ? `${player.team_abbr} · ` : ''}{player.fantasy_position ?? player.nfl_position ?? '—'}
           </div>
         </div>
 
@@ -89,7 +89,7 @@ export default function BoardPlayerRow({
           color: positionBadgeColor(player.fantasy_position),
           flexShrink: 0,
         }}>
-          {player.fantasy_position ?? player.position ?? '—'}
+          {player.fantasy_position ?? player.nfl_position ?? '—'}
         </span>
 
         {/* Actions */}

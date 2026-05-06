@@ -1,5 +1,5 @@
-import type { AvailablePlayer, SortMode } from '../../hooks/draft/draftTypes';
-import { INJURY_COLORS, dt } from '../../hooks/draft/draftTypes';
+import type { AvailablePlayer, RankingSource, SortByMode } from '../../hooks/draft/draftTypes';
+import { INJURY_COLORS, RANKING_SOURCE_LABELS, dt } from '../../hooks/draft/draftTypes';
 import { positionBadgeBg, positionBadgeColor } from './positionBadge';
 
 interface Props {
@@ -7,14 +7,39 @@ interface Props {
   isPicked: boolean;
   isOnBoard: boolean;
   canPick: boolean;
-  sortMode: SortMode;
+  sortByMode: SortByMode;
+  rankingSource: RankingSource;
   onAdd: (id: string) => void;
   onPick: (id: string) => void;
 }
 
-export default function AvailablePlayerRow({ player, isPicked, isOnBoard, canPick, sortMode, onAdd, onPick }: Props) {
+function rankLabel(player: AvailablePlayer, sortByMode: SortByMode, rankingSource: RankingSource): string | null {
+  const src = RANKING_SOURCE_LABELS[rankingSource];
+  if (sortByMode === 'relevance' || sortByMode === 'overall_rank') {
+    if (player.overall_rank != null) return `${src} #${player.overall_rank}`;
+  }
+  if (sortByMode === 'position_rank') {
+    if (player.position_rank_label) return `${src} ${player.position_rank_label}`;
+    if (player.position_rank != null) {
+      const pos = player.fantasy_position ?? player.nfl_position ?? '';
+      return `${src} ${pos}#${player.position_rank}`;
+    }
+  }
+  if (sortByMode === 'adp' && player.adp != null) {
+    return `${src} ADP ${player.adp.toFixed(1)}`;
+  }
+  if (sortByMode === 'fantasy_points' && player.fantasy_points != null) {
+    return `${src} ${player.fantasy_points.toFixed(1)} pts`;
+  }
+  return null;
+}
+
+export default function AvailablePlayerRow({
+  player, isPicked, isOnBoard, canPick, sortByMode, rankingSource, onAdd, onPick,
+}: Props) {
   const injuryLabel = player.injury_status;
   const injuryColor = injuryLabel ? (INJURY_COLORS[injuryLabel] ?? '#64748b') : null;
+  const label = rankLabel(player, sortByMode, rankingSource);
 
   return (
     <div style={{
@@ -42,18 +67,21 @@ export default function AvailablePlayerRow({ player, isPicked, isOnBoard, canPic
           )}
         </div>
         <div style={{ fontSize: '11px', color: dt.textSecondary }}>
-          {player.team_abbr ? `${player.team_abbr} · ` : ''}{player.fantasy_position ?? player.position ?? '—'}
-          {sortMode === 'espn' && player.espn_rank != null && (
-            <span style={{ marginLeft: '6px', color: '#60a5fa' }}>ESPN #{player.espn_rank}</span>
-          )}
-          {sortMode === 'sleeper' && player.sleeper_rank != null && (
-            <span style={{ marginLeft: '6px', color: '#34d399' }}>Sleeper #{player.sleeper_rank}</span>
+          {player.team_abbr ? `${player.team_abbr} · ` : ''}
+          {player.fantasy_position ?? player.nfl_position ?? '—'}
+          {label && (
+            <span style={{ marginLeft: '6px', color: '#60a5fa' }}>{label}</span>
           )}
         </div>
       </div>
 
-      <span style={{ padding: '2px 7px', borderRadius: '4px', fontSize: '11px', fontWeight: '700', background: positionBadgeBg(player.fantasy_position), color: positionBadgeColor(player.fantasy_position), flexShrink: 0 }}>
-        {player.fantasy_position ?? player.position ?? '—'}
+      <span style={{
+        padding: '2px 7px', borderRadius: '4px', fontSize: '11px', fontWeight: '700',
+        background: positionBadgeBg(player.fantasy_position),
+        color: positionBadgeColor(player.fantasy_position),
+        flexShrink: 0,
+      }}>
+        {player.fantasy_position ?? player.nfl_position ?? '—'}
       </span>
 
       {!isPicked && !isOnBoard && (
