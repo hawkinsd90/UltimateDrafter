@@ -296,6 +296,10 @@ export function useMyDraftBoard(
   async function addAllAvailableToBoard() {
     if (!userId || !draftId) return;
     if (addAllLoading) return;
+    if (rankingSource === 'last_season' && (!draftScoringRuleId || !lastSeasonRankingsAvailable)) {
+      setAddAllError('Last Season rankings are not available for this draft yet.');
+      return;
+    }
 
     setAddAllLoading(true);
     setAddAllError(null);
