@@ -96,6 +96,8 @@ export default function MyBoardPanel({
           pickedPlayerIds={pickedPlayerIds}
           canPick={canPick}
           reorderError={reorderError}
+          sortByMode={sortByMode}
+          rankingSource={rankingSource}
           onReorder={onReorder}
           onRemove={onRemovePlayer}
           onRemoveAll={onRemoveAll}

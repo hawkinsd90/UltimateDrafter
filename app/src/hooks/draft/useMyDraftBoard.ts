@@ -80,6 +80,8 @@ function rpcRowToAvailablePlayer(row: RpcRow): AvailablePlayer {
     fantasy_points:       row.fantasy_points,
     adp:                  row.adp,
     ranking_source_label: row.ranking_source_label,
+    percent_owned:        row.percent_owned,
+    trend_count:          row.trend_count,
   };
 }
 
@@ -114,6 +116,14 @@ export function useMyDraftBoard(
   const picksCountRef = useRef<number>(-1);
   const boardPlayersRef = useRef<BoardPlayer[]>([]);
   boardPlayersRef.current = boardPlayers;
+
+  // Refs so loadBoardRankings can read current source/format without stale closures
+  const rankingSourceRef = useRef<RankingSource>(rankingSource);
+  const scoringFormatRef = useRef<ScoringFormat>(scoringFormat);
+  const draftScoringRuleIdRef = useRef<string | null>(draftScoringRuleId);
+  rankingSourceRef.current = rankingSource;
+  scoringFormatRef.current = scoringFormat;
+  draftScoringRuleIdRef.current = draftScoringRuleId;
 
   // Load draft scoring rule ID once per draftId
   useEffect(() => {
@@ -212,11 +222,44 @@ export function useMyDraftBoard(
       if (chunk) allPlayerRows.push(...chunk);
     }
 
+    // Fetch ranking context for the current source so My Rankings shows stat labels
+    // Read state via ref-captured values to avoid stale closure issues
+    const curSource = rankingSourceRef.current;
+    const curFormat = scoringFormatRef.current;
+    const curRuleId = draftScoringRuleIdRef.current;
+    const isLastSeason = curSource === 'last_season';
+    const rankingMap = new Map<string, { overall_rank: number | null; position_rank: number | null; position_rank_label: string | null; fantasy_points: number | null; adp: number | null; source_label: string | null }>();
+
+    if (playerIds.length > 0) {
+      let rankQuery = supabase
+        .from('player_rankings')
+        .select('sports_player_id, overall_rank, position_rank, position_rank_label, fantasy_points, adp, source_label')
+        .eq('provider', PROVIDER_MAP[curSource])
+        .eq('scoring_format', curFormat)
+        .eq('season', isLastSeason ? 2025 : CURRENT_SEASON)
+        .eq('ranking_type', RANKING_TYPE_MAP[curSource]);
+
+      if (isLastSeason && curRuleId) {
+        rankQuery = rankQuery.eq('draft_scoring_rule_id', curRuleId);
+      } else if (!isLastSeason) {
+        rankQuery = rankQuery.is('draft_scoring_rule_id', null);
+      }
+
+      // Chunk the IN query for player_rankings too
+      for (let i = 0; i < playerIds.length; i += CHUNK) {
+        const { data: rankChunk } = await rankQuery.in('sports_player_id', playerIds.slice(i, i + CHUNK));
+        for (const row of rankChunk ?? []) {
+          rankingMap.set(row.sports_player_id, row);
+        }
+      }
+    }
+
     const playerMap = new Map(allPlayerRows.map(p => [p.id, p]));
     const merged: BoardPlayer[] = [];
     for (const r of rankings) {
       const p = playerMap.get(r.sports_player_id);
       if (!p) continue;
+      const rk = rankingMap.get(r.sports_player_id);
       merged.push({
         id:                   p.id,
         display_name:         p.display_name,
@@ -225,12 +268,12 @@ export function useMyDraftBoard(
         status:               p.status,
         injury_status:        p.injury_status,
         team_abbr:            p.team_abbr,
-        overall_rank:         null,
-        position_rank:        null,
-        position_rank_label:  null,
-        fantasy_points:       null,
-        adp:                  null,
-        ranking_source_label: null,
+        overall_rank:         rk?.overall_rank ?? null,
+        position_rank:        rk?.position_rank ?? null,
+        position_rank_label:  rk?.position_rank_label ?? null,
+        fantasy_points:       rk?.fantasy_points ?? null,
+        adp:                  rk?.adp ?? null,
+        ranking_source_label: rk?.source_label ?? null,
         rank:                 r.rank,
         rankingId:            r.id,
       });

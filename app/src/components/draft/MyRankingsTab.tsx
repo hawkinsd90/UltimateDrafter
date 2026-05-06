@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { BoardPlayer } from '../../hooks/draft/draftTypes';
+import type { BoardPlayer, RankingSource, SortByMode } from '../../hooks/draft/draftTypes';
 import { dt } from '../../hooks/draft/draftTypes';
 import BoardPlayerRow from './BoardPlayerRow';
 
@@ -9,6 +9,8 @@ interface Props {
   pickedPlayerIds: Set<string>;
   canPick: boolean;
   reorderError: string | null;
+  sortByMode: SortByMode;
+  rankingSource: RankingSource;
   onReorder: (from: number, to: number) => void;
   onRemove: (rankingId: string) => void;
   onRemoveAll: () => void;
@@ -18,7 +20,8 @@ interface Props {
 
 export default function MyRankingsTab({
   boardPlayers, boardLoading, pickedPlayerIds, canPick,
-  reorderError, onReorder, onRemove, onRemoveAll, onPick, onGoToAddPlayers,
+  reorderError, sortByMode, rankingSource,
+  onReorder, onRemove, onRemoveAll, onPick, onGoToAddPlayers,
 }: Props) {
   const [openMoveId, setOpenMoveId] = useState<string | null>(null);
 
@@ -73,6 +76,8 @@ export default function MyRankingsTab({
               isPicked={pickedPlayerIds.has(player.id)}
               canPick={canPick}
               isMoveOpen={openMoveId === player.id}
+              sortByMode={sortByMode}
+              rankingSource={rankingSource}
               onToggleMove={handleToggleMove}
               onReorder={handleReorder}
               onRemove={onRemove}

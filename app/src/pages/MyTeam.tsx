@@ -34,16 +34,20 @@ interface RosterSettings {
   draft_format: string | null;
 }
 
-interface PickedPlayer {
+type PlayerSource = 'drafted' | 'imported' | 'keeper';
+
+interface RosterPlayer {
+  // Stable unique key per player-on-this-team
   pickId: string;
-  pickNumber: number;
-  round: number;
-  pickInRound: number;
+  pickNumber: number | null;
+  round: number | null;
+  pickInRound: number | null;
   playerId: string | null;
   displayName: string;
   fantasyPosition: string | null;
   teamAbbr: string | null;
   isKeeper: boolean;
+  source: PlayerSource;
 }
 
 // ── Slot building ─────────────────────────────────────────────────────────────
@@ -51,15 +55,14 @@ interface PickedPlayer {
 interface RosterSlot {
   slotLabel: string;
   slotType: 'QB' | 'RB' | 'WR' | 'TE' | 'FLEX' | 'K' | 'DST' | 'Bench';
-  player: PickedPlayer | null;
+  player: RosterPlayer | null;
 }
 
 const FLEX_ELIGIBLE = ['RB', 'WR', 'TE'];
 
-function buildRoster(picks: PickedPlayer[], settings: RosterSettings | null): RosterSlot[] {
+function buildRoster(players: RosterPlayer[], settings: RosterSettings | null): RosterSlot[] {
   if (!settings) {
-    // No settings — just list all picks as bench
-    return picks.map((p, i) => ({ slotLabel: `BN ${i + 1}`, slotType: 'Bench', player: p }));
+    return players.map((p, i) => ({ slotLabel: `BN ${i + 1}`, slotType: 'Bench', player: p }));
   }
 
   const slots: RosterSlot[] = [];
@@ -68,29 +71,24 @@ function buildRoster(picks: PickedPlayer[], settings: RosterSettings | null): Ro
   const add = (type: RosterSlot['slotType'], count: number, eligible: string[]) => {
     for (let i = 0; i < count; i++) {
       const label = count > 1 ? `${type} ${i + 1}` : type;
-      const player = picks.find(p => !used.has(p.pickId) && eligible.includes(p.fantasyPosition ?? '')) ?? null;
+      const player = players.find(p => !used.has(p.pickId) && eligible.includes(p.fantasyPosition ?? '')) ?? null;
       if (player) used.add(player.pickId);
       slots.push({ slotLabel: label, slotType: type, player });
     }
   };
 
-  add('QB', settings.roster_qb ?? 0, ['QB']);
-  add('RB', settings.roster_rb ?? 0, ['RB']);
-  add('WR', settings.roster_wr ?? 0, ['WR']);
-  add('TE', settings.roster_te ?? 0, ['TE']);
+  add('QB',   settings.roster_qb   ?? 0, ['QB']);
+  add('RB',   settings.roster_rb   ?? 0, ['RB']);
+  add('WR',   settings.roster_wr   ?? 0, ['WR']);
+  add('TE',   settings.roster_te   ?? 0, ['TE']);
   add('FLEX', settings.roster_flex ?? 0, FLEX_ELIGIBLE);
-  add('K', settings.roster_k ?? 0, ['K']);
-  add('DST', settings.roster_dst ?? 0, ['DST', 'DEF']);
+  add('K',    settings.roster_k    ?? 0, ['K']);
+  add('DST',  settings.roster_dst  ?? 0, ['DST', 'DEF']);
 
-  // Bench — all remaining picks
   const benchCount = settings.bench ?? 0;
-  const remaining = picks.filter(p => !used.has(p.pickId));
+  const remaining  = players.filter(p => !used.has(p.pickId));
   for (let i = 0; i < Math.max(benchCount, remaining.length); i++) {
-    slots.push({
-      slotLabel: `BN`,
-      slotType: 'Bench',
-      player: remaining[i] ?? null,
-    });
+    slots.push({ slotLabel: 'BN', slotType: 'Bench', player: remaining[i] ?? null });
   }
 
   return slots;
@@ -98,14 +96,14 @@ function buildRoster(picks: PickedPlayer[], settings: RosterSettings | null): Ro
 
 // ── Colours ───────────────────────────────────────────────────────────────────
 
-const bg = '#0f172a';
-const card = '#1e293b';
-const border = '#334155';
+const bg          = '#0f172a';
+const card        = '#1e293b';
+const border      = '#334155';
 const textPrimary = '#f1f5f9';
 const textSecondary = '#94a3b8';
-const green = '#22c55e';
-const blue = '#3b82f6';
-const amber = '#f59e0b';
+const green       = '#22c55e';
+const blue        = '#3b82f6';
+const amber       = '#f59e0b';
 
 const SLOT_COLORS: Record<string, { bg: string; text: string }> = {
   QB:    { bg: '#7c2d12', text: '#fed7aa' },
@@ -128,40 +126,90 @@ export default function MyTeam() {
   const { draftId } = useParams<{ draftId: string }>();
   const { user } = useAuth();
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [draft, setDraft] = useState<DraftInfo | null>(null);
-  const [participant, setParticipant] = useState<Participant | null>(null);
-  const [picks, setPicks] = useState<PickedPlayer[]>([]);
-  const [rosterSettings, setRosterSettings] = useState<RosterSettings | null>(null);
-  const [totalPicksMade, setTotalPicksMade] = useState(0);
+  const [loading, setLoading]                 = useState(true);
+  const [error, setError]                     = useState('');
+  const [draft, setDraft]                     = useState<DraftInfo | null>(null);
+  const [participant, setParticipant]         = useState<Participant | null>(null);
+  const [players, setPlayers]                 = useState<RosterPlayer[]>([]);
+  const [rosterSettings, setRosterSettings]   = useState<RosterSettings | null>(null);
+  const [totalPicksMade, setTotalPicksMade]   = useState(0);
   const [totalParticipants, setTotalParticipants] = useState(0);
-  const [participants, setParticipants] = useState<Participant[]>([]);
-  const [viewingId, setViewingId] = useState<string | null>(null);
+  const [participants, setParticipants]       = useState<Participant[]>([]);
+  const [viewingId, setViewingId]             = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const effectiveParticipantId = viewingId ?? participant?.id ?? null;
 
-  const loadPicks = useCallback(async (participantId: string, draftIdVal: string) => {
-    const { data } = await supabase
+  // Load the unified roster: draft picks + imported roster players, deduplicated by sports_player_id.
+  // Drafted players take precedence if both sources contain the same player.
+  const loadRoster = useCallback(async (participantId: string, draftIdVal: string) => {
+    // 1. Draft picks for this participant
+    const { data: picksData } = await supabase
       .from('draft_picks')
       .select('id, pick_number, round, pick_in_round, player_id, player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))')
       .eq('draft_id', draftIdVal)
       .eq('participant_id', participantId)
+      .not('player_id', 'is', null)
       .order('pick_number', { ascending: true });
 
-    const mapped: PickedPlayer[] = (data ?? []).map((p: any) => ({
-      pickId: p.id,
-      pickNumber: p.pick_number,
-      round: p.round,
-      pickInRound: p.pick_in_round,
-      playerId: p.player_id,
-      displayName: p.player?.display_name ?? 'Unknown Player',
+    const draftedPlayers: RosterPlayer[] = (picksData ?? []).map((p: any) => ({
+      pickId:        p.id,
+      pickNumber:    p.pick_number,
+      round:         p.round,
+      pickInRound:   p.pick_in_round,
+      playerId:      p.player_id,
+      displayName:   p.player?.display_name ?? 'Unknown Player',
       fantasyPosition: p.player?.fantasy_position ?? null,
-      teamAbbr: p.player?.team?.abbreviation ?? null,
-      isKeeper: false,
+      teamAbbr:      p.player?.team?.abbreviation ?? null,
+      isKeeper:      false,
+      source:        'drafted' as PlayerSource,
     }));
-    setPicks(mapped);
+
+    const draftedIds = new Set(draftedPlayers.map(p => p.playerId).filter(Boolean) as string[]);
+
+    // 2. Imported roster players for this participant via external_league_teams mapping
+    // Join: external_league_teams (mapped to this participant) → external_roster_players → sports_players
+    const { data: importedData } = await supabase
+      .from('external_league_teams')
+      .select(`
+        link_id,
+        external_team_id,
+        external_league_links!inner(draft_id),
+        external_roster_players(
+          external_player_name,
+          external_position,
+          sports_player_id,
+          resolution_status,
+          sports_player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))
+        )
+      `)
+      .eq('draft_participant_id', participantId)
+      .eq('mapping_status', 'mapped')
+      .eq('external_league_links.draft_id', draftIdVal);
+
+    const importedPlayers: RosterPlayer[] = [];
+    for (const team of importedData ?? []) {
+      for (const erp of (team as any).external_roster_players ?? []) {
+        if (!erp.sports_player_id) continue;
+        // Skip if already in draft picks (avoid duplicate)
+        if (draftedIds.has(erp.sports_player_id)) continue;
+        importedPlayers.push({
+          pickId:        `imported-${erp.sports_player_id}`,
+          pickNumber:    null,
+          round:         null,
+          pickInRound:   null,
+          playerId:      erp.sports_player_id,
+          displayName:   erp.sports_player?.display_name ?? erp.external_player_name ?? 'Unknown',
+          fantasyPosition: erp.sports_player?.fantasy_position ?? erp.external_position ?? null,
+          teamAbbr:      erp.sports_player?.team?.abbreviation ?? null,
+          isKeeper:      false,
+          source:        'imported' as PlayerSource,
+        });
+      }
+    }
+
+    // Drafted first (in pick order), then imported
+    setPlayers([...draftedPlayers, ...importedPlayers]);
   }, []);
 
   async function loadData() {
@@ -191,7 +239,7 @@ export default function MyTeam() {
     if (settingsRes.data) setRosterSettings(settingsRes.data);
 
     const targetId = viewingId ?? myPart?.id ?? null;
-    if (targetId) await loadPicks(targetId, draftId);
+    if (targetId) await loadRoster(targetId, draftId);
 
     const { count } = await supabase.from('draft_picks').select('id', { count: 'exact', head: true }).eq('draft_id', draftId);
     setTotalPicksMade(count ?? 0);
@@ -206,7 +254,7 @@ export default function MyTeam() {
       const { data } = await supabase.from('drafts').select('id, name, status, league_id, current_pick_number, current_participant_id').eq('id', draftId).maybeSingle();
       if (data) setDraft(data);
       const targetId = viewingId ?? participant?.id ?? null;
-      if (targetId) await loadPicks(targetId, draftId);
+      if (targetId) await loadRoster(targetId, draftId);
       const { count } = await supabase.from('draft_picks').select('id', { count: 'exact', head: true }).eq('draft_id', draftId);
       setTotalPicksMade(count ?? 0);
     }, 8000);
@@ -216,7 +264,7 @@ export default function MyTeam() {
 
   useEffect(() => {
     if (!viewingId || !draftId) return;
-    loadPicks(viewingId, draftId);
+    loadRoster(viewingId, draftId);
   }, [viewingId, draftId]);
 
   if (loading) return (
@@ -228,20 +276,24 @@ export default function MyTeam() {
   );
 
   const viewingParticipant = effectiveParticipantId ? participants.find(p => p.id === effectiveParticipantId) ?? null : null;
-  const isMyTeam = viewingParticipant?.id === participant?.id;
-  const isOnClock = draft.current_participant_id === effectiveParticipantId;
+  const isMyTeam   = viewingParticipant?.id === participant?.id;
+  const isOnClock  = draft.current_participant_id === effectiveParticipantId;
 
   const totalSlots = rosterSettings
-    ? (rosterSettings.roster_qb ?? 0) + (rosterSettings.roster_rb ?? 0) +
-      (rosterSettings.roster_wr ?? 0) + (rosterSettings.roster_te ?? 0) +
-      (rosterSettings.roster_flex ?? 0) + (rosterSettings.roster_k ?? 0) +
-      (rosterSettings.roster_dst ?? 0) + (rosterSettings.bench ?? 0)
+    ? (rosterSettings.roster_qb   ?? 0) + (rosterSettings.roster_rb  ?? 0) +
+      (rosterSettings.roster_wr   ?? 0) + (rosterSettings.roster_te  ?? 0) +
+      (rosterSettings.roster_flex ?? 0) + (rosterSettings.roster_k   ?? 0) +
+      (rosterSettings.roster_dst  ?? 0) + (rosterSettings.bench      ?? 0)
     : null;
 
   const currentRound = totalParticipants > 0 ? Math.ceil(draft.current_pick_number / totalParticipants) : 1;
-  const roster = buildRoster(picks, rosterSettings);
-  const starters = roster.filter(s => s.slotType !== 'Bench');
-  const bench = roster.filter(s => s.slotType === 'Bench');
+  const roster       = buildRoster(players, rosterSettings);
+  const starters     = roster.filter(s => s.slotType !== 'Bench');
+  const bench        = roster.filter(s => s.slotType === 'Bench');
+
+  // For the stat box, count the total roster size (drafted + imported)
+  const draftedCount  = players.filter(p => p.source === 'drafted').length;
+  const importedCount = players.filter(p => p.source === 'imported').length;
 
   return (
     <div style={{ padding: '16px', fontFamily: 'system-ui, sans-serif', color: textPrimary, background: bg, minHeight: '100vh', maxWidth: '600px', margin: '0 auto' }}>
@@ -258,8 +310,8 @@ export default function MyTeam() {
       <p style={{ margin: '0 0 16px', color: textSecondary, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
         {draft.name}
         {draft.status === 'in_progress' && <StatusPill color={green} bg="#14532d" border="#16a34a" label="Live" />}
-        {draft.status === 'paused' && <StatusPill color={amber} bg="#451a03" border={amber} label="Paused" />}
-        {draft.status === 'completed' && <StatusPill color={textSecondary} bg={card} border={border} label="Final" />}
+        {draft.status === 'paused'      && <StatusPill color={amber} bg="#451a03" border={amber}    label="Paused" />}
+        {draft.status === 'completed'   && <StatusPill color={textSecondary} bg={card} border={border} label="Final" />}
       </p>
 
       {/* Team selector */}
@@ -302,10 +354,22 @@ export default function MyTeam() {
 
           {/* Stats */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '16px' }}>
-            <StatBox label="Picks" value={String(picks.length)} />
-            <StatBox label="Slots Left" value={totalSlots ? String(Math.max(0, totalSlots - picks.length)) : '—'} highlight={totalSlots !== null && picks.length >= totalSlots} />
+            <StatBox label="Players" value={String(players.length)} />
+            <StatBox
+              label="Slots Left"
+              value={totalSlots ? String(Math.max(0, totalSlots - players.length)) : '—'}
+              highlight={totalSlots !== null && players.length >= totalSlots}
+            />
             <StatBox label="Round" value={draft.status === 'pending' ? '—' : `${currentRound}${totalSlots ? `/${totalSlots}` : ''}`} />
           </div>
+
+          {/* Imported banner */}
+          {importedCount > 0 && (
+            <div style={{ background: '#0c1a2e', border: `1px solid #1e3a5f`, borderRadius: '8px', padding: '8px 12px', marginBottom: '12px', fontSize: '12px', color: '#93c5fd' }}>
+              {importedCount} player{importedCount !== 1 ? 's' : ''} imported from previous season roster
+              {draftedCount > 0 ? `, ${draftedCount} drafted this season` : ''}
+            </div>
+          )}
 
           {/* Starters */}
           <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden', marginBottom: '12px' }}>
@@ -374,9 +438,16 @@ function StatBox({ label, value, highlight }: { label: string; value: string; hi
   );
 }
 
+const SOURCE_BADGE: Record<PlayerSource, { label: string; bg: string; color: string }> = {
+  drafted:  { label: 'Drafted',  bg: '#1e3a8a', color: '#93c5fd' },
+  imported: { label: 'Imported', bg: '#1c3340', color: '#67e8f9' },
+  keeper:   { label: 'Keeper',   bg: '#3b2a0a', color: '#fcd34d' },
+};
+
 function SlotRow({ slot }: { slot: RosterSlot }) {
-  const col = slotColor(slot.slotType);
+  const col     = slotColor(slot.slotType);
   const isEmpty = !slot.player;
+  const src     = slot.player ? SOURCE_BADGE[slot.player.source] : null;
 
   return (
     <div style={{
@@ -398,13 +469,23 @@ function SlotRow({ slot }: { slot: RosterSlot }) {
         <span style={{ flex: 1, fontSize: '13px', color: '#475569' }}>— Empty —</span>
       ) : (
         <>
-          <span style={{ flex: 1, fontWeight: '600', fontSize: '14px', color: textPrimary }}>{slot.player!.displayName}</span>
-          {slot.player!.teamAbbr && (
-            <span style={{ fontSize: '12px', color: textSecondary }}>{slot.player!.teamAbbr}</span>
-          )}
-          <span style={{ fontSize: '11px', color: textSecondary }}>
-            Rd {slot.player!.round}
-          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: '600', fontSize: '14px', color: textPrimary }}>{slot.player!.displayName}</span>
+              {src && (
+                <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '4px', background: src.bg, color: src.color }}>
+                  {src.label}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: '11px', color: textSecondary, marginTop: '1px' }}>
+              {slot.player!.teamAbbr && `${slot.player!.teamAbbr} · `}
+              {slot.player!.fantasyPosition ?? '—'}
+              {slot.player!.source === 'drafted' && slot.player!.round !== null && (
+                <span style={{ marginLeft: '6px' }}>Rd {slot.player!.round}</span>
+              )}
+            </div>
+          </div>
         </>
       )}
     </div>

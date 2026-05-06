@@ -111,7 +111,10 @@ export type BoardPlayer = {
   rankingId: string | null;
 };
 
-export type AvailablePlayer = Omit<BoardPlayer, 'rank' | 'rankingId'>;
+export type AvailablePlayer = Omit<BoardPlayer, 'rank' | 'rankingId'> & {
+  percent_owned: number | null;
+  trend_count: number | null;
+};
 
 // Legacy aliases kept for components not yet updated
 export type SortMode = SortByMode;

@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import type { BoardPlayer } from '../../hooks/draft/draftTypes';
-import { INJURY_COLORS, dt } from '../../hooks/draft/draftTypes';
+import type { BoardPlayer, RankingSource, SortByMode } from '../../hooks/draft/draftTypes';
+import { INJURY_COLORS, RANKING_SOURCE_LABELS, dt } from '../../hooks/draft/draftTypes';
 import { positionBadgeBg, positionBadgeColor } from './positionBadge';
 
 interface Props {
@@ -10,15 +10,42 @@ interface Props {
   isPicked: boolean;
   canPick: boolean;
   isMoveOpen: boolean;
+  sortByMode?: SortByMode;
+  rankingSource?: RankingSource;
   onToggleMove: (id: string | null) => void;
   onReorder: (from: number, to: number) => void;
   onRemove: (rankingId: string) => void;
   onPick: (playerId: string) => void;
 }
 
+function rankContextLabel(player: BoardPlayer, sortByMode: SortByMode, rankingSource: RankingSource): string | null {
+  const src = RANKING_SOURCE_LABELS[rankingSource];
+  if (sortByMode === 'relevance' || sortByMode === 'overall_rank') {
+    if (player.overall_rank != null) return `${src} #${player.overall_rank}`;
+  }
+  if (sortByMode === 'position_rank') {
+    if (player.position_rank_label) return `${src} ${player.position_rank_label}`;
+    if (player.position_rank != null) {
+      const pos = player.fantasy_position ?? player.nfl_position ?? '';
+      return `${src} ${pos}${player.position_rank}`;
+    }
+  }
+  if (sortByMode === 'adp' && player.adp != null) {
+    return `ADP ${player.adp.toFixed(1)}`;
+  }
+  if (sortByMode === 'fantasy_points' && player.fantasy_points != null) {
+    const ptLabel = `${player.fantasy_points.toFixed(1)} pts`;
+    if (player.position_rank_label) return `${player.position_rank_label} · ${ptLabel}`;
+    return `${src} ${ptLabel}`;
+  }
+  // Fallback: show whatever context is available
+  if (player.ranking_source_label) return player.ranking_source_label;
+  return null;
+}
+
 export default function BoardPlayerRow({
   player, index, totalCount, isPicked, canPick,
-  isMoveOpen, onToggleMove,
+  isMoveOpen, sortByMode, rankingSource, onToggleMove,
   onReorder, onRemove, onPick,
 }: Props) {
   const [rankInput, setRankInput] = useState('');
@@ -26,6 +53,7 @@ export default function BoardPlayerRow({
 
   const injuryLabel = player.injury_status;
   const injuryColor = injuryLabel ? (INJURY_COLORS[injuryLabel] ?? '#64748b') : null;
+  const contextLabel = sortByMode && rankingSource ? rankContextLabel(player, sortByMode, rankingSource) : null;
 
   function move(toIndex: number) {
     const clamped = Math.max(0, Math.min(totalCount - 1, toIndex));
@@ -79,6 +107,9 @@ export default function BoardPlayerRow({
           </div>
           <div style={{ fontSize: '11px', color: dt.textSecondary }}>
             {player.team_abbr ? `${player.team_abbr} · ` : ''}{player.fantasy_position ?? player.nfl_position ?? '—'}
+            {contextLabel && (
+              <span style={{ marginLeft: '6px', color: '#60a5fa', fontWeight: '500' }}>{contextLabel}</span>
+            )}
           </div>
         </div>
 
