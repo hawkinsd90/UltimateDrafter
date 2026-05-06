@@ -180,7 +180,7 @@ export function useMyDraftBoard(
     return () => {
       if (boardDebounceRef.current) clearTimeout(boardDebounceRef.current);
     };
-  }, [boardSearch, boardPositionFilter, rankingSource, scoringFormat, sortByMode, isMyBoardActive]);
+  }, [boardSearch, boardPositionFilter, rankingSource, scoringFormat, sortByMode, isMyBoardActive, draftScoringRuleId]);
 
   async function loadBoardRankings() {
     if (!userId || !draftId) return;
@@ -239,6 +239,14 @@ export function useMyDraftBoard(
     // 1-char search: clear results and wait for more input (matches old behavior)
     if (boardSearch.length === 1) {
       setBoardAvailablePlayers([]);
+      setBoardAvailableLoading(false);
+      return;
+    }
+
+    // Last Season with no rule or no calculated rankings: return empty immediately
+    if (rankingSource === 'last_season' && (!draftScoringRuleId || !lastSeasonRankingsAvailable)) {
+      setBoardAvailablePlayers([]);
+      setRankingDataAvailable(false);
       setBoardAvailableLoading(false);
       return;
     }

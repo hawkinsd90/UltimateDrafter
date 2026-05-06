@@ -82,6 +82,10 @@ export default function AddPlayersTab({
   const showNoDataBanner = showBoardSearch && !boardAvailableLoading && !rankingDataAvailable
     && sortByMode !== 'name';
 
+  const lastSeasonUnavailable = rankingSource === 'last_season'
+    && (!draftScoringRuleId || !lastSeasonRankingsAvailable);
+  const addAllDisabled = addAllLoading || lastSeasonUnavailable;
+
   return (
     <>
       {/* Search + Add All row */}
@@ -99,14 +103,15 @@ export default function AddPlayersTab({
         />
         <button
           onClick={onAddAll}
-          disabled={addAllLoading}
+          disabled={addAllDisabled}
+          title={lastSeasonUnavailable ? 'Last Season rankings not available for this draft' : undefined}
           style={{
             padding: '9px 12px', fontSize: '12px', fontWeight: '600',
             background: 'transparent',
-            color: addAllLoading ? dt.textSecondary : dt.blue,
-            border: `1px solid ${addAllLoading ? dt.border : dt.blue}`,
-            borderRadius: '7px', cursor: addAllLoading ? 'not-allowed' : 'pointer',
-            whiteSpace: 'nowrap', opacity: addAllLoading ? 0.6 : 1,
+            color: addAllDisabled ? dt.textSecondary : dt.blue,
+            border: `1px solid ${addAllDisabled ? dt.border : dt.blue}`,
+            borderRadius: '7px', cursor: addAllDisabled ? 'not-allowed' : 'pointer',
+            whiteSpace: 'nowrap', opacity: addAllDisabled ? 0.6 : 1,
             transition: 'opacity 0.15s',
           }}
         >
