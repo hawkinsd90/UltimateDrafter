@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import AdminNFLRosterImportPanel from '../components/AdminNFLRosterImportPanel';
 import AdminPlayerStatsPanel from '../components/AdminPlayerStatsPanel';
+import AdminLastSeasonRankingsPanel from '../components/AdminLastSeasonRankingsPanel';
 import UserMenu from '../components/UserMenu';
 
 export default function Admin() {
@@ -54,6 +55,16 @@ export default function Admin() {
         </div>
 
         <AdminPlayerStatsPanel />
+
+        <div style={{ marginTop: '40px', marginBottom: '28px' }}>
+          <h1 style={{ margin: '0 0 6px 0', fontSize: '24px', fontWeight: '700', color: '#1e293b' }}>Last Season Rankings</h1>
+          <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>
+            Calculate league-specific last season fantasy points using a draft's imported scoring rules.
+            Run after syncing player season stats. Results are stored in <code style={{ background: '#f1f5f9', padding: '1px 5px', borderRadius: '3px', fontSize: '13px' }}>player_rankings</code> per draft.
+          </p>
+        </div>
+
+        <AdminLastSeasonRankingsPanel />
       </div>
     </div>
   );
