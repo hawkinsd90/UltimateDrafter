@@ -200,12 +200,19 @@ export function useMyDraftBoard(
     }
 
     const playerIds = rankings.map(r => r.sports_player_id);
-    const { data: players } = await supabase
-      .from('nfl_draft_player_pool')
-      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr')
-      .in('id', playerIds);
 
-    const playerMap = new Map((players ?? []).map(p => [p.id, p]));
+    // Fetch player details in chunks to avoid URL length limits on large boards
+    const CHUNK = 200;
+    const allPlayerRows: { id: string; display_name: string; fantasy_position: string; position: string | null; status: string | null; injury_status: string | null; team_abbr: string | null }[] = [];
+    for (let i = 0; i < playerIds.length; i += CHUNK) {
+      const { data: chunk } = await supabase
+        .from('nfl_draft_player_pool')
+        .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr')
+        .in('id', playerIds.slice(i, i + CHUNK));
+      if (chunk) allPlayerRows.push(...chunk);
+    }
+
+    const playerMap = new Map(allPlayerRows.map(p => [p.id, p]));
     const merged: BoardPlayer[] = [];
     for (const r of rankings) {
       const p = playerMap.get(r.sports_player_id);
