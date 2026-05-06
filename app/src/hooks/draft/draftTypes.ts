@@ -20,7 +20,8 @@ export type TabId = 'overview' | 'myboard';
 // ── Ranking system types ─────────────────────────────────────────────────────
 
 export type RankingSource = 'sleeper' | 'espn' | 'fantasypros' | 'last_season';
-export type ScoringFormat = 'any' | 'standard' | 'half_ppr' | 'ppr';
+// 'custom' is the DB value for league-specific last_season_points rows
+export type ScoringFormat = 'any' | 'standard' | 'half_ppr' | 'ppr' | 'custom';
 export type SortByMode = 'name' | 'overall_rank' | 'position_rank' | 'fantasy_points' | 'adp' | 'relevance';
 
 // Maps RankingSource → the player_rankings.provider value used in DB
@@ -44,7 +45,7 @@ export const DEFAULT_SCORING_FORMAT: Record<RankingSource, ScoringFormat> = {
   sleeper:      'any',
   espn:         'ppr',
   fantasypros:  'ppr',
-  last_season:  'ppr',
+  last_season:  'custom',
 };
 
 // Which scoring formats are valid for each source
@@ -52,7 +53,7 @@ export const VALID_SCORING_FORMATS: Record<RankingSource, ScoringFormat[]> = {
   sleeper:      ['any'],
   espn:         ['standard', 'half_ppr', 'ppr'],
   fantasypros:  ['standard', 'half_ppr', 'ppr'],
-  last_season:  ['standard', 'half_ppr', 'ppr'],
+  last_season:  ['custom'],
 };
 
 // Which sort modes are valid for each source
@@ -71,10 +72,11 @@ export const RANKING_SOURCE_LABELS: Record<RankingSource, string> = {
 };
 
 export const SCORING_FORMAT_LABELS: Record<ScoringFormat, string> = {
-  any:       'Any',
-  standard:  'Standard',
-  half_ppr:  'Half PPR',
-  ppr:       'PPR',
+  any:      'Any',
+  standard: 'Standard',
+  half_ppr: 'Half PPR',
+  ppr:      'PPR',
+  custom:   'League Rules',
 };
 
 export const SORT_BY_LABELS: Record<SortByMode, string> = {

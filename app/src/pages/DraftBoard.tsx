@@ -160,6 +160,8 @@ export default function DraftBoard() {
           addAllLoading={myBoard.addAllLoading}
           addAllError={myBoard.addAllError}
           reorderError={myBoard.reorderError}
+          draftScoringRuleId={myBoard.draftScoringRuleId}
+          lastSeasonRankingsAvailable={myBoard.lastSeasonRankingsAvailable}
           onAddPlayer={myBoard.addPlayerToBoard}
           onAddAll={myBoard.addAllAvailableToBoard}
         />

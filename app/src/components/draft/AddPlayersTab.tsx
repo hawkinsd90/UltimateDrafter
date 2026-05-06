@@ -28,6 +28,8 @@ interface Props {
   canPick: boolean;
   addAllLoading: boolean;
   addAllError: string | null;
+  draftScoringRuleId: string | null;
+  lastSeasonRankingsAvailable: boolean;
   onAddPlayer: (id: string) => void;
   onAddAll: () => void;
   onPickPlayer: (id: string) => void;
@@ -58,7 +60,7 @@ const SOURCE_DESCRIPTIONS: Record<RankingSource, string> = {
   sleeper:     'Sleeper Relevance — general search ranking from Sleeper. Not a draft ADP.',
   espn:        'ESPN Draft Rankings — overall and position draft ranks.',
   fantasypros: 'FantasyPros ECR — expert consensus rankings across 100+ analysts.',
-  last_season: 'Last Season Fantasy Points — based on previous season production.',
+  last_season: 'Calculated from 2025 season stats using this draft\'s imported league scoring rules.',
 };
 
 export default function AddPlayersTab({
@@ -70,6 +72,7 @@ export default function AddPlayersTab({
   boardAvailablePlayers, boardAvailableLoading,
   rankingDataAvailable, showBoardSearch, pickedPlayerIds, boardedPlayerIds,
   canPick, addAllLoading, addAllError,
+  draftScoringRuleId, lastSeasonRankingsAvailable,
   onAddPlayer, onAddAll, onPickPlayer,
 }: Props) {
   const positionLabel = boardPositionFilter === 'All' ? 'every eligible player' : `every eligible ${boardPositionFilter}`;
@@ -148,8 +151,8 @@ export default function AddPlayersTab({
         ))}
       </div>
 
-      {/* Scoring Format selector — hide if source only supports 'any' */}
-      {validFormats.length > 1 && (
+      {/* Scoring Format selector — hide for 'any' and 'custom' (single-value sources) */}
+      {validFormats.length > 1 && rankingSource !== 'last_season' && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
           <span style={sectionLabel}>Format:</span>
           {(['standard', 'half_ppr', 'ppr'] as ScoringFormat[]).map(fmt => {
@@ -165,6 +168,16 @@ export default function AddPlayersTab({
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* Last Season: show format as static "League Rules" badge */}
+      {rankingSource === 'last_season' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
+          <span style={sectionLabel}>Format:</span>
+          <span style={{ ...pillActive, cursor: 'default' }}>
+            {SCORING_FORMAT_LABELS['custom']}
+          </span>
         </div>
       )}
 
@@ -191,8 +204,23 @@ export default function AddPlayersTab({
         {SOURCE_DESCRIPTIONS[rankingSource]}
       </p>
 
+      {/* Last Season: no scoring rule banner */}
+      {rankingSource === 'last_season' && !draftScoringRuleId && (
+        <div style={{ marginBottom: '10px', padding: '8px 12px', borderRadius: '6px', background: '#1c1a10', border: '1px solid #78350f', color: '#fcd34d', fontSize: '12px' }}>
+          No imported scoring rules found for this draft. Import ESPN scoring rules first to use Last Season rankings.
+        </div>
+      )}
+
+      {/* Last Season: rankings not yet calculated banner */}
+      {rankingSource === 'last_season' && draftScoringRuleId && !lastSeasonRankingsAvailable && (
+        <div style={{ marginBottom: '10px', padding: '8px 12px', borderRadius: '6px', background: '#1c1a10', border: '1px solid #78350f', color: '#fcd34d', fontSize: '12px' }}>
+          Last Season rankings have not been calculated for this draft yet.
+          Go to Admin → Last Season Rankings to calculate them.
+        </div>
+      )}
+
       {/* No ranking data banner */}
-      {showNoDataBanner && (
+      {showNoDataBanner && rankingSource !== 'last_season' && (
         <div style={{ marginBottom: '10px', padding: '8px 12px', borderRadius: '6px', background: '#1c2a3a', border: `1px solid ${dt.border}`, color: dt.textSecondary, fontSize: '12px' }}>
           No ranking data synced for {RANKING_SOURCE_LABELS[rankingSource]}
           {validFormats.length > 1 ? ` / ${SCORING_FORMAT_LABELS[scoringFormat]}` : ''} yet.

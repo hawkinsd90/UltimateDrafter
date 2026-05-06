@@ -29,6 +29,8 @@ export interface UseMyDraftBoardReturn {
   addAllLoading: boolean;
   addAllError: string | null;
   reorderError: string | null;
+  draftScoringRuleId: string | null;
+  lastSeasonRankingsAvailable: boolean;
   loadBoardRankings: () => Promise<void>;
   addPlayerToBoard: (playerId: string) => Promise<void>;
   addAllAvailableToBoard: () => Promise<void>;
@@ -103,10 +105,41 @@ export function useMyDraftBoard(
   const [addAllError, setAddAllError] = useState<string | null>(null);
   const [reorderError, setReorderError] = useState<string | null>(null);
 
+  // Scoring rule ID for this draft (populated from draft_scoring_rules table)
+  const [draftScoringRuleId, setDraftScoringRuleId] = useState<string | null>(null);
+  // True when last_season_points rows exist for this draft's scoring rule
+  const [lastSeasonRankingsAvailable, setLastSeasonRankingsAvailable] = useState(false);
+
   const boardDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const picksCountRef = useRef<number>(-1);
   const boardPlayersRef = useRef<BoardPlayer[]>([]);
   boardPlayersRef.current = boardPlayers;
+
+  // Load draft scoring rule ID once per draftId
+  useEffect(() => {
+    if (!draftId) return;
+    async function loadScoringRule() {
+      const { data } = await supabase
+        .from('draft_scoring_rules')
+        .select('id')
+        .eq('draft_id', draftId)
+        .maybeSingle();
+      const ruleId = data?.id ?? null;
+      setDraftScoringRuleId(ruleId);
+
+      if (ruleId) {
+        const { count } = await supabase
+          .from('player_rankings')
+          .select('id', { count: 'exact', head: true })
+          .eq('draft_scoring_rule_id', ruleId)
+          .eq('ranking_type', 'last_season_points');
+        setLastSeasonRankingsAvailable((count ?? 0) > 0);
+      } else {
+        setLastSeasonRankingsAvailable(false);
+      }
+    }
+    loadScoringRule();
+  }, [draftId]);
 
   // When source changes, snap scoring format and sort mode to valid defaults
   function setRankingSource(source: RankingSource) {
@@ -212,16 +245,18 @@ export function useMyDraftBoard(
 
     setBoardAvailableLoading(true);
 
+    const isLastSeason = rankingSource === 'last_season';
     const { data, error } = await supabase.rpc('get_draft_player_pool_with_rankings', {
-      p_provider:       PROVIDER_MAP[rankingSource],
-      p_scoring_format: scoringFormat,
-      p_season:         CURRENT_SEASON,
-      p_ranking_type:   RANKING_TYPE_MAP[rankingSource],
-      p_position:       boardPositionFilter !== 'All' ? boardPositionFilter : null,
-      p_search:         boardSearch.length >= 2 ? boardSearch : null,
-      p_sort_mode:      sortByMode,
-      p_limit:          100,
-      p_offset:         0,
+      p_provider:              PROVIDER_MAP[rankingSource],
+      p_scoring_format:        scoringFormat,
+      p_season:                isLastSeason ? 2025 : CURRENT_SEASON,
+      p_ranking_type:          RANKING_TYPE_MAP[rankingSource],
+      p_position:              boardPositionFilter !== 'All' ? boardPositionFilter : null,
+      p_search:                boardSearch.length >= 2 ? boardSearch : null,
+      p_sort_mode:             sortByMode,
+      p_limit:                 100,
+      p_offset:                0,
+      p_draft_scoring_rule_id: isLastSeason ? draftScoringRuleId : null,
     });
 
     if (error) {
@@ -283,21 +318,23 @@ export function useMyDraftBoard(
 
       // Paginate through entire pool via RPC in the selected sort order
       // Search text is intentionally ignored for Add All (per spec)
+      const isLastSeason = rankingSource === 'last_season';
       const PAGE_SIZE = 1000;
       const allPlayers: { id: string }[] = [];
       let offset = 0;
 
       while (true) {
         const { data: page, error: pageError } = await supabase.rpc('get_draft_player_pool_with_rankings', {
-          p_provider:       PROVIDER_MAP[rankingSource],
-          p_scoring_format: scoringFormat,
-          p_season:         CURRENT_SEASON,
-          p_ranking_type:   RANKING_TYPE_MAP[rankingSource],
-          p_position:       boardPositionFilter !== 'All' ? boardPositionFilter : null,
-          p_search:         null,
-          p_sort_mode:      sortByMode,
-          p_limit:          PAGE_SIZE,
-          p_offset:         offset,
+          p_provider:              PROVIDER_MAP[rankingSource],
+          p_scoring_format:        scoringFormat,
+          p_season:                isLastSeason ? 2025 : CURRENT_SEASON,
+          p_ranking_type:          RANKING_TYPE_MAP[rankingSource],
+          p_position:              boardPositionFilter !== 'All' ? boardPositionFilter : null,
+          p_search:                null,
+          p_sort_mode:             sortByMode,
+          p_limit:                 PAGE_SIZE,
+          p_offset:                offset,
+          p_draft_scoring_rule_id: isLastSeason ? draftScoringRuleId : null,
         });
 
         if (pageError) {
@@ -399,6 +436,8 @@ export function useMyDraftBoard(
     addAllLoading,
     addAllError,
     reorderError,
+    draftScoringRuleId,
+    lastSeasonRankingsAvailable,
     loadBoardRankings,
     addPlayerToBoard,
     addAllAvailableToBoard,

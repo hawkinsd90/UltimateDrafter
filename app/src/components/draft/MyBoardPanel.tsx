@@ -38,6 +38,8 @@ interface Props {
   addAllLoading: boolean;
   addAllError: string | null;
   reorderError: string | null;
+  draftScoringRuleId: string | null;
+  lastSeasonRankingsAvailable: boolean;
   onAddPlayer: (id: string) => void;
   onAddAll: () => void;
 }
@@ -51,6 +53,7 @@ export default function MyBoardPanel({
   sortByMode, setSortByMode,
   boardAvailablePlayers, boardAvailableLoading, rankingDataAvailable,
   showBoardSearch, addAllLoading, addAllError, reorderError,
+  draftScoringRuleId, lastSeasonRankingsAvailable,
   onAddPlayer, onAddAll,
 }: Props) {
   const [subTab, setSubTab] = useState<'rankings' | 'available'>('rankings');
@@ -122,6 +125,8 @@ export default function MyBoardPanel({
           canPick={canPick}
           addAllLoading={addAllLoading}
           addAllError={addAllError}
+          draftScoringRuleId={draftScoringRuleId}
+          lastSeasonRankingsAvailable={lastSeasonRankingsAvailable}
           onAddPlayer={onAddPlayer}
           onAddAll={onAddAll}
           onPickPlayer={onPickFromBoard}
