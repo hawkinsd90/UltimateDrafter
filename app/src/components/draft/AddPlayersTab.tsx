@@ -16,6 +16,7 @@ interface Props {
   boardedPlayerIds: Set<string>;
   canPick: boolean;
   addAllLoading: boolean;
+  addAllError: string | null;
   onAddPlayer: (id: string) => void;
   onAddAll: () => void;
   onPickPlayer: (id: string) => void;
@@ -27,9 +28,11 @@ export default function AddPlayersTab({
   boardSortMode, setBoardSortMode,
   boardAvailablePlayers, boardAvailableLoading,
   showBoardSearch, pickedPlayerIds, boardedPlayerIds,
-  canPick, addAllLoading,
+  canPick, addAllLoading, addAllError,
   onAddPlayer, onAddAll, onPickPlayer,
 }: Props) {
+  const positionLabel = boardPositionFilter === 'All' ? 'every eligible player' : `every eligible ${boardPositionFilter}`;
+
   return (
     <>
       {/* Search + Add All row */}
@@ -50,11 +53,19 @@ export default function AddPlayersTab({
             border: `1px solid ${addAllLoading ? dt.border : dt.blue}`,
             borderRadius: '7px', cursor: addAllLoading ? 'not-allowed' : 'pointer',
             whiteSpace: 'nowrap', opacity: addAllLoading ? 0.6 : 1,
+            transition: 'opacity 0.15s',
           }}
         >
           {addAllLoading ? 'Adding...' : '+ Add All'}
         </button>
       </div>
+
+      {/* Add All error banner */}
+      {addAllError && (
+        <div style={{ marginBottom: '10px', padding: '8px 12px', borderRadius: '6px', background: '#450a0a', border: '1px solid #ef4444', color: '#fca5a5', fontSize: '12px' }}>
+          {addAllError}
+        </div>
+      )}
 
       {/* Position filter */}
       <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '10px' }}>
@@ -96,7 +107,7 @@ export default function AddPlayersTab({
         )}
         {!boardAvailableLoading && !showBoardSearch && (
           <p style={{ color: dt.textSecondary, fontSize: '13px', textAlign: 'center', padding: '20px 0' }}>
-            Type at least 2 characters or select a position to browse.
+            Use search or position filters to browse. "+ Add All" will add {positionLabel} to your rankings.
           </p>
         )}
         {!boardAvailableLoading && showBoardSearch && boardAvailablePlayers.length === 0 && (

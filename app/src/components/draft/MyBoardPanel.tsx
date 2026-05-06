@@ -31,6 +31,7 @@ interface Props {
   boardAvailableLoading: boolean;
   showBoardSearch: boolean;
   addAllLoading: boolean;
+  addAllError: string | null;
   onAddPlayer: (id: string) => void;
   onAddAll: () => void;
 }
@@ -42,7 +43,7 @@ export default function MyBoardPanel({
   boardSearch, setBoardSearch, boardPositionFilter, setBoardPositionFilter,
   boardSortMode, setBoardSortMode,
   boardAvailablePlayers, boardAvailableLoading, showBoardSearch,
-  addAllLoading, onAddPlayer, onAddAll,
+  addAllLoading, addAllError, onAddPlayer, onAddAll,
 }: Props) {
   const [subTab, setSubTab] = useState<'rankings' | 'available'>('rankings');
 
@@ -108,6 +109,7 @@ export default function MyBoardPanel({
           boardedPlayerIds={boardedPlayerIds}
           canPick={canPick}
           addAllLoading={addAllLoading}
+          addAllError={addAllError}
           onAddPlayer={onAddPlayer}
           onAddAll={onAddAll}
           onPickPlayer={onPickFromBoard}

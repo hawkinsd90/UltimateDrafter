@@ -15,6 +15,7 @@ export interface UseMyDraftBoardReturn {
   boardAvailableLoading: boolean;
   showBoardSearch: boolean;
   addAllLoading: boolean;
+  addAllError: string | null;
   loadBoardRankings: () => Promise<void>;
   addPlayerToBoard: (playerId: string) => Promise<void>;
   addAllAvailableToBoard: () => Promise<void>;
@@ -37,6 +38,7 @@ export function useMyDraftBoard(
   const [boardAvailablePlayers, setBoardAvailablePlayers] = useState<AvailablePlayer[]>([]);
   const [boardAvailableLoading, setBoardAvailableLoading] = useState(false);
   const [addAllLoading, setAddAllLoading] = useState(false);
+  const [addAllError, setAddAllError] = useState<string | null>(null);
 
   const boardDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const picksCountRef = useRef<number>(-1);
@@ -85,7 +87,7 @@ export function useMyDraftBoard(
     const playerIds = rankings.map(r => r.sports_player_id);
     const { data: players } = await supabase
       .from('nfl_draft_player_pool')
-      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr')
+      .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, espn_rank, sleeper_rank')
       .in('id', playerIds);
 
     const playerMap = new Map((players ?? []).map(p => [p.id, p]));
@@ -101,8 +103,8 @@ export function useMyDraftBoard(
         status: p.status,
         injury_status: p.injury_status,
         team_abbr: p.team_abbr,
-        espn_rank: null,
-        sleeper_rank: null,
+        espn_rank: p.espn_rank ?? null,
+        sleeper_rank: p.sleeper_rank ?? null,
         rank: r.rank,
         rankingId: r.id,
       });
@@ -158,7 +160,11 @@ export function useMyDraftBoard(
 
   async function addAllAvailableToBoard() {
     if (!userId || !draftId) return;
+    // Guard against rapid double-invocations before React state propagates
+    if (addAllLoading) return;
+
     setAddAllLoading(true);
+    setAddAllError(null);
 
     try {
       // Fetch current picks and boarded IDs fresh from DB to avoid stale state
@@ -167,15 +173,28 @@ export function useMyDraftBoard(
         supabase.from('draft_board_rankings').select('sports_player_id, rank').eq('draft_id', draftId).eq('user_id', userId),
       ]);
 
+      if (picksRes.error) {
+        const msg = `Failed to load draft picks: ${picksRes.error.message}`;
+        console.error('[addAllAvailableToBoard]', msg);
+        setAddAllError(msg);
+        return;
+      }
+      if (boardedRes.error) {
+        const msg = `Failed to load board rankings: ${boardedRes.error.message}`;
+        console.error('[addAllAvailableToBoard]', msg);
+        setAddAllError(msg);
+        return;
+      }
+
       const pickedSet = new Set((picksRes.data ?? []).map(p => p.player_id as string));
       const boardedSet = new Set((boardedRes.data ?? []).map(r => r.sports_player_id as string));
       const currentMaxRank = (boardedRes.data ?? []).reduce((max, r) => Math.max(max, r.rank), 0);
 
-      // Determine sort order
+      // Determine sort order — ranks: nulls last; name: A-Z
       const sortColumn = boardSortMode === 'espn' ? 'espn_rank' : boardSortMode === 'sleeper' ? 'sleeper_rank' : 'display_name';
-      const nullsFirst = boardSortMode === 'name'; // name: A-Z so nulls don't apply; ranks: nulls last
+      const nullsFirst = boardSortMode === 'name';
 
-      // Paginate through entire pool — fetch up to 1000 at a time
+      // Paginate through entire pool, 1000 rows at a time
       const PAGE_SIZE = 1000;
       let allPlayers: { id: string }[] = [];
       let from = 0;
@@ -192,17 +211,23 @@ export function useMyDraftBoard(
         }
 
         const { data, error } = await query;
-        if (error || !data || data.length === 0) break;
+        if (error) {
+          const msg = `Failed to load player pool (page ${from}): ${error.message}`;
+          console.error('[addAllAvailableToBoard]', msg);
+          setAddAllError(msg);
+          return;
+        }
+        if (!data || data.length === 0) break;
         allPlayers = allPlayers.concat(data);
         if (data.length < PAGE_SIZE) break;
         from += PAGE_SIZE;
       }
 
-      // Filter to only eligible players
+      // Filter to only eligible players (not picked, not already on board)
       const toAdd = allPlayers.filter(p => !pickedSet.has(p.id) && !boardedSet.has(p.id));
       if (toAdd.length === 0) return;
 
-      // Build rows with sequential ranks starting after current max
+      // Batch-upsert 500 rows at a time
       const BATCH_SIZE = 500;
       for (let i = 0; i < toAdd.length; i += BATCH_SIZE) {
         const batch = toAdd.slice(i, i + BATCH_SIZE);
@@ -212,11 +237,19 @@ export function useMyDraftBoard(
           sports_player_id: p.id,
           rank: currentMaxRank + i + j + 1,
         }));
-        await supabase
+        const { error: upsertError } = await supabase
           .from('draft_board_rankings')
           .upsert(rows, { onConflict: 'draft_id,user_id,sports_player_id', ignoreDuplicates: true });
+
+        if (upsertError) {
+          const msg = `Failed to save players (batch ${i / BATCH_SIZE + 1}): ${upsertError.message}`;
+          console.error('[addAllAvailableToBoard]', msg);
+          setAddAllError(msg);
+          return;
+        }
       }
 
+      console.info(`[addAllAvailableToBoard] Added ${toAdd.length} players to board.`);
       await loadBoardRankings();
     } finally {
       setAddAllLoading(false);
@@ -261,6 +294,7 @@ export function useMyDraftBoard(
     boardAvailablePlayers, boardAvailableLoading,
     showBoardSearch,
     addAllLoading,
+    addAllError,
     loadBoardRankings,
     addPlayerToBoard,
     addAllAvailableToBoard,

@@ -153,6 +153,7 @@ export default function DraftBoard() {
           boardAvailableLoading={myBoard.boardAvailableLoading}
           showBoardSearch={myBoard.showBoardSearch}
           addAllLoading={myBoard.addAllLoading}
+          addAllError={myBoard.addAllError}
           onAddPlayer={myBoard.addPlayerToBoard}
           onAddAll={myBoard.addAllAvailableToBoard}
         />
