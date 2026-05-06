@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { BoardPlayer } from '../../hooks/draft/draftTypes';
 import { dt } from '../../hooks/draft/draftTypes';
 import BoardPlayerRow from './BoardPlayerRow';
@@ -19,6 +20,17 @@ export default function MyRankingsTab({
   boardPlayers, boardLoading, pickedPlayerIds, canPick,
   reorderError, onReorder, onRemove, onRemoveAll, onPick, onGoToAddPlayers,
 }: Props) {
+  const [openMoveId, setOpenMoveId] = useState<string | null>(null);
+
+  function handleToggleMove(id: string | null) {
+    setOpenMoveId(prev => (prev === id ? null : id));
+  }
+
+  function handleReorder(from: number, to: number) {
+    setOpenMoveId(null);
+    onReorder(from, to);
+  }
+
   return (
     <>
       {boardPlayers.length > 0 && (
@@ -60,7 +72,9 @@ export default function MyRankingsTab({
               totalCount={boardPlayers.length}
               isPicked={pickedPlayerIds.has(player.id)}
               canPick={canPick}
-              onReorder={onReorder}
+              isMoveOpen={openMoveId === player.id}
+              onToggleMove={handleToggleMove}
+              onReorder={handleReorder}
               onRemove={onRemove}
               onPick={onPick}
             />
@@ -70,3 +84,6 @@ export default function MyRankingsTab({
     </>
   );
 }
+
+
+export default MyRankingsTab
