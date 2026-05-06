@@ -84,6 +84,3 @@ export default function MyRankingsTab({
     </>
   );
 }
-
-
-export default MyRankingsTab

@@ -115,7 +115,7 @@ export default function BoardPlayerRow({
                 transition: 'background 0.12s, color 0.12s',
               }}
             >
-              ⇅
+              ⇅ Move
             </button>
           )}
           <button
