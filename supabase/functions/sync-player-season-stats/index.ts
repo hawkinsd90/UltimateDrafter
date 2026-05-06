@@ -50,17 +50,19 @@ const SLEEPER_KEY_MAP: Record<string, string> = {
   fgmiss:        "fg_missed",
   xpm:           "xp_made",
   xpmiss:        "xp_missed",        // Sleeper key is "xpmiss" (not "xp_missed")
-  // DST
+  // DST — only accumulate these on TEAM_ entries (enforced via isDst flag in accumulateWeek)
   sack:          "sacks",
   int:           "def_interceptions",
   fum_rec:       "fumble_recoveries",
-  td:            "def_tds",           // DST total TD (TEAM_ entries)
   def_td:        "def_tds",
   def_st_td:     "def_tds",          // DST special teams TD
   fum_rec_td:    "def_tds",          // fumble recovery TD
   fum_rec_ez_tds: "def_tds",        // fumble recovery in end zone for TD
   safe:          "safeties",
   blk_kick:      "blocks",
+  // NOTE: "td" is intentionally NOT mapped here — on TEAM_ entries it is the
+  // team's total offensive TDs, not defensive TDs. Defensive TDs are captured
+  // via def_td, def_st_td, fum_rec_td, fum_rec_ez_tds above.
   // DST points allowed — Sleeper provides the total directly as "pts_allow"
   // and also as tiered keys. Accumulate "pts_allow" into points_allowed.
   // The tiered keys (pts_allow_0 etc.) are already summed into pts_allow,
@@ -70,6 +72,21 @@ const SLEEPER_KEY_MAP: Record<string, string> = {
   yds_allow:     "yards_allowed",
   // Remove opp_off_yd — was a fallback; Sleeper has the real keys above
 };
+
+// Offensive stat keys that appear on TEAM_ entries but must NOT be accumulated
+// for DST players. The TEAM_ bulk entry contains both the team's offensive stats
+// (pass_yd, rush_yd, rec, pass_td, etc.) and DST stats (sack, int, etc.) merged
+// together. We suppress offensive keys when processing DST (TEAM_) player IDs.
+const DST_SUPPRESSED_KEYS = new Set([
+  "pass_yd", "pass_td", "pass_int", "pass_2pt",
+  "rush_yd", "rush_td", "rush_2pt",
+  "rec", "rec_yd", "rec_td", "rec_2pt",
+  "fum_lost",
+  "st_td", "kr_td", "pr_td", "misc_td",
+  "fgm_0_19", "fgm_20_29", "fgm_30_39", "fgm_40_49",
+  "fgm_50_59", "fgm_60p", "fgm_50p",
+  "fgmiss", "xpm", "xpmiss",
+]);
 
 // Keys present in every entry that carry no direct fantasy scoring value.
 // Must NOT overlap with SLEEPER_KEY_MAP keys.
@@ -117,7 +134,8 @@ const KNOWN_NON_SCORING_KEYS = new Set([
   // pass_int_td = pick-six from QB perspective; already penalized via pass_int, not a scoring accumulation
   "pass_int_td",
   // DST / team-level non-scoring counts and efficiency
-  "sack_yd", "tkl", "tkl_loss", "tkl_loss_yd", "tkl_solo", "tkl_ast",
+  // "td" is the team's total offensive TDs on TEAM_ entries — not a DST stat
+  "td", "sack_yd", "tkl", "tkl_loss", "tkl_loss_yd", "tkl_solo", "tkl_ast",
   "tkl_solo_misc", "tkl_ast_misc",
   "qb_hit", "ff", "ff_misc", "fum", "int_ret_yd",
   "st_tkl_solo", "st_ff", "st_fum_rec", "st_snp",
@@ -202,11 +220,16 @@ function emptyStats(): CanonicalStats {
 function accumulateWeek(
   totals: CanonicalStats,
   rawStats: Record<string, number>,
-  unknownKeys: Set<string>
+  unknownKeys: Set<string>,
+  isDst: boolean
 ): void {
   if ((rawStats.gp ?? 0) > 0) totals.games += 1;
 
   for (const [key, value] of Object.entries(rawStats)) {
+    // Suppress offensive stat keys on DST/TEAM_ entries — they reflect the
+    // team's own offense, not DST fantasy scoring stats.
+    if (isDst && DST_SUPPRESSED_KEYS.has(key)) continue;
+
     const canonical = SLEEPER_KEY_MAP[key];
     if (canonical) {
       (totals as unknown as Record<string, number>)[canonical] =
@@ -328,7 +351,8 @@ Deno.serve(async (req: Request) => {
           seasonTotals[sleeperPlayerId] = emptyStats();
           rawDataByPlayer[sleeperPlayerId] = {};
         }
-        accumulateWeek(seasonTotals[sleeperPlayerId], rawStats, unknownKeys);
+        const isDst = sleeperPlayerId.startsWith("TEAM_");
+        accumulateWeek(seasonTotals[sleeperPlayerId], rawStats, unknownKeys, isDst);
         Object.assign(rawDataByPlayer[sleeperPlayerId], rawStats);
       }
     }
