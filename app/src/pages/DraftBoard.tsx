@@ -154,6 +154,7 @@ export default function DraftBoard() {
           showBoardSearch={myBoard.showBoardSearch}
           addAllLoading={myBoard.addAllLoading}
           addAllError={myBoard.addAllError}
+          reorderError={myBoard.reorderError}
           onAddPlayer={myBoard.addPlayerToBoard}
           onAddAll={myBoard.addAllAvailableToBoard}
         />

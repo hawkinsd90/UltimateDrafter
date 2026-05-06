@@ -16,6 +16,7 @@ export interface UseMyDraftBoardReturn {
   showBoardSearch: boolean;
   addAllLoading: boolean;
   addAllError: string | null;
+  reorderError: string | null;
   loadBoardRankings: () => Promise<void>;
   addPlayerToBoard: (playerId: string) => Promise<void>;
   addAllAvailableToBoard: () => Promise<void>;
@@ -39,6 +40,7 @@ export function useMyDraftBoard(
   const [boardAvailableLoading, setBoardAvailableLoading] = useState(false);
   const [addAllLoading, setAddAllLoading] = useState(false);
   const [addAllError, setAddAllError] = useState<string | null>(null);
+  const [reorderError, setReorderError] = useState<string | null>(null);
 
   const boardDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const picksCountRef = useRef<number>(-1);
@@ -269,18 +271,33 @@ export function useMyDraftBoard(
 
   async function reorderBoard(fromIndex: number, toIndex: number) {
     if (fromIndex === toIndex) return;
+    setReorderError(null);
+
     const current = boardPlayersRef.current;
     const updated = [...current];
     const [moved] = updated.splice(fromIndex, 1);
     updated.splice(toIndex, 0, moved);
 
+    // Optimistic update so the UI feels instant
     const reranked = updated.map((p, i) => ({ ...p, rank: i + 1 }));
     setBoardPlayers(reranked);
 
-    for (const p of reranked) {
-      if (p.rankingId) {
-        await supabase.from('draft_board_rankings').update({ rank: p.rank }).eq('id', p.rankingId);
-      }
+    // Build payload — only rows that have a persisted rankingId
+    const payload = reranked
+      .filter(p => p.rankingId !== null)
+      .map(p => ({ id: p.rankingId as string, rank: p.rank }));
+
+    const { error } = await supabase.rpc('reorder_draft_board_rankings', {
+      p_draft_id: draftId,
+      p_rankings: payload,
+    });
+
+    if (error) {
+      const msg = `Reorder failed: ${error.message}`;
+      console.error('[reorderBoard]', msg);
+      setReorderError(msg);
+      // Roll back optimistic update to DB truth
+      await loadBoardRankings();
     }
   }
 
@@ -295,6 +312,7 @@ export function useMyDraftBoard(
     showBoardSearch,
     addAllLoading,
     addAllError,
+    reorderError,
     loadBoardRankings,
     addPlayerToBoard,
     addAllAvailableToBoard,

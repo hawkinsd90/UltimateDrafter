@@ -7,6 +7,7 @@ interface Props {
   boardLoading: boolean;
   pickedPlayerIds: Set<string>;
   canPick: boolean;
+  reorderError: string | null;
   onReorder: (from: number, to: number) => void;
   onRemove: (rankingId: string) => void;
   onRemoveAll: () => void;
@@ -16,7 +17,7 @@ interface Props {
 
 export default function MyRankingsTab({
   boardPlayers, boardLoading, pickedPlayerIds, canPick,
-  onReorder, onRemove, onRemoveAll, onPick, onGoToAddPlayers,
+  reorderError, onReorder, onRemove, onRemoveAll, onPick, onGoToAddPlayers,
 }: Props) {
   return (
     <>
@@ -28,6 +29,12 @@ export default function MyRankingsTab({
           >
             Remove All
           </button>
+        </div>
+      )}
+
+      {reorderError && (
+        <div style={{ marginBottom: '10px', padding: '8px 12px', borderRadius: '6px', background: '#450a0a', border: '1px solid #ef4444', color: '#fca5a5', fontSize: '12px' }}>
+          {reorderError}
         </div>
       )}
 
