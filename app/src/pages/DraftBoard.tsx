@@ -139,7 +139,6 @@ export default function DraftBoard() {
           boardPlayers={myBoard.boardPlayers}
           boardLoading={myBoard.boardLoading}
           pickedPlayerIds={board.pickedPlayerIds}
-          onReorder={myBoard.reorderBoard}
           onRemovePlayer={myBoard.removePlayerFromBoard}
           onRemoveAll={myBoard.removeAllFromBoard}
           onPickFromBoard={board.makePick}
@@ -162,10 +161,9 @@ export default function DraftBoard() {
           reorderError={myBoard.reorderError}
           draftScoringRuleId={myBoard.draftScoringRuleId}
           lastSeasonRankingsAvailable={myBoard.lastSeasonRankingsAvailable}
-          applySortLoading={myBoard.applySortLoading}
           onAddPlayer={myBoard.addPlayerToBoard}
           onAddAll={myBoard.addAllAvailableToBoard}
-          onApplySort={myBoard.applySortToBoard}
+          onReorderInPositionGroup={myBoard.reorderInPositionGroup}
         />
       )}
     </div>

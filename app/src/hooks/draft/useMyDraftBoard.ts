@@ -11,6 +11,10 @@ import {
 
 export type ApplySortMode = 'overall_rank' | 'position_rank' | 'fantasy_points' | 'adp' | 'name';
 
+// Position group type for My Rankings sub-tabs
+export type PositionGroupTab = 'Overall' | 'QB' | 'RB' | 'WR' | 'TE' | 'K' | 'DST';
+export const POSITION_GROUP_TABS: readonly PositionGroupTab[] = ['Overall', 'QB', 'RB', 'WR', 'TE', 'K', 'DST'] as const;
+
 export interface UseMyDraftBoardReturn {
   boardPlayers: BoardPlayer[];
   boardLoading: boolean;
@@ -39,6 +43,7 @@ export interface UseMyDraftBoardReturn {
   removePlayerFromBoard: (rankingId: string) => Promise<void>;
   removeAllFromBoard: () => Promise<void>;
   reorderBoard: (fromIndex: number, toIndex: number) => Promise<void>;
+  reorderInPositionGroup: (subFrom: number, subTo: number, group: PositionGroupTab) => Promise<void>;
   applySortToBoard: (mode: ApplySortMode) => Promise<void>;
   applySortLoading: boolean;
 }
@@ -491,6 +496,64 @@ export function useMyDraftBoard(
   // Position group order for position-rank sort
   const POSITION_ORDER: Record<string, number> = { QB: 0, RB: 1, WR: 2, TE: 3, K: 4, DST: 5, DEF: 5 };
 
+  // Reorder within a specific position group sub-tab (or Overall = full list reorder)
+  async function reorderInPositionGroup(subFrom: number, subTo: number, group: PositionGroupTab) {
+    if (subFrom === subTo) return;
+    if (group === 'Overall') {
+      await reorderBoard(subFrom, subTo);
+      return;
+    }
+
+    setReorderError(null);
+    const current = boardPlayersRef.current;
+
+    // Partition into group players (in rank order)
+    const groupPlayers = current.filter(p => p.fantasy_position === group || (group === 'DST' && p.fantasy_position === 'DEF'));
+
+    if (subFrom < 0 || subFrom >= groupPlayers.length || subTo < 0 || subTo >= groupPlayers.length) return;
+
+    // Reorder the group subset
+    const reorderedGroup = [...groupPlayers];
+    const [moved] = reorderedGroup.splice(subFrom, 1);
+    reorderedGroup.splice(subTo, 0, moved);
+
+    // Merge back: interleave by original relative rank positions
+    // Strategy: rebuild full array by iterating rank order of 'others' and inserting
+    // group players at their original rank slots, then re-number everything 1..N
+    // Simplest: merge by weaving reorderedGroup into the rank-sorted full array
+    // preserving others' relative positions, inserting group players at same rank slots they occupied before.
+    const allSorted = [...current].sort((a, b) => a.rank - b.rank);
+    const groupIdsBefore = new Set(groupPlayers.map(p => p.id));
+    let gIdx = 0;
+    const merged: BoardPlayer[] = [];
+    for (const p of allSorted) {
+      if (groupIdsBefore.has(p.id)) {
+        merged.push(reorderedGroup[gIdx++]);
+      } else {
+        merged.push(p);
+      }
+    }
+
+    const reranked = merged.map((p, i) => ({ ...p, rank: i + 1 }));
+    setBoardPlayers(reranked);
+
+    const payload = reranked
+      .filter(p => p.rankingId !== null)
+      .map(p => ({ id: p.rankingId as string, rank: p.rank }));
+
+    const { error } = await supabase.rpc('reorder_draft_board_rankings', {
+      p_draft_id: draftId,
+      p_rankings: payload,
+    });
+
+    if (error) {
+      const msg = `Reorder failed: ${error.message}`;
+      console.error('[reorderInPositionGroup]', msg);
+      setReorderError(msg);
+      await loadBoardRankings();
+    }
+  }
+
   async function applySortToBoard(mode: ApplySortMode) {
     const current = boardPlayersRef.current;
     if (current.length === 0 || !draftId) return;
@@ -586,6 +649,7 @@ export function useMyDraftBoard(
     removePlayerFromBoard,
     removeAllFromBoard,
     reorderBoard,
+    reorderInPositionGroup,
     applySortToBoard,
     applySortLoading,
   };

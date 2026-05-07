@@ -3,7 +3,7 @@ import type {
   BoardPlayer, AvailablePlayer, PositionFilter,
   RankingSource, ScoringFormat, SortByMode, Participant,
 } from '../../hooks/draft/draftTypes';
-import type { ApplySortMode } from '../../hooks/draft/useMyDraftBoard';
+import type { PositionGroupTab } from '../../hooks/draft/useMyDraftBoard';
 import { dt } from '../../hooks/draft/draftTypes';
 import MyRankingsTab from './MyRankingsTab';
 import AddPlayersTab from './AddPlayersTab';
@@ -17,7 +17,6 @@ interface Props {
   boardPlayers: BoardPlayer[];
   boardLoading: boolean;
   pickedPlayerIds: Set<string>;
-  onReorder: (from: number, to: number) => void;
   onRemovePlayer: (rankingId: string) => void;
   onRemoveAll: () => void;
   onPickFromBoard: (playerId: string) => void;
@@ -41,23 +40,22 @@ interface Props {
   reorderError: string | null;
   draftScoringRuleId: string | null;
   lastSeasonRankingsAvailable: boolean;
-  applySortLoading: boolean;
   onAddPlayer: (id: string) => void;
   onAddAll: () => void;
-  onApplySort: (mode: ApplySortMode) => void;
+  onReorderInPositionGroup: (subFrom: number, subTo: number, group: PositionGroupTab) => void;
 }
 
 export default function MyBoardPanel({
   isMyTurn, canForcePick, currentParticipant, draftStatus,
   boardPlayers, boardLoading, pickedPlayerIds,
-  onReorder, onRemovePlayer, onRemoveAll, onPickFromBoard,
+  onRemovePlayer, onRemoveAll, onPickFromBoard,
   boardSearch, setBoardSearch, boardPositionFilter, setBoardPositionFilter,
   rankingSource, setRankingSource, scoringFormat, setScoringFormat,
   sortByMode, setSortByMode,
   boardAvailablePlayers, boardAvailableLoading, rankingDataAvailable,
   showBoardSearch, addAllLoading, addAllError, reorderError,
   draftScoringRuleId, lastSeasonRankingsAvailable,
-  applySortLoading, onAddPlayer, onAddAll, onApplySort,
+  onAddPlayer, onAddAll, onReorderInPositionGroup,
 }: Props) {
   const [subTab, setSubTab] = useState<'rankings' | 'available'>('rankings');
 
@@ -101,13 +99,11 @@ export default function MyBoardPanel({
           reorderError={reorderError}
           sortByMode={sortByMode}
           rankingSource={rankingSource}
-          applySortLoading={applySortLoading}
-          onReorder={onReorder}
+          onReorder={onReorderInPositionGroup}
           onRemove={onRemovePlayer}
           onRemoveAll={onRemoveAll}
           onPick={onPickFromBoard}
           onGoToAddPlayers={() => setSubTab('available')}
-          onApplySort={onApplySort}
         />
       )}
 
