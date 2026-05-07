@@ -325,6 +325,7 @@ export function useMyDraftBoard(
       p_limit:                 100,
       p_offset:                0,
       p_draft_scoring_rule_id: isLastSeason ? draftScoringRuleId : null,
+      p_draft_id:              draftId,
     });
 
     if (error) {
@@ -407,6 +408,7 @@ export function useMyDraftBoard(
           p_limit:                 PAGE_SIZE,
           p_offset:                offset,
           p_draft_scoring_rule_id: isLastSeason ? draftScoringRuleId : null,
+          p_draft_id:              draftId,
         });
 
         if (pageError) {
