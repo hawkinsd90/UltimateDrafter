@@ -309,7 +309,7 @@ export default function TeamMapping() {
         if (mappedExclusionRows.length > 0) {
           const { error: exErr } = await supabase
             .from('draft_player_exclusions')
-            .upsert(mappedExclusionRows, { onConflict: 'draft_id,sports_player_id', ignoreDuplicates: false });
+            .upsert(mappedExclusionRows, { onConflict: 'draft_id,sports_player_id', ignoreDuplicates: true });
 
           if (exErr) {
             setSaveError('Failed to create player exclusions for ' + team.externalTeamName + ': ' + exErr.message);
@@ -363,7 +363,7 @@ export default function TeamMapping() {
           if (exclusionRows.length > 0) {
             const { error: exErr } = await supabase
               .from('draft_player_exclusions')
-              .upsert(exclusionRows, { onConflict: 'draft_id,sports_player_id', ignoreDuplicates: false });
+              .upsert(exclusionRows, { onConflict: 'draft_id,sports_player_id', ignoreDuplicates: true });
 
             if (exErr) {
               setSaveError('Failed to create player exclusions for ' + team.externalTeamName + ': ' + exErr.message);
