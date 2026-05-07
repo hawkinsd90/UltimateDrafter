@@ -280,12 +280,43 @@ export default function TeamMapping() {
 
         if (error) { setSaveError('Failed to save mapping for ' + team.externalTeamName + ': ' + error.message); setSaving(false); return; }
 
-        // Clear any prior exclusions for this team
+        // Clear old exclusions then re-create for all rostered players on this mapped team.
+        // Mapped team players are pre-assigned to a participant and should not appear
+        // as available in other participants' draft pools.
         await supabase
           .from('draft_player_exclusions')
           .delete()
           .eq('draft_id', draftId!)
           .eq('external_league_team_id', team.id);
+
+        const { data: mappedRosterPlayers } = await supabase
+          .from('external_roster_players')
+          .select('id, sports_player_id')
+          .eq('link_id', linkId)
+          .eq('external_team_id', team.externalTeamId)
+          .not('sports_player_id', 'is', null);
+
+        const mappedExclusionRows = (mappedRosterPlayers ?? []).map(rp => ({
+          draft_id: draftId!,
+          sports_player_id: rp.sports_player_id as string,
+          source: 'external_ignored_team' as const,
+          external_league_team_id: team.id,
+          external_roster_player_id: rp.id,
+          reason: `Mapped team: ${team.externalTeamName}`,
+          created_by: user?.id ?? null,
+        }));
+
+        if (mappedExclusionRows.length > 0) {
+          const { error: exErr } = await supabase
+            .from('draft_player_exclusions')
+            .upsert(mappedExclusionRows, { onConflict: 'draft_id,sports_player_id', ignoreDuplicates: false });
+
+          if (exErr) {
+            setSaveError('Failed to create player exclusions for ' + team.externalTeamName + ': ' + exErr.message);
+            setSaving(false);
+            return;
+          }
+        }
 
         mappedCount++;
 
