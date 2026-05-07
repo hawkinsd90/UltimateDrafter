@@ -3,6 +3,7 @@ import type {
   BoardPlayer, AvailablePlayer, PositionFilter,
   RankingSource, ScoringFormat, SortByMode, Participant,
 } from '../../hooks/draft/draftTypes';
+import type { ApplySortMode } from '../../hooks/draft/useMyDraftBoard';
 import { dt } from '../../hooks/draft/draftTypes';
 import MyRankingsTab from './MyRankingsTab';
 import AddPlayersTab from './AddPlayersTab';
@@ -40,8 +41,10 @@ interface Props {
   reorderError: string | null;
   draftScoringRuleId: string | null;
   lastSeasonRankingsAvailable: boolean;
+  applySortLoading: boolean;
   onAddPlayer: (id: string) => void;
   onAddAll: () => void;
+  onApplySort: (mode: ApplySortMode) => void;
 }
 
 export default function MyBoardPanel({
@@ -54,7 +57,7 @@ export default function MyBoardPanel({
   boardAvailablePlayers, boardAvailableLoading, rankingDataAvailable,
   showBoardSearch, addAllLoading, addAllError, reorderError,
   draftScoringRuleId, lastSeasonRankingsAvailable,
-  onAddPlayer, onAddAll,
+  applySortLoading, onAddPlayer, onAddAll, onApplySort,
 }: Props) {
   const [subTab, setSubTab] = useState<'rankings' | 'available'>('rankings');
 
@@ -98,11 +101,13 @@ export default function MyBoardPanel({
           reorderError={reorderError}
           sortByMode={sortByMode}
           rankingSource={rankingSource}
+          applySortLoading={applySortLoading}
           onReorder={onReorder}
           onRemove={onRemovePlayer}
           onRemoveAll={onRemoveAll}
           onPick={onPickFromBoard}
           onGoToAddPlayers={() => setSubTab('available')}
+          onApplySort={onApplySort}
         />
       )}
 

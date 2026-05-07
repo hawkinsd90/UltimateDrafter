@@ -37,7 +37,6 @@ interface RosterSettings {
 type PlayerSource = 'drafted' | 'imported' | 'keeper';
 
 interface RosterPlayer {
-  // Stable unique key per player-on-this-team
   pickId: string;
   pickNumber: number | null;
   round: number | null;
@@ -48,6 +47,7 @@ interface RosterPlayer {
   teamAbbr: string | null;
   isKeeper: boolean;
   source: PlayerSource;
+  unresolved?: boolean;
 }
 
 // ── Slot building ─────────────────────────────────────────────────────────────
@@ -167,44 +167,75 @@ export default function MyTeam() {
 
     const draftedIds = new Set(draftedPlayers.map(p => p.playerId).filter(Boolean) as string[]);
 
-    // 2. Imported roster players for this participant via external_league_teams mapping
-    // Join: external_league_teams (mapped to this participant) → external_roster_players → sports_players
-    const { data: importedData } = await supabase
+    // 2. Imported roster players — two flat queries because external_roster_players
+    //    has no direct FK to external_league_teams (only composite link_id+external_team_id),
+    //    so Supabase nested selects cannot traverse this relationship.
+
+    // Step 2a: find the (link_id, external_team_id) pairs mapped to this participant
+    const { data: mappedTeams } = await supabase
       .from('external_league_teams')
-      .select(`
-        link_id,
-        external_team_id,
-        external_league_links!inner(draft_id),
-        external_roster_players(
-          external_player_name,
-          external_position,
-          sports_player_id,
-          resolution_status,
-          sports_player:sports_players(display_name, fantasy_position, team:sports_teams(abbreviation))
-        )
-      `)
+      .select('link_id, external_team_id')
       .eq('draft_participant_id', participantId)
-      .eq('mapping_status', 'mapped')
-      .eq('external_league_links.draft_id', draftIdVal);
+      .eq('mapping_status', 'mapped');
 
     const importedPlayers: RosterPlayer[] = [];
-    for (const team of importedData ?? []) {
-      for (const erp of (team as any).external_roster_players ?? []) {
-        if (!erp.sports_player_id) continue;
-        // Skip if already in draft picks (avoid duplicate)
-        if (draftedIds.has(erp.sports_player_id)) continue;
-        importedPlayers.push({
-          pickId:        `imported-${erp.sports_player_id}`,
-          pickNumber:    null,
-          round:         null,
-          pickInRound:   null,
-          playerId:      erp.sports_player_id,
-          displayName:   erp.sports_player?.display_name ?? erp.external_player_name ?? 'Unknown',
-          fantasyPosition: erp.sports_player?.fantasy_position ?? erp.external_position ?? null,
-          teamAbbr:      erp.sports_player?.team?.abbreviation ?? null,
-          isKeeper:      false,
-          source:        'imported' as PlayerSource,
-        });
+
+    if (mappedTeams && mappedTeams.length > 0) {
+      // Step 2b: fetch roster players for each mapped (link_id, external_team_id) pair
+      // and verify the link belongs to this draft via external_league_links
+      const { data: linkRows } = await supabase
+        .from('external_league_links')
+        .select('id')
+        .eq('draft_id', draftIdVal);
+
+      const validLinkIds = new Set((linkRows ?? []).map((l: any) => l.id as string));
+
+      for (const team of mappedTeams) {
+        if (!validLinkIds.has(team.link_id)) continue;
+
+        const { data: rosterRows } = await supabase
+          .from('external_roster_players')
+          .select('external_player_name, external_position, sports_player_id, resolution_status')
+          .eq('link_id', team.link_id)
+          .eq('external_team_id', team.external_team_id);
+
+        if (!rosterRows || rosterRows.length === 0) continue;
+
+        // Step 2c: fetch sports_player details for resolved rows in bulk
+        const resolvedIds = rosterRows
+          .filter(r => r.sports_player_id)
+          .map(r => r.sports_player_id as string);
+
+        const playerDetailMap = new Map<string, { display_name: string; fantasy_position: string | null; team_abbr: string | null }>();
+        if (resolvedIds.length > 0) {
+          const { data: spRows } = await supabase
+            .from('nfl_draft_player_pool')
+            .select('id, display_name, fantasy_position, team_abbr')
+            .in('id', resolvedIds);
+          for (const sp of spRows ?? []) {
+            playerDetailMap.set(sp.id, { display_name: sp.display_name, fantasy_position: sp.fantasy_position, team_abbr: sp.team_abbr });
+          }
+        }
+
+        for (const erp of rosterRows) {
+          // If resolved and already drafted, skip duplicate
+          if (erp.sports_player_id && draftedIds.has(erp.sports_player_id)) continue;
+
+          const sp = erp.sports_player_id ? playerDetailMap.get(erp.sports_player_id) : null;
+          importedPlayers.push({
+            pickId:          `imported-${team.link_id}-${erp.sports_player_id ?? erp.external_player_name}`,
+            pickNumber:      null,
+            round:           null,
+            pickInRound:     null,
+            playerId:        erp.sports_player_id ?? null,
+            displayName:     sp?.display_name ?? erp.external_player_name ?? 'Unknown',
+            fantasyPosition: sp?.fantasy_position ?? erp.external_position ?? null,
+            teamAbbr:        sp?.team_abbr ?? null,
+            isKeeper:        false,
+            source:          'imported' as PlayerSource,
+            unresolved:      !erp.sports_player_id,
+          });
+        }
       }
     }
 
@@ -445,9 +476,10 @@ const SOURCE_BADGE: Record<PlayerSource, { label: string; bg: string; color: str
 };
 
 function SlotRow({ slot }: { slot: RosterSlot }) {
-  const col     = slotColor(slot.slotType);
-  const isEmpty = !slot.player;
-  const src     = slot.player ? SOURCE_BADGE[slot.player.source] : null;
+  const col       = slotColor(slot.slotType);
+  const isEmpty   = !slot.player;
+  const srcBadge  = slot.player ? SOURCE_BADGE[slot.player.source] : null;
+  const unresolved = slot.player?.unresolved ?? false;
 
   return (
     <div style={{
@@ -472,9 +504,9 @@ function SlotRow({ slot }: { slot: RosterSlot }) {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
               <span style={{ fontWeight: '600', fontSize: '14px', color: textPrimary }}>{slot.player!.displayName}</span>
-              {src && (
-                <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '4px', background: src.bg, color: src.color }}>
-                  {src.label}
+              {srcBadge && (
+                <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '4px', background: srcBadge.bg, color: srcBadge.color }}>
+                  {unresolved ? 'Unresolved' : srcBadge.label}
                 </span>
               )}
             </div>

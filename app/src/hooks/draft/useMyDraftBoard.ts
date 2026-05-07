@@ -9,6 +9,8 @@ import {
   VALID_SCORING_FORMATS, VALID_SORT_MODES, CURRENT_SEASON,
 } from './draftTypes';
 
+export type ApplySortMode = 'overall_rank' | 'position_rank' | 'fantasy_points' | 'adp' | 'name';
+
 export interface UseMyDraftBoardReturn {
   boardPlayers: BoardPlayer[];
   boardLoading: boolean;
@@ -37,6 +39,8 @@ export interface UseMyDraftBoardReturn {
   removePlayerFromBoard: (rankingId: string) => Promise<void>;
   removeAllFromBoard: () => Promise<void>;
   reorderBoard: (fromIndex: number, toIndex: number) => Promise<void>;
+  applySortToBoard: (mode: ApplySortMode) => Promise<void>;
+  applySortLoading: boolean;
 }
 
 // RPC return row shape (must match the RETURNS TABLE in the migration)
@@ -106,6 +110,7 @@ export function useMyDraftBoard(
   const [addAllLoading, setAddAllLoading] = useState(false);
   const [addAllError, setAddAllError] = useState<string | null>(null);
   const [reorderError, setReorderError] = useState<string | null>(null);
+  const [applySortLoading, setApplySortLoading] = useState(false);
 
   // Scoring rule ID for this draft (populated from draft_scoring_rules table)
   const [draftScoringRuleId, setDraftScoringRuleId] = useState<string | null>(null);
@@ -483,6 +488,81 @@ export function useMyDraftBoard(
     }
   }
 
+  // Position group order for position-rank sort
+  const POSITION_ORDER: Record<string, number> = { QB: 0, RB: 1, WR: 2, TE: 3, K: 4, DST: 5, DEF: 5 };
+
+  async function applySortToBoard(mode: ApplySortMode) {
+    const current = boardPlayersRef.current;
+    if (current.length === 0 || !draftId) return;
+    setApplySortLoading(true);
+    setReorderError(null);
+
+    try {
+      let sorted: BoardPlayer[];
+
+      if (mode === 'name') {
+        sorted = [...current].sort((a, b) => a.display_name.localeCompare(b.display_name));
+      } else if (mode === 'overall_rank') {
+        sorted = [...current].sort((a, b) => {
+          if (a.overall_rank == null && b.overall_rank == null) return 0;
+          if (a.overall_rank == null) return 1;
+          if (b.overall_rank == null) return -1;
+          return a.overall_rank - b.overall_rank;
+        });
+      } else if (mode === 'position_rank') {
+        // Group by position order, then sort by position_rank within each group, nulls last
+        sorted = [...current].sort((a, b) => {
+          const posA = POSITION_ORDER[a.fantasy_position ?? ''] ?? 99;
+          const posB = POSITION_ORDER[b.fantasy_position ?? ''] ?? 99;
+          if (posA !== posB) return posA - posB;
+          if (a.position_rank == null && b.position_rank == null) return 0;
+          if (a.position_rank == null) return 1;
+          if (b.position_rank == null) return -1;
+          return a.position_rank - b.position_rank;
+        });
+      } else if (mode === 'fantasy_points') {
+        sorted = [...current].sort((a, b) => {
+          if (a.fantasy_points == null && b.fantasy_points == null) return 0;
+          if (a.fantasy_points == null) return 1;
+          if (b.fantasy_points == null) return -1;
+          return b.fantasy_points - a.fantasy_points; // descending
+        });
+      } else if (mode === 'adp') {
+        sorted = [...current].sort((a, b) => {
+          if (a.adp == null && b.adp == null) return 0;
+          if (a.adp == null) return 1;
+          if (b.adp == null) return -1;
+          return a.adp - b.adp;
+        });
+      } else {
+        return;
+      }
+
+      const reranked = sorted.map((p, i) => ({ ...p, rank: i + 1 }));
+      setBoardPlayers(reranked);
+
+      const payload = reranked
+        .filter(p => p.rankingId !== null)
+        .map(p => ({ id: p.rankingId as string, rank: p.rank }));
+
+      if (payload.length === 0) return;
+
+      const { error } = await supabase.rpc('reorder_draft_board_rankings', {
+        p_draft_id: draftId,
+        p_rankings: payload,
+      });
+
+      if (error) {
+        const msg = `Apply sort failed: ${error.message}`;
+        console.error('[applySortToBoard]', msg);
+        setReorderError(msg);
+        await loadBoardRankings();
+      }
+    } finally {
+      setApplySortLoading(false);
+    }
+  }
+
   const showBoardSearch = boardSearch.length >= 2 || boardPositionFilter !== 'All';
 
   return {
@@ -506,5 +586,7 @@ export function useMyDraftBoard(
     removePlayerFromBoard,
     removeAllFromBoard,
     reorderBoard,
+    applySortToBoard,
+    applySortLoading,
   };
 }
