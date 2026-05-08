@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import AdminNFLRosterImportPanel from '../components/AdminNFLRosterImportPanel';
 import AdminPlayerStatsPanel from '../components/AdminPlayerStatsPanel';
 import AdminLastSeasonRankingsPanel from '../components/AdminLastSeasonRankingsPanel';
+import AdminEspnRankingsPanel from '../components/AdminEspnRankingsPanel';
 import UserMenu from '../components/UserMenu';
 
 export default function Admin() {
@@ -65,6 +66,16 @@ export default function Admin() {
         </div>
 
         <AdminLastSeasonRankingsPanel />
+
+        <div style={{ marginTop: '40px', marginBottom: '28px' }}>
+          <h1 style={{ margin: '0 0 6px 0', fontSize: '24px', fontWeight: '700', color: '#1e293b' }}>ESPN Rankings</h1>
+          <p style={{ margin: 0, color: '#64748b', fontSize: '14px' }}>
+            Sync ESPN draft rankings and projections into the platform. Fetches overall rank, position rank, ADP, projected points,
+            and ownership percentage for Standard and PPR scoring. Requires an imported ESPN league.
+          </p>
+        </div>
+
+        <AdminEspnRankingsPanel />
       </div>
     </div>
   );
