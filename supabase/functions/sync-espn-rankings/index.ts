@@ -19,12 +19,6 @@ const ESPN_POSITION_MAP: Record<number, string> = {
   16: "DST",
 };
 
-// Scoring format labels used in X-Fantasy-Filter
-const ESPN_RANK_TYPES: Record<string, string> = {
-  standard: "STANDARD",
-  ppr: "PPR",
-};
-
 type EspnPlayerEntry = {
   id: number;
   onTeamId?: number;
@@ -115,11 +109,18 @@ function parsePlayer(entry: EspnPlayerEntry, season: number): RankedPlayer {
 
   const own = p.ownership ?? {};
 
-  // Season-long projection: statSourceId=1 (projected), scoringPeriodId=0 (season total)
-  // ESPN returns two scoringPeriodId=0 entries (standard + PPR); take the first.
-  const projStat = (p.stats ?? []).find(
+  // Season-long projection: statSourceId=1 (projected), scoringPeriodId=0 (season total).
+  // ESPN returns two entries: externalId matching prior season (actuals context) and current
+  // season (true projection). Use the entry whose externalId matches the target season year.
+  // Both have identical appliedTotal when scoring format doesn't affect projection display,
+  // so one value is stored on both standard and ppr rows.
+  const allProjStats = (p.stats ?? []).filter(
     (s) => s.statSourceId === 1 && s.scoringPeriodId === 0
   );
+  const projStat =
+    allProjStats.find((s) => String((s as Record<string, unknown>).externalId) === String(season)) ??
+    allProjStats[allProjStats.length - 1] ??
+    null;
 
   return {
     espnId: String(p.id),
@@ -304,6 +305,7 @@ Deno.serve(async (req: Request) => {
     // ── Build upsert rows ────────────────────────────────────────────────────
     const upsertRows: Record<string, unknown>[] = [];
     const unresolvedPlayers: { espnId: string; name: string; position: string }[] = [];
+    let recordsMatched = 0;
 
     for (const player of allPlayers) {
       const sportsPlayerId = espnIdToSportsId.get(player.espnId);
@@ -315,6 +317,7 @@ Deno.serve(async (req: Request) => {
         });
         continue;
       }
+      recordsMatched++;
 
       const now = new Date().toISOString();
 
@@ -423,7 +426,7 @@ Deno.serve(async (req: Request) => {
         league_id: leagueId,
         endpoint: `${ESPN_API_BASE}/${season}/segments/0/leagues/${leagueId}?view=kona_player_info`,
         records_fetched: allPlayers.length,
-        records_matched: upsertRows.length,
+        records_matched: recordsMatched,
         records_upserted: recordsUpserted,
         unresolved_count: unresolvedPlayers.length,
         unresolved_sample: unresolvedPlayers.slice(0, 20),
