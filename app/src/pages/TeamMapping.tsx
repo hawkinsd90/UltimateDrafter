@@ -38,6 +38,7 @@ interface SaveSummary {
   ignoredAvailableCount: number;
   ignoredUnavailableCount: number;
   excludedPlayerCount: number;
+  unresolvedRosterCount: number;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -220,7 +221,7 @@ export default function TeamMapping() {
     let ignoredAvailableCount = 0;
     let ignoredUnavailableCount = 0;
 
-    // Load existing participants once upfront to avoid repeated queries
+    // Phase 1: Save participant mappings and team decisions (no exclusion logic here)
     const { data: existingParts } = await supabase
       .from('draft_participants')
       .select('id, user_id, draft_position')
@@ -240,7 +241,6 @@ export default function TeamMapping() {
         const member = leagueMembers.find(m => m.id === d.memberId);
         if (!member) { setSaveError('Member not found for team ' + team.externalTeamName); setSaving(false); return; }
 
-        // Find or create draft_participant for this league member
         let participantId: string | null = member.userId ? existingPartsByUserId[member.userId] ?? null : null;
 
         if (!participantId) {
@@ -263,7 +263,6 @@ export default function TeamMapping() {
             return;
           }
           participantId = newPart.id;
-          // Cache it so subsequent teams don't re-create for the same user
           const uid = member.userId;
           if (uid) existingPartsByUserId[uid] = participantId as string;
         }
@@ -279,45 +278,6 @@ export default function TeamMapping() {
           .eq('id', team.id);
 
         if (error) { setSaveError('Failed to save mapping for ' + team.externalTeamName + ': ' + error.message); setSaving(false); return; }
-
-        // Clear old exclusions then re-create for all rostered players on this mapped team.
-        // Mapped team players are pre-assigned to a participant and should not appear
-        // as available in other participants' draft pools.
-        await supabase
-          .from('draft_player_exclusions')
-          .delete()
-          .eq('draft_id', draftId!)
-          .eq('external_league_team_id', team.id);
-
-        const { data: mappedRosterPlayers } = await supabase
-          .from('external_roster_players')
-          .select('id, sports_player_id')
-          .eq('link_id', linkId)
-          .eq('external_team_id', team.externalTeamId)
-          .not('sports_player_id', 'is', null);
-
-        const mappedExclusionRows = (mappedRosterPlayers ?? []).map(rp => ({
-          draft_id: draftId!,
-          sports_player_id: rp.sports_player_id as string,
-          source: 'external_ignored_team' as const,
-          external_league_team_id: team.id,
-          external_roster_player_id: rp.id,
-          reason: `Mapped team: ${team.externalTeamName}`,
-          created_by: user?.id ?? null,
-        }));
-
-        if (mappedExclusionRows.length > 0) {
-          const { error: exErr } = await supabase
-            .from('draft_player_exclusions')
-            .upsert(mappedExclusionRows, { onConflict: 'draft_id,sports_player_id', ignoreDuplicates: true });
-
-          if (exErr) {
-            setSaveError('Failed to create player exclusions for ' + team.externalTeamName + ': ' + exErr.message);
-            setSaving(false);
-            return;
-          }
-        }
-
         mappedCount++;
 
       } else {
@@ -335,42 +295,7 @@ export default function TeamMapping() {
 
         if (error) { setSaveError('Failed to save ignore decision for ' + team.externalTeamName + ': ' + error.message); setSaving(false); return; }
 
-        // Clear old exclusions then re-create if unavailable
-        await supabase
-          .from('draft_player_exclusions')
-          .delete()
-          .eq('draft_id', draftId!)
-          .eq('external_league_team_id', team.id);
-
         if (policy === 'unavailable') {
-          const { data: rosterPlayers } = await supabase
-            .from('external_roster_players')
-            .select('id, sports_player_id')
-            .eq('link_id', linkId)
-            .eq('external_team_id', team.externalTeamId)
-            .not('sports_player_id', 'is', null);
-
-          const exclusionRows = (rosterPlayers ?? []).map(rp => ({
-            draft_id: draftId!,
-            sports_player_id: rp.sports_player_id as string,
-            source: 'external_ignored_team' as const,
-            external_league_team_id: team.id,
-            external_roster_player_id: rp.id,
-            reason: `Ignored team: ${team.externalTeamName}`,
-            created_by: user?.id ?? null,
-          }));
-
-          if (exclusionRows.length > 0) {
-            const { error: exErr } = await supabase
-              .from('draft_player_exclusions')
-              .upsert(exclusionRows, { onConflict: 'draft_id,sports_player_id', ignoreDuplicates: true });
-
-            if (exErr) {
-              setSaveError('Failed to create player exclusions for ' + team.externalTeamName + ': ' + exErr.message);
-              setSaving(false);
-              return;
-            }
-          }
           ignoredUnavailableCount++;
         } else {
           ignoredAvailableCount++;
@@ -378,10 +303,18 @@ export default function TeamMapping() {
       }
     }
 
-    const { count: excludedCount } = await supabase
-      .from('draft_player_exclusions')
-      .select('id', { count: 'exact', head: true })
-      .eq('draft_id', draftId!);
+    // Phase 2: Atomically rebuild all exclusions for this draft via DB function.
+    // This replaces per-team delete/upsert loops and correctly handles players
+    // appearing on multiple rosters (no silent-skip duplicates).
+    const { data: rebuildResult, error: rebuildErr } = await supabase
+      .rpc('rebuild_draft_player_exclusions', { p_draft_id: draftId! })
+      .maybeSingle() as { data: { total_exclusions: number; unresolved_roster_players_count: number } | null; error: unknown };
+
+    if (rebuildErr) {
+      setSaveError('Failed to rebuild player exclusions: ' + (rebuildErr as { message?: string })?.message);
+      setSaving(false);
+      return;
+    }
 
     await supabase
       .from('external_league_links')
@@ -392,7 +325,8 @@ export default function TeamMapping() {
       mappedCount,
       ignoredAvailableCount,
       ignoredUnavailableCount,
-      excludedPlayerCount: excludedCount ?? 0,
+      excludedPlayerCount: rebuildResult?.total_exclusions ?? 0,
+      unresolvedRosterCount: rebuildResult?.unresolved_roster_players_count ?? 0,
     });
     setSaving(false);
   }
@@ -428,6 +362,9 @@ export default function TeamMapping() {
           <SummaryRow label="Teams ignored (players available)" value={String(saveSummary.ignoredAvailableCount)} />
           <SummaryRow label="Teams ignored (players unavailable)" value={String(saveSummary.ignoredUnavailableCount)} />
           <SummaryRow label="Players excluded from draft pool" value={String(saveSummary.excludedPlayerCount)} highlight={saveSummary.excludedPlayerCount > 0} />
+          {saveSummary.unresolvedRosterCount > 0 && (
+            <SummaryRow label="Roster players not in player pool (unresolved)" value={String(saveSummary.unresolvedRosterCount)} />
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: '12px', marginTop: '24px', flexWrap: 'wrap' }}>

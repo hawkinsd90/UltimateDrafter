@@ -241,23 +241,28 @@ export function useMyDraftBoard(
     const rankingMap = new Map<string, { overall_rank: number | null; position_rank: number | null; position_rank_label: string | null; fantasy_points: number | null; adp: number | null; source_label: string | null }>();
 
     if (playerIds.length > 0) {
-      let rankQuery = supabase
-        .from('player_rankings')
-        .select('sports_player_id, overall_rank, position_rank, position_rank_label, fantasy_points, adp, source_label')
-        .eq('provider', PROVIDER_MAP[curSource])
-        .eq('scoring_format', curFormat)
-        .eq('season', isLastSeason ? 2025 : CURRENT_SEASON)
-        .eq('ranking_type', RANKING_TYPE_MAP[curSource]);
+      // Build the query fresh inside each chunk iteration — postgrest-js builder
+      // methods return new instances, so reusing the base query across .in() calls
+      // would execute without the .in() filter on iterations after the first.
+      const buildRankQuery = () => {
+        let q = supabase
+          .from('player_rankings')
+          .select('sports_player_id, overall_rank, position_rank, position_rank_label, fantasy_points, adp, source_label')
+          .eq('provider', PROVIDER_MAP[curSource])
+          .eq('scoring_format', curFormat)
+          .eq('season', isLastSeason ? 2025 : CURRENT_SEASON)
+          .eq('ranking_type', RANKING_TYPE_MAP[curSource]);
 
-      if (isLastSeason && curRuleId) {
-        rankQuery = rankQuery.eq('draft_scoring_rule_id', curRuleId);
-      } else if (!isLastSeason) {
-        rankQuery = rankQuery.is('draft_scoring_rule_id', null);
-      }
+        if (isLastSeason && curRuleId) {
+          q = q.eq('draft_scoring_rule_id', curRuleId);
+        } else if (!isLastSeason) {
+          q = q.is('draft_scoring_rule_id', null);
+        }
+        return q;
+      };
 
-      // Chunk the IN query for player_rankings too
       for (let i = 0; i < playerIds.length; i += CHUNK) {
-        const { data: rankChunk } = await rankQuery.in('sports_player_id', playerIds.slice(i, i + CHUNK));
+        const { data: rankChunk } = await buildRankQuery().in('sports_player_id', playerIds.slice(i, i + CHUNK));
         for (const row of rankChunk ?? []) {
           rankingMap.set(row.sports_player_id, row);
         }

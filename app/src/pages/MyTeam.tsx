@@ -138,6 +138,11 @@ export default function MyTeam() {
   const [viewingId, setViewingId]             = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const viewingIdRef = useRef<string | null>(viewingId);
+  const participantRef = useRef<Participant | null>(participant);
+  viewingIdRef.current = viewingId;
+  participantRef.current = participant;
+
   const effectiveParticipantId = viewingId ?? participant?.id ?? null;
 
   // Load the unified roster: draft picks + imported roster players, deduplicated by sports_player_id.
@@ -284,7 +289,7 @@ export default function MyTeam() {
       if (!draftId) return;
       const { data } = await supabase.from('drafts').select('id, name, status, league_id, current_pick_number, current_participant_id').eq('id', draftId).maybeSingle();
       if (data) setDraft(data);
-      const targetId = viewingId ?? participant?.id ?? null;
+      const targetId = viewingIdRef.current ?? participantRef.current?.id ?? null;
       if (targetId) await loadRoster(targetId, draftId);
       const { count } = await supabase.from('draft_picks').select('id', { count: 'exact', head: true }).eq('draft_id', draftId);
       setTotalPicksMade(count ?? 0);
