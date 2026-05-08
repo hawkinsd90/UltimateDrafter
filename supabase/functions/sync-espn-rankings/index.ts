@@ -19,6 +19,29 @@ const ESPN_POSITION_MAP: Record<number, string> = {
   16: "DST",
 };
 
+// ESPN proTeamId → Sleeper dst_XXX suffix (for DST team mapping)
+// Derived from observed ESPN API responses: id=-16{proTeamId}, name="<Nickname> D/ST"
+const ESPN_PRO_TEAM_TO_DST: Record<number, string> = {
+  1:  "ATL", 2:  "BUF", 3:  "CHI", 4:  "CIN", 5:  "CLE",
+  6:  "DAL", 7:  "DEN", 8:  "DET", 9:  "GB",  10: "TEN",
+  11: "IND", 12: "KC",  13: "LV",  14: "LAR", 15: "MIA",
+  16: "MIN", 17: "NE",  18: "NO",  19: "NYG", 20: "NYJ",
+  21: "PHI", 22: "ARI", 23: "PIT", 24: "LAC", 25: "SF",
+  26: "SEA", 27: "TB",  28: "WAS", 29: "CAR", 30: "JAX",
+  33: "BAL", 34: "HOU",
+};
+
+// Normalize a player name for fuzzy matching:
+// lowercase, strip punctuation, remove name suffixes (jr/sr/ii/iii/iv/v), collapse spaces
+function normalizeName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/['.,-]/g, "")         // strip punctuation (apostrophes, periods, commas)
+    .replace(/\b(jr|sr|ii|iii|iv|v)\b/g, "") // remove generational suffixes
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 type EspnPlayerEntry = {
   id: number;
   onTeamId?: number;
@@ -52,6 +75,7 @@ type RankedPlayer = {
   espnId: string;
   name: string;
   position: string;
+  proTeamId: number | null;
   standardRank: number | null;
   standardAuction: number | null;
   pprRank: number | null;
@@ -102,18 +126,14 @@ async function fetchEspnPage(
 function parsePlayer(entry: EspnPlayerEntry, season: number): RankedPlayer {
   const p = entry.player;
   const position = ESPN_POSITION_MAP[p.defaultPositionId] ?? "UNKNOWN";
-
   const ranks = p.draftRanksByRankType ?? {};
   const stdRank = ranks["STANDARD"];
   const pprRank = ranks["PPR"];
-
   const own = p.ownership ?? {};
 
   // Season-long projection: statSourceId=1 (projected), scoringPeriodId=0 (season total).
-  // ESPN returns two entries: externalId matching prior season (actuals context) and current
-  // season (true projection). Use the entry whose externalId matches the target season year.
-  // Both have identical appliedTotal when scoring format doesn't affect projection display,
-  // so one value is stored on both standard and ppr rows.
+  // ESPN returns two entries keyed by externalId: prior season (actuals context) and current
+  // season (true projection). Prefer the entry whose externalId matches the target season.
   const allProjStats = (p.stats ?? []).filter(
     (s) => s.statSourceId === 1 && s.scoringPeriodId === 0
   );
@@ -126,6 +146,7 @@ function parsePlayer(entry: EspnPlayerEntry, season: number): RankedPlayer {
     espnId: String(p.id),
     name: p.fullName,
     position,
+    proTeamId: p.proTeamId ?? null,
     standardRank: stdRank?.rank ?? null,
     standardAuction: stdRank?.auctionValue ?? null,
     pprRank: pprRank?.rank ?? null,
@@ -142,7 +163,6 @@ function derivePositionRanks(
   players: RankedPlayer[],
   rankField: "standardRank" | "pprRank"
 ): Map<string, { positionRank: number; positionRankLabel: string }> {
-  // Group by position, sort by overall rank ascending (nulls last)
   const byPosition: Record<string, RankedPlayer[]> = {};
   for (const p of players) {
     if (!byPosition[p.position]) byPosition[p.position] = [];
@@ -205,7 +225,6 @@ Deno.serve(async (req: Request) => {
     const swid: string | null = body.swid ?? null;
     const espnS2: string | null = body.espnS2 ?? null;
 
-    // Resolve leagueId: use provided or fall back to first ESPN league link in DB
     let leagueId: string = body.leagueId ?? "";
     if (!leagueId) {
       const { data: link } = await supabaseAdmin
@@ -227,7 +246,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Build cookie header only if credentials provided — never log them
     const cookieHeader = (swid && espnS2) ? `SWID=${swid}; espn_s2=${espnS2}` : null;
 
     // ── Fetch all ESPN players (paginated) ──────────────────────────────────
@@ -256,9 +274,7 @@ Deno.serve(async (req: Request) => {
       if (status !== 200 || page.length === 0) break;
 
       for (const entry of page) {
-        if (entry.player) {
-          allPlayers.push(parsePlayer(entry, season));
-        }
+        if (entry.player) allPlayers.push(parsePlayer(entry, season));
       }
 
       if (page.length < PAGE_SIZE) break;
@@ -275,8 +291,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // ── Load ESPN player ID → sports_player_id mappings ─────────────────────
-    // Load in pages to avoid 1000-row cap
+    // ── Load existing ESPN player ID → sports_player_id mappings ────────────
     const allMappings: { external_player_id: string; sports_player_id: string }[] = [];
     let mapOffset = 0;
     const MAP_PAGE = 1000;
@@ -298,11 +313,114 @@ Deno.serve(async (req: Request) => {
       espnIdToSportsId.set(m.external_player_id, m.sports_player_id);
     }
 
+    // ── Load sports_players for normalized-name fallback matching ────────────
+    // We need: id, display_name, fantasy_position for non-DST players
+    // and id, provider_player_id for DST players (to match via dst_XXX)
+    const allSportsPlayers: {
+      id: string;
+      display_name: string;
+      fantasy_position: string;
+      provider_player_id: string;
+    }[] = [];
+    let spOffset = 0;
+    const SP_PAGE = 1000;
+    while (true) {
+      const { data: spPage, error: spErr } = await supabaseAdmin
+        .from("sports_players")
+        .select("id, display_name, fantasy_position, provider_player_id")
+        .range(spOffset, spOffset + SP_PAGE - 1);
+      if (spErr) throw new Error("Failed to load sports_players: " + spErr.message);
+      if (!spPage || spPage.length === 0) break;
+      allSportsPlayers.push(...spPage);
+      if (spPage.length < SP_PAGE) break;
+      spOffset += SP_PAGE;
+    }
+
+    // Build lookup: normalizedName|position → sports_player id
+    // Only keep entries where the combination is unambiguous (one match)
+    const namePositionIndex = new Map<string, string[]>();
+    for (const sp of allSportsPlayers) {
+      if (sp.fantasy_position === "DST") continue; // handled separately
+      const key = `${normalizeName(sp.display_name)}|${sp.fantasy_position}`;
+      const existing = namePositionIndex.get(key) ?? [];
+      existing.push(sp.id);
+      namePositionIndex.set(key, existing);
+    }
+
+    // Build DST lookup: dst_XXX → sports_player id
+    const dstProviderIdToSportsId = new Map<string, string>();
+    for (const sp of allSportsPlayers) {
+      if (sp.fantasy_position === "DST" && sp.provider_player_id?.startsWith("dst_")) {
+        dstProviderIdToSportsId.set(sp.provider_player_id, sp.id);
+      }
+    }
+
+    // ── Resolve unmapped ESPN players via fallback matching ──────────────────
+    const newMappingRows: Record<string, unknown>[] = [];
+
+    for (const player of allPlayers) {
+      if (espnIdToSportsId.has(player.espnId)) continue; // already mapped
+
+      let resolvedId: string | null = null;
+      let method = "auto_name";
+      let confidence = 0.9;
+
+      if (player.position === "DST") {
+        // DST: use proTeamId → dst_XXX abbreviation
+        const abbr = player.proTeamId !== null
+          ? ESPN_PRO_TEAM_TO_DST[player.proTeamId] ?? null
+          : null;
+        if (abbr) {
+          const dstKey = `dst_${abbr}`;
+          resolvedId = dstProviderIdToSportsId.get(dstKey) ?? null;
+          method = "auto_name";
+          confidence = 1.0;
+        }
+      } else {
+        // Non-DST: normalize name + match on position
+        const normalizedEspn = normalizeName(player.name);
+        const key = `${normalizedEspn}|${player.position}`;
+        const candidates = namePositionIndex.get(key) ?? [];
+        if (candidates.length === 1) {
+          // Exactly one sports_player with this normalized name + position — high confidence
+          resolvedId = candidates[0];
+          method = "auto_name";
+          confidence = 0.9;
+        }
+        // If 0 or >1 candidates, leave unresolved
+      }
+
+      if (resolvedId) {
+        espnIdToSportsId.set(player.espnId, resolvedId);
+        newMappingRows.push({
+          provider: "espn",
+          external_player_id: player.espnId,
+          sports_player_id: resolvedId,
+          external_player_name: player.name,
+          external_position: player.position,
+          mapping_method: method,
+          confidence,
+          created_by: user.id,
+        });
+      }
+    }
+
+    // Insert new mapping rows in batches (ignore conflicts from prior runs)
+    let newMappingsInserted = 0;
+    const MAPPING_BATCH = 500;
+    for (let i = 0; i < newMappingRows.length; i += MAPPING_BATCH) {
+      const batch = newMappingRows.slice(i, i + MAPPING_BATCH);
+      const { error: mappingErr } = await supabaseAdmin
+        .from("external_player_mappings")
+        .upsert(batch, { onConflict: "provider,external_player_id", ignoreDuplicates: true });
+      if (!mappingErr) newMappingsInserted += batch.length;
+    }
+
     // ── Derive position ranks ────────────────────────────────────────────────
     const stdPositionRanks = derivePositionRanks(allPlayers, "standardRank");
     const pprPositionRanks = derivePositionRanks(allPlayers, "pprRank");
 
-    // ── Build upsert rows ────────────────────────────────────────────────────
+    // ── Build insert rows ────────────────────────────────────────────────────
     const upsertRows: Record<string, unknown>[] = [];
     const unresolvedPlayers: { espnId: string; name: string; position: string }[] = [];
     let recordsMatched = 0;
@@ -310,18 +428,13 @@ Deno.serve(async (req: Request) => {
     for (const player of allPlayers) {
       const sportsPlayerId = espnIdToSportsId.get(player.espnId);
       if (!sportsPlayerId) {
-        unresolvedPlayers.push({
-          espnId: player.espnId,
-          name: player.name,
-          position: player.position,
-        });
+        unresolvedPlayers.push({ espnId: player.espnId, name: player.name, position: player.position });
         continue;
       }
       recordsMatched++;
 
       const now = new Date().toISOString();
 
-      // Standard row
       if (player.standardRank !== null) {
         const stdPos = stdPositionRanks.get(`${player.espnId}:standardRank`);
         upsertRows.push({
@@ -347,7 +460,6 @@ Deno.serve(async (req: Request) => {
         });
       }
 
-      // PPR row
       if (player.pprRank !== null) {
         const pprPos = pprPositionRanks.get(`${player.espnId}:pprRank`);
         upsertRows.push({
@@ -374,16 +486,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // ── Upsert in batches ────────────────────────────────────────────────────
-    // The unique constraint on player_rankings includes draft_scoring_rule_id,
-    // but it is a nullable column. Postgres treats NULLs as distinct in unique
-    // constraints, which would cause duplicate inserts on re-sync.
-    // Use ON CONFLICT DO UPDATE with a WHERE clause via ignoreDuplicates=false
-    // and onConflict specifying all columns. Because draft_scoring_rule_id is
-    // nullable we rely on the partial index or upsert the id column instead.
-    // The safest path: delete existing ESPN rows for this season/ranking_type
-    // first, then insert fresh. This avoids the NULL-in-unique-key problem
-    // entirely without schema changes.
+    // Delete existing ESPN rows then insert fresh (avoids NULL-in-unique-key problem)
     const { error: deleteErr } = await supabaseAdmin
       .from("player_rankings")
       .delete()
@@ -392,9 +495,7 @@ Deno.serve(async (req: Request) => {
       .eq("ranking_type", "draft_rank")
       .is("draft_scoring_rule_id", null);
 
-    if (deleteErr) {
-      throw new Error("Failed to clear existing ESPN rankings: " + deleteErr.message);
-    }
+    if (deleteErr) throw new Error("Failed to clear existing ESPN rankings: " + deleteErr.message);
 
     const BATCH = 500;
     let recordsUpserted = 0;
@@ -412,7 +513,6 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // ── Count by scoring_format ──────────────────────────────────────────────
     const formatCounts: Record<string, number> = {};
     for (const row of upsertRows) {
       const fmt = row.scoring_format as string;
@@ -428,6 +528,7 @@ Deno.serve(async (req: Request) => {
         records_fetched: allPlayers.length,
         records_matched: recordsMatched,
         records_upserted: recordsUpserted,
+        new_mappings_created: newMappingsInserted,
         unresolved_count: unresolvedPlayers.length,
         unresolved_sample: unresolvedPlayers.slice(0, 20),
         counts_by_scoring_format: formatCounts,
