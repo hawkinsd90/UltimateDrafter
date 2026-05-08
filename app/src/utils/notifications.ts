@@ -14,19 +14,19 @@ export async function enqueueNotification(input: EnqueueNotificationInput): Prom
     const { channel, userId, leagueId, teamId, templateKey, payload, messageText } = input;
 
     const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      console.warn('[enqueueNotification] No active session — skipping notification', { channel: input.channel, userId: input.userId });
+      return { success: false, error: 'No active session' };
+    }
+
     const supabaseUrl = (supabase as unknown as { supabaseUrl: string }).supabaseUrl
       ?? import.meta.env.VITE_SUPABASE_URL;
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Apikey': anonKey,
+      'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${session.access_token}`,
     };
-    if (session?.access_token) {
-      headers['Authorization'] = `Bearer ${session.access_token}`;
-    } else {
-      headers['Authorization'] = `Bearer ${anonKey}`;
-    }
 
     const res = await fetch(`${supabaseUrl}/functions/v1/enqueue-notification`, {
       method: 'POST',
