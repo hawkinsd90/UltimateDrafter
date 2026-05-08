@@ -31,12 +31,14 @@ Deno.serve(async (req: Request) => {
 
   try {
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
+    if (!authHeader?.startsWith("Bearer ")) {
       return new Response(
-        JSON.stringify({ success: false, error: 'Missing Authorization header' }),
+        JSON.stringify({ success: false, error: 'Missing or invalid Authorization header' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    const token = authHeader.replace("Bearer ", "").trim();
 
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -55,7 +57,7 @@ Deno.serve(async (req: Request) => {
       }
     );
 
-    const { data: { user: caller }, error: authError } = await supabaseClient.auth.getUser();
+    const { data: { user: caller }, error: authError } = await supabaseClient.auth.getUser(token);
     if (authError || !caller) {
       return new Response(
         JSON.stringify({ success: false, error: 'Invalid or expired token' }),
