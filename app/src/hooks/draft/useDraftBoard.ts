@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
-import { enqueueNotification } from '../../utils/notifications';
+// import { enqueueNotification } from '../../utils/notifications'; // TODO: re-enable with notifications
 import type { Draft, League, DraftSettings, Participant, Pick } from './draftTypes';
 
 export interface UseDraftBoardReturn {
@@ -197,19 +197,20 @@ export function useDraftBoard(draftId: string, userId: string | undefined): UseD
       if (rpcError) { setError('Error making pick: ' + rpcError.message); return; }
     }
 
-    if (nextParticipant?.user_id) {
-      const notificationPayload = {
-        leagueName: league?.name ?? 'Unknown League',
-        pickNumber: nextPickNumber,
-        teamName: nextParticipant.team_name,
-        draftName: currentDraft.name,
-      };
-      const messageText = `${nextParticipant.team_name}, you're on the clock! Pick #${nextPickNumber} in ${currentDraft.name}`;
-      void Promise.all([
-        enqueueNotification({ channel: 'email', userId: nextParticipant.user_id, leagueId: currentDraft.league_id, templateKey: 'draft_turn', payload: notificationPayload, messageText }),
-        enqueueNotification({ channel: 'sms',   userId: nextParticipant.user_id, leagueId: currentDraft.league_id, templateKey: 'draft_turn', payload: notificationPayload, messageText }),
-      ]);
-    }
+    // TODO: re-enable notifications after core workflow is verified
+    // if (nextParticipant?.user_id) {
+    //   const notificationPayload = {
+    //     leagueName: league?.name ?? 'Unknown League',
+    //     pickNumber: nextPickNumber,
+    //     teamName: nextParticipant.team_name,
+    //     draftName: currentDraft.name,
+    //   };
+    //   const messageText = `${nextParticipant.team_name}, you're on the clock! Pick #${nextPickNumber} in ${currentDraft.name}`;
+    //   void Promise.all([
+    //     enqueueNotification({ channel: 'email', userId: nextParticipant.user_id, leagueId: currentDraft.league_id, templateKey: 'draft_turn', payload: notificationPayload, messageText }),
+    //     enqueueNotification({ channel: 'sms',   userId: nextParticipant.user_id, leagueId: currentDraft.league_id, templateKey: 'draft_turn', payload: notificationPayload, messageText }),
+    //   ]);
+    // }
 
     setDraft(prev => prev ? { ...prev, current_pick_number: nextPickNumber, current_participant_id: nextParticipant?.id ?? null } : prev);
     setCurrentParticipant(nextParticipant ?? null);
