@@ -68,7 +68,8 @@ export default function AdminNFLRosterImportPanel() {
         .eq('is_fantasy_relevant', true),
       supabase
         .from('nfl_draft_player_pool')
-        .select('fantasy_position'),
+        .select('fantasy_position')
+        .limit(2000),
     ]);
 
     setTotalPlayers(totalRes.count ?? 0);
