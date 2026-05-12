@@ -56,18 +56,20 @@ export default function JoinLeague() {
     setLeagueName(league?.name ?? 'the league');
     if (user?.email) setDisplayName(user.email.split('@')[0]);
 
-    // Load unclaimed imported teams via SECURITY DEFINER RPC (bypasses owner-only RLS)
-    const { data: teams } = await supabase.rpc('get_join_invite_imported_teams', {
-      p_invite_id: inviteId,
-    });
+    // Only load imported teams when signed in — RPC requires authenticated role
+    if (user) {
+      const { data: teams } = await supabase.rpc('get_join_invite_imported_teams', {
+        p_invite_id: inviteId,
+      });
 
-    if (teams && teams.length > 0) {
-      setImportedTeams(teams.map((t: { id: string; team_name: string; external_owner_name: string | null; provider: string }) => ({
-        id: t.id,
-        teamName: t.team_name,
-        externalOwnerName: t.external_owner_name,
-        provider: t.provider,
-      })));
+      if (teams && teams.length > 0) {
+        setImportedTeams(teams.map((t: { id: string; team_name: string; external_owner_name: string | null; provider: string }) => ({
+          id: t.id,
+          teamName: t.team_name,
+          externalOwnerName: t.external_owner_name,
+          provider: t.provider,
+        })));
+      }
     }
 
     setStatus('ready');
