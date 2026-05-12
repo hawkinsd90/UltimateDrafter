@@ -13,6 +13,89 @@ type LeagueInvite = Database['public']['Tables']['league_invites']['Row'];
 
 type Tab = 'drafts' | 'members' | 'settings';
 
+interface ImportedMember {
+  id: string;
+  externalOwnerName: string | null;
+  teamName: string;
+  provider: string;
+  inviteId: string | null;
+}
+
+function ImportedLeaguematesPanel({
+  importedMembers, leagueId, userId, onInviteSent, onError,
+}: {
+  importedMembers: ImportedMember[];
+  leagueId: string;
+  userId: string;
+  onInviteSent: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  async function sendInvite(member: ImportedMember) {
+    const { data: invite, error } = await supabase
+      .from('league_invites')
+      .insert({ league_id: leagueId, invited_by: userId })
+      .select()
+      .single();
+    if (error || !invite) {
+      onError('Failed to create invite: ' + (error?.message ?? 'unknown'));
+      return;
+    }
+    // Link the invite back to this imported member record
+    await supabase.from('league_imported_members').update({ invite_id: invite.id }).eq('id', member.id);
+    const inviteUrl = `${window.location.origin}/leagues/join/${invite.id}`;
+    await navigator.clipboard.writeText(inviteUrl).catch(() => {});
+    setCopiedId(member.id);
+    setTimeout(() => setCopiedId(null), 3000);
+    onInviteSent();
+  }
+
+  const uninvited = importedMembers.filter(m => !m.inviteId);
+  const invited = importedMembers.filter(m => m.inviteId);
+
+  if (uninvited.length === 0 && invited.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: '24px', padding: '20px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px' }}>
+      <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#0c4a6e' }}>Leaguemates from Import</h3>
+      <p style={{ margin: '0 0 14px 0', fontSize: '13px', color: '#0369a1' }}>
+        These members were imported from your {importedMembers[0]?.provider?.toUpperCase()} league. Generate invite links to send them.
+        Note: emails are not available from {importedMembers[0]?.provider === 'sleeper' ? 'Sleeper' : 'ESPN'} — share links manually.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {uninvited.map(m => (
+          <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'white', border: '1px solid #e0f2fe', borderRadius: '6px', gap: '12px', flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 0 }}>
+              <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
+              {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
+                <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
+              )}
+            </div>
+            <button
+              onClick={() => sendInvite(m)}
+              style={{ padding: '6px 14px', background: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              {copiedId === m.id ? 'Link Copied!' : 'Copy Invite Link'}
+            </button>
+          </div>
+        ))}
+        {invited.map(m => (
+          <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'white', border: '1px solid #e0f2fe', borderRadius: '6px', gap: '12px', flexWrap: 'wrap', opacity: 0.7 }}>
+            <div style={{ minWidth: 0 }}>
+              <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
+              {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
+                <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
+              )}
+            </div>
+            <span style={{ fontSize: '12px', color: '#16a34a', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Invited</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function LeagueDetail() {
   const { leagueId } = useParams<{ leagueId: string }>();
   const { user } = useAuth();
@@ -34,6 +117,15 @@ export default function LeagueDetail() {
   const [memberError, setMemberError] = useState('');
   const [memberSuccess, setMemberSuccess] = useState('');
   const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
+
+  // imported members from external league (Sleeper/ESPN)
+  const [importedMembers, setImportedMembers] = useState<{
+    id: string;
+    externalOwnerName: string | null;
+    teamName: string;
+    provider: string;
+    inviteId: string | null;
+  }[]>([]);
 
   const [formData, setFormData] = useState({
     draft_format: 'snake',
@@ -85,12 +177,13 @@ export default function LeagueDetail() {
 
   async function loadLeagueData() {
     try {
-      const [leagueResult, settingsResult, draftsResult, membersResult, invitesResult] = await Promise.all([
+      const [leagueResult, settingsResult, draftsResult, membersResult, invitesResult, importedResult] = await Promise.all([
         supabase.from('leagues').select('*').eq('id', leagueId).maybeSingle(),
         supabase.from('league_settings').select('*').eq('league_id', leagueId).maybeSingle(),
         supabase.from('drafts').select('*').eq('league_id', leagueId).order('created_at', { ascending: false }),
         supabase.from('league_members').select('*').eq('league_id', leagueId).order('joined_at', { ascending: true }),
         supabase.from('league_invites').select('*').eq('league_id', leagueId).is('accepted_at', null).order('created_at', { ascending: false }),
+        supabase.from('league_imported_members').select('id, external_owner_name, team_name, provider, invite_id').eq('league_id', leagueId).order('created_at', { ascending: true }),
       ]);
 
       if (leagueResult.error) {
@@ -125,6 +218,15 @@ export default function LeagueDetail() {
       }
       if (!invitesResult.error && invitesResult.data) {
         setInvites(invitesResult.data);
+      }
+      if (!importedResult.error && importedResult.data) {
+        setImportedMembers(importedResult.data.map(r => ({
+          id: r.id,
+          externalOwnerName: r.external_owner_name,
+          teamName: r.team_name,
+          provider: r.provider,
+          inviteId: r.invite_id,
+        })));
       }
     } catch (error) {
       console.error('Error loading league data:', error);
@@ -530,6 +632,16 @@ export default function LeagueDetail() {
             <div style={{ padding: '12px', background: '#f0fdf4', border: '1px solid #22c55e', borderRadius: '6px', color: '#166534', marginBottom: '16px', wordBreak: 'break-all' }}>
               {memberSuccess}
             </div>
+          )}
+
+          {isOwner && importedMembers.length > 0 && (
+            <ImportedLeaguematesPanel
+              importedMembers={importedMembers}
+              leagueId={leagueId!}
+              userId={user!.id}
+              onInviteSent={loadLeagueData}
+              onError={setMemberError}
+            />
           )}
 
           {isOwner && (
