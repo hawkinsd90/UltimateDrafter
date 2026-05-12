@@ -186,15 +186,19 @@ async function previewEspn(
   const resp = await fetch(url, { headers });
   const ct = resp.headers.get('content-type') ?? '';
   if (!ct.includes('application/json')) {
-    throw new Error(isPrivate
-      ? 'ESPN returned a non-JSON response. Credentials may be expired.'
-      : 'ESPN returned a non-JSON response. The league may be private.');
+    if (resp.status === 404) {
+      throw new Error(`ESPN league ${leagueId} not found for season ${season}. Check the league ID and season year.`);
+    }
+    if (isPrivate) {
+      throw new Error('ESPN returned a non-JSON response. Your SWID/espn_s2 credentials may be expired or incorrect.');
+    }
+    throw new Error(`ESPN returned a non-JSON response for league ${leagueId} (season ${season}). The league may be private, or this season may not exist yet.`);
   }
   if (resp.status === 401 || resp.status === 403) {
-    throw new Error(`ESPN denied access (HTTP ${resp.status}).`);
+    throw new Error(`ESPN denied access to league ${leagueId} (HTTP ${resp.status}). The league may be private — try enabling the private league option with your SWID and espn_s2 cookies.`);
   }
   if (!resp.ok) {
-    throw new Error(`ESPN API returned HTTP ${resp.status}.`);
+    throw new Error(`ESPN API returned HTTP ${resp.status} for league ${leagueId} season ${season}.`);
   }
 
   const data = await resp.json() as Record<string, unknown>;

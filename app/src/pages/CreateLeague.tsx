@@ -91,7 +91,11 @@ export default function CreateLeague() {
     const { data, error: fnError } = await supabase.functions.invoke('preview-external-league', { body });
 
     if (fnError || !data?.success) {
-      setImportError(data?.error ?? fnError?.message ?? 'Failed to fetch league. Check the ID and try again.');
+      // fnError.context holds the parsed 4xx body when the edge function returns non-2xx
+      const contextError = fnError?.context && typeof fnError.context === 'object'
+        ? (fnError.context as Record<string, unknown>).error as string | undefined
+        : undefined;
+      setImportError(contextError ?? data?.error ?? 'Failed to fetch league. Check the ID and try again.');
       setImportLoading(false);
       return;
     }
