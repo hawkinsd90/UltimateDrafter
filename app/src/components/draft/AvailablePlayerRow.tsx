@@ -11,6 +11,7 @@ interface Props {
   rankingSource: RankingSource;
   onAdd: (id: string) => void;
   onPick: (id: string) => void;
+  onOpenDetail: (id: string) => void;
 }
 
 // Returns the primary rank/stat label for the selected source + sort
@@ -75,7 +76,7 @@ function rightStatLabel(sortByMode: SortByMode, rankingSource: RankingSource): s
 }
 
 export default function AvailablePlayerRow({
-  player, isPicked, isOnBoard, canPick, sortByMode, rankingSource, onAdd, onPick,
+  player, isPicked, isOnBoard, canPick, sortByMode, rankingSource, onAdd, onPick, onOpenDetail,
 }: Props) {
   const injuryLabel  = player.injury_status;
   const injuryColor  = injuryLabel ? (INJURY_COLORS[injuryLabel] ?? '#64748b') : null;
@@ -103,7 +104,7 @@ export default function AvailablePlayerRow({
       }}>
         {!isPicked && !isOnBoard && (
           <button
-            onClick={() => onAdd(player.id)}
+            onClick={e => { e.stopPropagation(); onAdd(player.id); }}
             style={{
               width: '46px', padding: '6px 0', fontSize: '12px', fontWeight: '700',
               background: 'transparent', color: dt.blue,
@@ -116,7 +117,7 @@ export default function AvailablePlayerRow({
         )}
         {!isPicked && isOnBoard && canPick && (
           <button
-            onClick={() => onPick(player.id)}
+            onClick={e => { e.stopPropagation(); onPick(player.id); }}
             style={{
               width: '46px', padding: '6px 0', fontSize: '12px', fontWeight: '700',
               background: '#14532d', color: dt.green,
@@ -138,9 +139,14 @@ export default function AvailablePlayerRow({
       <div style={{ flex: 1, minWidth: 0, padding: '8px 10px' }}>
         {/* Row 1: name + status badges */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
-          <span style={{ fontWeight: '600', fontSize: '13px', color: isPicked ? dt.textSecondary : dt.textPrimary, lineHeight: 1.3 }}>
+          <button
+            onClick={e => { e.stopPropagation(); onOpenDetail(player.id); }}
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontWeight: '600', fontSize: '13px', color: isPicked ? dt.textSecondary : dt.textPrimary, lineHeight: 1.3, textAlign: 'left', textDecoration: 'underline', textDecorationColor: 'transparent', transition: 'text-decoration-color 0.12s' }}
+            onMouseEnter={e => (e.currentTarget.style.textDecorationColor = '#60a5fa')}
+            onMouseLeave={e => (e.currentTarget.style.textDecorationColor = 'transparent')}
+          >
             {player.display_name}
-          </span>
+          </button>
           {isPicked && (
             <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px', background: '#1e3a8a', color: '#93c5fd' }}>Drafted</span>
           )}

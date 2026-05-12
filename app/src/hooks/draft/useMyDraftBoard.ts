@@ -6,7 +6,7 @@ import type {
 } from './draftTypes';
 import {
   PROVIDER_MAP, RANKING_TYPE_MAP, DEFAULT_SCORING_FORMAT,
-  VALID_SCORING_FORMATS, VALID_SORT_MODES, CURRENT_SEASON,
+  VALID_SCORING_FORMATS, SYNCED_SCORING_FORMATS, VALID_SORT_MODES, CURRENT_SEASON,
 } from './draftTypes';
 
 export type ApplySortMode = 'overall_rank' | 'position_rank' | 'fantasy_points' | 'adp' | 'name';
@@ -164,9 +164,14 @@ export function useMyDraftBoard(
   // When source changes, snap scoring format and sort mode to valid defaults
   function setRankingSource(source: RankingSource) {
     setRankingSourceState(source);
+    const syncedFormats = SYNCED_SCORING_FORMATS[source];
     const validFormats = VALID_SCORING_FORMATS[source];
     const defaultFormat = DEFAULT_SCORING_FORMAT[source];
-    setScoringFormatState(validFormats.includes(scoringFormat) ? scoringFormat : defaultFormat);
+    // Prefer keeping current format if it's synced; fall back to first synced, then default
+    const preferredFormat = syncedFormats.includes(scoringFormat)
+      ? scoringFormat
+      : syncedFormats[0] ?? (validFormats.includes(scoringFormat) ? scoringFormat : defaultFormat);
+    setScoringFormatState(preferredFormat);
     const validSorts = VALID_SORT_MODES[source];
     const defaultSort = validSorts[1] ?? validSorts[0]; // prefer first non-name option
     setSortByModeState(validSorts.includes(sortByMode) ? sortByMode : defaultSort);

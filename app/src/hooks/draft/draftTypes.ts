@@ -56,6 +56,14 @@ export const VALID_SCORING_FORMATS: Record<RankingSource, ScoringFormat[]> = {
   last_season:  ['custom'],
 };
 
+// Which scoring formats actually have synced data (subset of VALID_SCORING_FORMATS)
+export const SYNCED_SCORING_FORMATS: Record<RankingSource, ScoringFormat[]> = {
+  sleeper:      ['any'],
+  espn:         ['standard', 'ppr'],
+  fantasypros:  [],
+  last_season:  ['custom'],
+};
+
 // Which sort modes are valid for each source
 export const VALID_SORT_MODES: Record<RankingSource, SortByMode[]> = {
   sleeper:      ['name', 'relevance', 'position_rank'],

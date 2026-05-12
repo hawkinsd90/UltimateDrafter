@@ -5,6 +5,7 @@ import UserMenu from '../components/UserMenu';
 import PlayerSearch from '../components/PlayerSearch';
 import { useDraftBoard } from '../hooks/draft/useDraftBoard';
 import { useMyDraftBoard } from '../hooks/draft/useMyDraftBoard';
+import { usePlayerDetail } from '../hooks/draft/usePlayerDetail';
 import { dt } from '../hooks/draft/draftTypes';
 import type { TabId } from '../hooks/draft/draftTypes';
 import DraftStatusCard from '../components/draft/DraftStatusCard';
@@ -12,6 +13,7 @@ import DraftActions from '../components/draft/DraftActions';
 import DraftOrderList from '../components/draft/DraftOrderList';
 import DraftPicksLog from '../components/draft/DraftPicksLog';
 import MyBoardPanel from '../components/draft/MyBoardPanel';
+import PlayerDetailModal from '../components/draft/PlayerDetailModal';
 
 export default function DraftBoard() {
   const { draftId } = useParams<{ draftId: string }>();
@@ -28,6 +30,8 @@ export default function DraftBoard() {
     activeTab === 'myboard',
     board.picks.length,
   );
+
+  const detail = usePlayerDetail(draftId!, user?.id, myBoard.draftScoringRuleId);
 
   if (board.loading) {
     return <div style={{ padding: '40px', background: dt.bg, minHeight: '100vh', color: dt.textPrimary }}>Loading...</div>;
@@ -164,8 +168,21 @@ export default function DraftBoard() {
           onAddPlayer={myBoard.addPlayerToBoard}
           onAddAll={myBoard.addAllAvailableToBoard}
           onReorderInPositionGroup={myBoard.reorderInPositionGroup}
+          onOpenDetail={detail.openPlayerDetail}
         />
       )}
+
+      <PlayerDetailModal
+        detail={detail.playerDetail}
+        loading={detail.detailLoading}
+        isOnBoard={detail.playerDetail != null && myBoard.boardPlayers.some(p => p.id === detail.playerDetail!.id)}
+        isPicked={detail.playerDetail != null && board.pickedPlayerIds.has(detail.playerDetail.id)}
+        canPick={(board.isMyTurn || board.canForcePick) && board.draft.status === 'in_progress'}
+        onAdd={id => { myBoard.addPlayerToBoard(id); detail.closePlayerDetail(); }}
+        onRemove={rankingId => { myBoard.removePlayerFromBoard(rankingId); detail.closePlayerDetail(); }}
+        onPick={id => { board.makePick(id); detail.closePlayerDetail(); }}
+        onClose={detail.closePlayerDetail}
+      />
     </div>
   );
 }

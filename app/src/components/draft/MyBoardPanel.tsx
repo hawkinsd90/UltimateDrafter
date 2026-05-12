@@ -43,6 +43,7 @@ interface Props {
   onAddPlayer: (id: string) => void;
   onAddAll: () => void;
   onReorderInPositionGroup: (subFrom: number, subTo: number, group: PositionGroupTab) => void;
+  onOpenDetail: (id: string) => void;
 }
 
 export default function MyBoardPanel({
@@ -55,7 +56,7 @@ export default function MyBoardPanel({
   boardAvailablePlayers, boardAvailableLoading, rankingDataAvailable,
   showBoardSearch, addAllLoading, addAllError, reorderError,
   draftScoringRuleId, lastSeasonRankingsAvailable,
-  onAddPlayer, onAddAll, onReorderInPositionGroup,
+  onAddPlayer, onAddAll, onReorderInPositionGroup, onOpenDetail,
 }: Props) {
   const [subTab, setSubTab] = useState<'rankings' | 'available'>('rankings');
 
@@ -104,6 +105,7 @@ export default function MyBoardPanel({
           onRemoveAll={onRemoveAll}
           onPick={onPickFromBoard}
           onGoToAddPlayers={() => setSubTab('available')}
+          onOpenDetail={onOpenDetail}
         />
       )}
 
@@ -133,6 +135,7 @@ export default function MyBoardPanel({
           onAddPlayer={onAddPlayer}
           onAddAll={onAddAll}
           onPickPlayer={onPickFromBoard}
+          onOpenDetail={onOpenDetail}
         />
       )}
     </div>

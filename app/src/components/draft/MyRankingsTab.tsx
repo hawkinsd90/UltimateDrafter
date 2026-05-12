@@ -18,12 +18,13 @@ interface Props {
   onRemoveAll: () => void;
   onPick: (playerId: string) => void;
   onGoToAddPlayers: () => void;
+  onOpenDetail: (id: string) => void;
 }
 
 export default function MyRankingsTab({
   boardPlayers, boardLoading, pickedPlayerIds, canPick,
   reorderError, sortByMode, rankingSource,
-  onReorder, onRemove, onRemoveAll, onPick, onGoToAddPlayers,
+  onReorder, onRemove, onRemoveAll, onPick, onGoToAddPlayers, onOpenDetail,
 }: Props) {
   const [positionTab, setPositionTab] = useState<PositionGroupTab>('Overall');
   const [openMoveId, setOpenMoveId] = useState<string | null>(null);
@@ -147,6 +148,7 @@ export default function MyRankingsTab({
               onReorder={handleReorder}
               onRemove={onRemove}
               onPick={onPick}
+              onOpenDetail={onOpenDetail}
             />
           ))}
         </div>

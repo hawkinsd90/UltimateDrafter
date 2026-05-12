@@ -3,7 +3,7 @@ import type {
   RankingSource, ScoringFormat, SortByMode,
 } from '../../hooks/draft/draftTypes';
 import {
-  POSITIONS, RANKING_SOURCES, VALID_SCORING_FORMATS, VALID_SORT_MODES,
+  POSITIONS, RANKING_SOURCES, VALID_SCORING_FORMATS, SYNCED_SCORING_FORMATS, VALID_SORT_MODES,
   RANKING_SOURCE_LABELS, SCORING_FORMAT_LABELS, SORT_BY_LABELS, dt,
 } from '../../hooks/draft/draftTypes';
 import AvailablePlayerRow from './AvailablePlayerRow';
@@ -33,6 +33,7 @@ interface Props {
   onAddPlayer: (id: string) => void;
   onAddAll: () => void;
   onPickPlayer: (id: string) => void;
+  onOpenDetail: (id: string) => void;
 }
 
 const pillBase: React.CSSProperties = {
@@ -57,10 +58,10 @@ const sectionLabel: React.CSSProperties = {
 
 // Source-specific descriptions shown below controls
 const SOURCE_DESCRIPTIONS: Record<RankingSource, string> = {
-  sleeper:     'Sleeper Relevance — general search ranking from Sleeper. Not a draft ADP.',
-  espn:        'ESPN Draft Rankings — overall and position draft ranks.',
-  fantasypros: 'FantasyPros ECR — expert consensus rankings across 100+ analysts.',
-  last_season: 'Calculated from 2025 season stats using this draft\'s imported league scoring rules.',
+  sleeper:     'Sleeper relevance/search rank.',
+  espn:        '2026 ESPN draft rankings and projections.',
+  fantasypros: 'FantasyPros rankings have not been synced yet.',
+  last_season: '2025 season stats calculated using this draft\'s imported league scoring rules.',
 };
 
 export default function AddPlayersTab({
@@ -73,7 +74,7 @@ export default function AddPlayersTab({
   rankingDataAvailable, showBoardSearch, pickedPlayerIds, boardedPlayerIds,
   canPick, addAllLoading, addAllError,
   draftScoringRuleId, lastSeasonRankingsAvailable,
-  onAddPlayer, onAddAll, onPickPlayer,
+  onAddPlayer, onAddAll, onPickPlayer, onOpenDetail,
 }: Props) {
   const positionLabel = boardPositionFilter === 'All' ? 'every eligible player' : `every eligible ${boardPositionFilter}`;
   const validFormats = VALID_SCORING_FORMATS[rankingSource];
@@ -84,7 +85,8 @@ export default function AddPlayersTab({
 
   const lastSeasonUnavailable = rankingSource === 'last_season'
     && (!draftScoringRuleId || !lastSeasonRankingsAvailable);
-  const addAllDisabled = addAllLoading || lastSeasonUnavailable;
+  const fantasyProsUnavailable = rankingSource === 'fantasypros';
+  const addAllDisabled = addAllLoading || lastSeasonUnavailable || fantasyProsUnavailable;
 
   return (
     <>
@@ -104,7 +106,7 @@ export default function AddPlayersTab({
         <button
           onClick={onAddAll}
           disabled={addAllDisabled}
-          title={lastSeasonUnavailable ? 'Last Season rankings not available for this draft' : undefined}
+          title={lastSeasonUnavailable ? 'Last Season rankings not available for this draft' : fantasyProsUnavailable ? 'FantasyPros rankings have not been synced yet' : undefined}
           style={{
             padding: '9px 12px', fontSize: '12px', fontWeight: '600',
             background: 'transparent',
@@ -162,12 +164,15 @@ export default function AddPlayersTab({
           <span style={sectionLabel}>Format:</span>
           {(['standard', 'half_ppr', 'ppr'] as ScoringFormat[]).map(fmt => {
             const valid = validFormats.includes(fmt);
-            const active = scoringFormat === fmt && valid;
+            const synced = SYNCED_SCORING_FORMATS[rankingSource].includes(fmt);
+            const active = scoringFormat === fmt && valid && synced;
+            const disabled = !valid || !synced;
             return (
               <button
                 key={fmt}
-                onClick={() => valid && setScoringFormat(fmt)}
-                style={active ? pillActive : valid ? pillInactive : pillDisabled}
+                onClick={() => !disabled && setScoringFormat(fmt)}
+                title={valid && !synced ? 'No data synced for this format' : undefined}
+                style={active ? pillActive : disabled ? pillDisabled : pillInactive}
               >
                 {SCORING_FORMAT_LABELS[fmt]}
               </button>
@@ -224,8 +229,15 @@ export default function AddPlayersTab({
         </div>
       )}
 
+      {/* FantasyPros: not yet synced banner */}
+      {rankingSource === 'fantasypros' && (
+        <div style={{ marginBottom: '10px', padding: '8px 12px', borderRadius: '6px', background: '#1c1a10', border: '1px solid #78350f', color: '#fcd34d', fontSize: '12px' }}>
+          FantasyPros rankings have not been synced yet. Add All is disabled.
+        </div>
+      )}
+
       {/* No ranking data banner */}
-      {showNoDataBanner && rankingSource !== 'last_season' && (
+      {showNoDataBanner && rankingSource !== 'last_season' && rankingSource !== 'fantasypros' && (
         <div style={{ marginBottom: '10px', padding: '8px 12px', borderRadius: '6px', background: '#1c2a3a', border: `1px solid ${dt.border}`, color: dt.textSecondary, fontSize: '12px' }}>
           No ranking data synced for {RANKING_SOURCE_LABELS[rankingSource]}
           {validFormats.length > 1 ? ` / ${SCORING_FORMAT_LABELS[scoringFormat]}` : ''} yet.
@@ -257,6 +269,7 @@ export default function AddPlayersTab({
             rankingSource={rankingSource}
             onAdd={onAddPlayer}
             onPick={onPickPlayer}
+            onOpenDetail={onOpenDetail}
           />
         ))}
       </div>
