@@ -17,6 +17,7 @@ const ESPN_SLOT_MAP: Record<number, keyof NormalizedRosterSettings> = {
   21: "ir",
   23: "flex",
   24: "taxi",
+  25: "op",
 };
 
 // ESPN defaultPositionId → fantasy position string
@@ -62,7 +63,7 @@ const SLEEPER_POSITION_MAP: Record<string, keyof NormalizedRosterSettings> = {
   TE:   "te",
   FLEX: "flex",
   REC_FLEX: "flex",
-  SUPER_FLEX: "flex",
+  SUPER_FLEX: "op",
   K:    "k",
   DEF:  "dst",
   DL:   "dst",
@@ -86,7 +87,7 @@ export function sleeperRosterSettings(
 }
 
 function emptyRosterSettings(): NormalizedRosterSettings {
-  return { qb: 0, rb: 0, wr: 0, te: 0, flex: 0, k: 0, dst: 0, bench: 0, ir: 0, taxi: 0 };
+  return { qb: 0, rb: 0, wr: 0, te: 0, flex: 0, op: 0, k: 0, dst: 0, bench: 0, ir: 0, taxi: 0 };
 }
 
 // ── Scoring type detection ────────────────────────────────────────────────────

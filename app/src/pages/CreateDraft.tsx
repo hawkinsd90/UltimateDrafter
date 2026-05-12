@@ -90,6 +90,7 @@ export default function CreateDraft() {
         roster_wr: leagueSettings.roster_wr,
         roster_te: leagueSettings.roster_te,
         roster_flex: leagueSettings.roster_flex,
+        roster_op: (leagueSettings as Record<string, unknown>).roster_op as number ?? 0,
         roster_k: leagueSettings.roster_k,
         roster_dst: leagueSettings.roster_dst,
         bench: leagueSettings.bench,
@@ -137,7 +138,7 @@ export default function CreateDraft() {
           <p style={{ margin: '0 0 10px 0', fontWeight: '500', color: '#166534' }}>League settings:</p>
           <ul style={{ margin: '0', paddingLeft: '20px', color: '#166534' }}>
             <li>Pick Timer: {leagueSettings.pick_timer_seconds === 0 ? 'Unlimited' : `${leagueSettings.pick_timer_seconds} seconds`}</li>
-            <li>Roster: {leagueSettings.roster_qb}QB, {leagueSettings.roster_rb}RB, {leagueSettings.roster_wr}WR, {leagueSettings.roster_te}TE, {leagueSettings.roster_flex}FLEX, {leagueSettings.roster_k}K, {leagueSettings.roster_dst}DST, {leagueSettings.bench} Bench</li>
+            <li>Roster: {leagueSettings.roster_qb}QB, {leagueSettings.roster_rb}RB, {leagueSettings.roster_wr}WR, {leagueSettings.roster_te}TE, {leagueSettings.roster_flex}FLEX{((leagueSettings as Record<string, unknown>).roster_op as number) > 0 ? `, ${(leagueSettings as Record<string, unknown>).roster_op as number}OP/SF` : ''}, {leagueSettings.roster_k}K, {leagueSettings.roster_dst}DST, {leagueSettings.bench} Bench</li>
           </ul>
         </div>
       )}

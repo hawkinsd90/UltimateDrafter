@@ -234,8 +234,8 @@ export function useDraftBoard(draftId: string, userId: string | undefined): UseD
     ? (isRookieDraft && settingsExt?.num_rounds != null
         ? settingsExt.num_rounds
         : (draftSettings.roster_qb ?? 0) + (draftSettings.roster_rb ?? 0) + (draftSettings.roster_wr ?? 0)
-          + (draftSettings.roster_te ?? 0) + (draftSettings.roster_flex ?? 0) + (draftSettings.roster_k ?? 0)
-          + (draftSettings.roster_dst ?? 0) + (draftSettings.bench ?? 0))
+          + (draftSettings.roster_te ?? 0) + (draftSettings.roster_flex ?? 0) + ((draftSettings as Record<string, unknown>).roster_op as number ?? 0)
+          + (draftSettings.roster_k ?? 0) + (draftSettings.roster_dst ?? 0) + (draftSettings.bench ?? 0))
     : null;
   const currentRound = participants.length > 0 ? Math.ceil((draft?.current_pick_number ?? 1) / participants.length) : 1;
   const roundsRemaining = totalRounds != null ? Math.max(0, totalRounds - currentRound + 1) : null;

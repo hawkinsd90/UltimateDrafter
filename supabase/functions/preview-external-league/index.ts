@@ -12,7 +12,7 @@ const corsHeaders = {
 
 interface SleeperRosterSettings {
   qb: number; rb: number; wr: number; te: number;
-  flex: number; k: number; dst: number; bench: number;
+  flex: number; op: number; k: number; dst: number; bench: number;
 }
 
 interface PreviewTeam {
@@ -47,6 +47,7 @@ function sleeperRosterSettings(rosterPositions: unknown): SleeperRosterSettings 
     wr: count('WR'),
     te: count('TE'),
     flex: count(['FLEX', 'RB/WR/TE', 'WR/RB', 'WR/TE', 'RB/WR']),
+    op: count('SUPER_FLEX'),
     k: count('K'),
     dst: count(['DEF', 'DST']),
     bench: count('BN'),
@@ -135,7 +136,7 @@ function espnPositionMap(): Record<number, string> {
 
 function espnRosterSettings(lineupSlotCounts: unknown): SleeperRosterSettings {
   if (typeof lineupSlotCounts !== 'object' || lineupSlotCounts === null) {
-    return { qb: 1, rb: 2, wr: 2, te: 1, flex: 1, k: 1, dst: 1, bench: 6 };
+    return { qb: 1, rb: 2, wr: 2, te: 1, flex: 1, op: 0, k: 1, dst: 1, bench: 6 };
   }
   const s = lineupSlotCounts as Record<string, unknown>;
   const n = (key: string) => Math.max(0, parseInt(String(s[key] ?? '0'), 10) || 0);
@@ -145,6 +146,7 @@ function espnRosterSettings(lineupSlotCounts: unknown): SleeperRosterSettings {
     wr: n('4'),
     te: n('6'),
     flex: n('23'),
+    op: n('25'),
     k: n('17'),
     dst: n('16'),
     bench: n('20'),

@@ -47,6 +47,7 @@ export interface NormalizedRosterSettings {
   wr: number;
   te: number;
   flex: number;
+  op: number;
   k: number;
   dst: number;
   bench: number;

@@ -22,7 +22,7 @@ interface LeaguePreview {
   scoringType: string;
   rosterSettings: {
     qb: number; rb: number; wr: number; te: number;
-    flex: number; k: number; dst: number; bench: number;
+    flex: number; op: number; k: number; dst: number; bench: number;
   };
   teams: ImportedTeam[];
   warnings: string[];
@@ -48,6 +48,7 @@ export default function CreateLeague() {
     roster_wr: 2,
     roster_te: 1,
     roster_flex: 1,
+    roster_op: 0,
     roster_k: 1,
     roster_dst: 1,
     bench: 6,
@@ -112,6 +113,7 @@ export default function CreateLeague() {
       roster_wr: p.rosterSettings.wr,
       roster_te: p.rosterSettings.te,
       roster_flex: p.rosterSettings.flex,
+      roster_op: p.rosterSettings.op,
       roster_k: p.rosterSettings.k,
       roster_dst: p.rosterSettings.dst,
       bench: p.rosterSettings.bench,
@@ -179,6 +181,7 @@ export default function CreateLeague() {
       roster_wr: settings.roster_wr,
       roster_te: settings.roster_te,
       roster_flex: settings.roster_flex,
+      roster_op: settings.roster_op,
       roster_k: settings.roster_k,
       roster_dst: settings.roster_dst,
       bench: settings.bench,
@@ -407,6 +410,7 @@ export default function CreateLeague() {
                     ['WR', preview.rosterSettings.wr],
                     ['TE', preview.rosterSettings.te],
                     ['FLEX', preview.rosterSettings.flex],
+                    ...(preview.rosterSettings.op > 0 ? [['OP/SF', preview.rosterSettings.op]] : []),
                     ['K', preview.rosterSettings.k],
                     ['DST', preview.rosterSettings.dst],
                     ['Bench', preview.rosterSettings.bench],
@@ -564,6 +568,7 @@ export default function CreateLeague() {
                 { key: 'roster_wr', label: 'WR' },
                 { key: 'roster_te', label: 'TE' },
                 { key: 'roster_flex', label: 'FLEX' },
+                { key: 'roster_op', label: 'OP/SF' },
                 { key: 'roster_k', label: 'K' },
                 { key: 'roster_dst', label: 'DST' },
                 { key: 'bench', label: 'Bench' },
