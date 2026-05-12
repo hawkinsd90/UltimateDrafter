@@ -19,6 +19,7 @@ interface ImportedMember {
   teamName: string;
   provider: string;
   inviteId: string | null;
+  invitedUserId: string | null;
 }
 
 function ImportedLeaguematesPanel({
@@ -51,10 +52,11 @@ function ImportedLeaguematesPanel({
     onInviteSent();
   }
 
-  const uninvited = importedMembers.filter(m => !m.inviteId);
-  const invited = importedMembers.filter(m => m.inviteId);
+  const uninvited = importedMembers.filter(m => !m.inviteId && !m.invitedUserId);
+  const invited = importedMembers.filter(m => m.inviteId && !m.invitedUserId);
+  const joined = importedMembers.filter(m => m.invitedUserId);
 
-  if (uninvited.length === 0 && invited.length === 0) return null;
+  if (uninvited.length === 0 && invited.length === 0 && joined.length === 0) return null;
 
   return (
     <div style={{ marginBottom: '24px', padding: '20px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px' }}>
@@ -88,7 +90,18 @@ function ImportedLeaguematesPanel({
                 <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
               )}
             </div>
-            <span style={{ fontSize: '12px', color: '#16a34a', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Invited</span>
+            <span style={{ fontSize: '12px', color: '#d97706', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Invited</span>
+          </div>
+        ))}
+        {joined.map(m => (
+          <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', gap: '12px', flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 0 }}>
+              <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
+              {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
+                <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
+              )}
+            </div>
+            <span style={{ fontSize: '12px', color: '#16a34a', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Joined / Claimed</span>
           </div>
         ))}
       </div>
@@ -125,6 +138,7 @@ export default function LeagueDetail() {
     teamName: string;
     provider: string;
     inviteId: string | null;
+    invitedUserId: string | null;
   }[]>([]);
 
   const [formData, setFormData] = useState({
@@ -183,7 +197,7 @@ export default function LeagueDetail() {
         supabase.from('drafts').select('*').eq('league_id', leagueId).order('created_at', { ascending: false }),
         supabase.from('league_members').select('*').eq('league_id', leagueId).order('joined_at', { ascending: true }),
         supabase.from('league_invites').select('*').eq('league_id', leagueId).is('accepted_at', null).order('created_at', { ascending: false }),
-        supabase.from('league_imported_members').select('id, external_owner_name, team_name, provider, invite_id').eq('league_id', leagueId).order('created_at', { ascending: true }),
+        supabase.from('league_imported_members').select('id, external_owner_name, team_name, provider, invite_id, invited_user_id').eq('league_id', leagueId).order('created_at', { ascending: true }),
       ]);
 
       if (leagueResult.error) {
@@ -226,6 +240,7 @@ export default function LeagueDetail() {
           teamName: r.team_name,
           provider: r.provider,
           inviteId: r.invite_id,
+          invitedUserId: r.invited_user_id,
         })));
       }
     } catch (error) {

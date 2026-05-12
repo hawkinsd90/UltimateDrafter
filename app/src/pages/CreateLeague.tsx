@@ -256,7 +256,7 @@ export default function CreateLeague() {
             {!preview ? (
               <form onSubmit={handleFetchPreview} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <p style={{ margin: 0, fontSize: '13px', color: '#94a3b8' }}>
-                  Fetch your existing league to pre-fill the league name, roster slots, and scoring format. Member names will be imported so you can invite your leaguemates.
+                  Importing here pre-fills league settings and saves team/member names for invites. Roster/keeper import is completed when setting up a draft.
                 </p>
 
                 {/* Provider toggle */}
