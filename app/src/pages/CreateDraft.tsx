@@ -113,7 +113,7 @@ export default function CreateDraft() {
 
   return (
     <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', gap: '12px', flexWrap: 'nowrap', minWidth: 0 }}>
         <Link to={`/leagues/${leagueId}`} style={{ color: '#2563eb', textDecoration: 'none' }}>
           ← Back to {league.name}
         </Link>

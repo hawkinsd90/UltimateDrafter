@@ -57,11 +57,11 @@ export default function DraftBoard() {
   }
 
   return (
-    <div style={{ padding: '24px 32px', fontFamily: 'system-ui, sans-serif', color: dt.textPrimary, background: dt.bg, minHeight: '100vh' }}>
+    <div style={{ padding: '16px', fontFamily: 'system-ui, sans-serif', color: dt.textPrimary, background: dt.bg, minHeight: '100vh' }}>
 
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <Link to={`/leagues/${board.draft.league_id}`} style={{ color: dt.blue, textDecoration: 'none', fontSize: '14px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', gap: '12px', flexWrap: 'nowrap', minWidth: 0 }}>
+        <Link to={`/leagues/${board.draft.league_id}`} style={{ color: dt.blue, textDecoration: 'none', fontSize: '14px', whiteSpace: 'nowrap', flexShrink: 0 }}>
           ← Back to League
         </Link>
         <UserMenu />

@@ -171,7 +171,7 @@ export default function ExternalLeagueImportWizard() {
   if (draft.status !== 'pending') {
     return (
       <div style={styles.page}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', gap: '12px', flexWrap: 'nowrap', minWidth: 0 }}>
           <Link to={`/drafts/${draftId}/participants`} style={styles.linkBlue}>← Back to Participants</Link>
           <UserMenu />
         </div>
@@ -190,7 +190,7 @@ export default function ExternalLeagueImportWizard() {
   if (summary) {
     return (
       <div style={styles.page}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', gap: '12px', flexWrap: 'nowrap', minWidth: 0 }}>
           <Link to={`/drafts/${draftId}/participants`} style={styles.linkBlue}>← Back to Participants</Link>
           <UserMenu />
         </div>
@@ -235,7 +235,7 @@ export default function ExternalLeagueImportWizard() {
 
   return (
     <div style={styles.page}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', gap: '12px', flexWrap: 'nowrap', minWidth: 0 }}>
         <Link to={`/drafts/${draftId}/participants`} style={styles.linkBlue}>← Back to Participants</Link>
         <UserMenu />
       </div>

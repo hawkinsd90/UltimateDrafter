@@ -59,7 +59,6 @@ export default function BoardPlayerRow({
   function move(toIndex: number) {
     const clamped = Math.max(0, Math.min(totalCount - 1, toIndex));
     if (clamped !== index) onReorder(index, clamped);
-    onToggleMove(null);
   }
 
   function handleMoveToRank() {

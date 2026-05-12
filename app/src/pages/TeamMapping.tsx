@@ -395,7 +395,7 @@ export default function TeamMapping() {
 
   return (
     <div style={s.page}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', gap: '12px', flexWrap: 'nowrap', minWidth: 0 }}>
         <Link to={`/drafts/${draftId}/import`} style={s.linkBlue}>← Back to Import</Link>
         <UserMenu />
       </div>

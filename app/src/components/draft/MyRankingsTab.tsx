@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { BoardPlayer, RankingSource, SortByMode } from '../../hooks/draft/draftTypes';
 import { dt, RANKING_SOURCE_LABELS } from '../../hooks/draft/draftTypes';
 import type { PositionGroupTab, ApplySortMode } from '../../hooks/draft/useMyDraftBoard';
@@ -31,6 +31,8 @@ export default function MyRankingsTab({
   const [positionTab, setPositionTab] = useState<PositionGroupTab>('Overall');
   const [openMoveId, setOpenMoveId] = useState<string | null>(null);
   const [confirmSort, setConfirmSort] = useState<ApplySortMode | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const scrollPendingRef = useRef(false);
 
   // Filter players for the current position tab
   const filteredPlayers: BoardPlayer[] = positionTab === 'Overall'
@@ -48,12 +50,19 @@ export default function MyRankingsTab({
     ).length;
   }
 
+  useEffect(() => {
+    if (!scrollPendingRef.current || !openMoveId || !listRef.current) return;
+    scrollPendingRef.current = false;
+    const el = listRef.current.querySelector<HTMLElement>(`[data-player-id="${openMoveId}"]`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+
   function handleToggleMove(id: string | null) {
     setOpenMoveId(prev => (prev === id ? null : id));
   }
 
   function handleReorder(subFrom: number, subTo: number) {
-    setOpenMoveId(null);
+    scrollPendingRef.current = true;
     onReorder(subFrom, subTo, positionTab);
   }
 
@@ -208,10 +217,10 @@ export default function MyRankingsTab({
           </button>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <div ref={listRef} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           {filteredPlayers.map((player, subIndex) => (
+            <div key={player.id} data-player-id={player.id}>
             <BoardPlayerRow
-              key={player.id}
               player={player}
               index={subIndex}
               totalCount={filteredPlayers.length}
@@ -226,6 +235,7 @@ export default function MyRankingsTab({
               onPick={onPick}
               onOpenDetail={onOpenDetail}
             />
+            </div>
           ))}
         </div>
       )}
