@@ -50,10 +50,18 @@ export type PlayerDetail = {
   injury_status: string | null;
   team_abbr: string | null;
   team_name: string | null;
+  // Bio fields
+  headshot_url: string | null;
+  years_exp: number | null;
+  college: string | null;
+  jersey_number: string | null;
+  // Rankings
   rankings: PlayerDetailRanking[];
   sleeperRanking: PlayerDetailRanking | null;
   lastSeasonRanking: PlayerDetailRanking | null;
+  // Stats
   stats: PlayerSeasonStats | null;
+  // Board / draft state
   boardRankingId: string | null;
   boardRank: number | null;
   draftPickRound: number | null;
@@ -87,15 +95,22 @@ export function usePlayerDetail(
     setDetailLoading(true);
     setPlayerDetail(null);
 
-    const [playerRes, rankingsRes, sleeperRankRes, lastSeasonRes, statsRes, pickRes, boardRes] = await Promise.all([
-      // 1. Player base info from draft pool view (includes team_name)
+    const [playerRes, bioRes, rankingsRes, sleeperRankRes, lastSeasonRes, statsRes, pickRes, boardRes] = await Promise.all([
+      // 1. Base info from the view (team_name, headshot_url, years_exp already exposed)
       supabase
         .from('nfl_draft_player_pool')
-        .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, team_name')
+        .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, team_name, headshot_url, years_exp')
         .eq('id', sportsPlayerId)
         .maybeSingle(),
 
-      // 2. ESPN rankings (standard + ppr) for current season
+      // 2. Bio fields not in the view (college, jersey_number) from sports_players directly
+      supabase
+        .from('sports_players')
+        .select('college, jersey_number')
+        .eq('id', sportsPlayerId)
+        .maybeSingle(),
+
+      // 3. ESPN rankings (standard + ppr) for current season
       supabase
         .from('player_rankings')
         .select('provider, scoring_format, overall_rank, position_rank, position_rank_label, fantasy_points, adp, auction_value, percent_owned')
@@ -105,7 +120,7 @@ export function usePlayerDetail(
         .eq('season', CURRENT_SEASON)
         .is('draft_scoring_rule_id', null),
 
-      // 3. Sleeper search rank
+      // 4. Sleeper search rank
       supabase
         .from('player_rankings')
         .select('provider, scoring_format, overall_rank, position_rank, position_rank_label, fantasy_points, adp, auction_value, percent_owned')
@@ -117,7 +132,7 @@ export function usePlayerDetail(
         .is('draft_scoring_rule_id', null)
         .maybeSingle(),
 
-      // 4. Last Season ranking (only if a scoring rule is attached to this draft)
+      // 5. Last Season ranking (only if a scoring rule is attached to this draft)
       draftScoringRuleId
         ? supabase
             .from('player_rankings')
@@ -129,7 +144,7 @@ export function usePlayerDetail(
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
 
-      // 5. 2025 regular season stats (Sleeper is the stats provider)
+      // 6. 2025 regular season stats (Sleeper is the stats provider)
       supabase
         .from('player_season_stats')
         .select('season, stat_type, games, passing_yards, passing_tds, passing_ints, rushing_yards, rushing_tds, receptions, receiving_yards, receiving_tds, fumbles_lost, fg_made_0_39, fg_made_40_49, fg_made_50_plus, fg_missed, xp_made, xp_missed, sacks, def_interceptions, fumble_recoveries, def_tds, safeties, blocks')
@@ -139,7 +154,7 @@ export function usePlayerDetail(
         .eq('provider', 'sleeper')
         .maybeSingle(),
 
-      // 6. Draft pick for this player in this draft
+      // 7. Draft pick for this player in this draft
       // Columns: pick_number (overall), round, pick_in_round
       supabase
         .from('draft_picks')
@@ -148,7 +163,7 @@ export function usePlayerDetail(
         .eq('player_id', sportsPlayerId)
         .maybeSingle(),
 
-      // 7. Board ranking for current user/draft/player
+      // 8. Board ranking for current user/draft/player
       userId
         ? supabase
             .from('draft_board_rankings')
@@ -161,13 +176,14 @@ export function usePlayerDetail(
     ]);
 
     // Log non-critical errors without blocking the modal
-    if (playerRes.error)      console.warn('[usePlayerDetail] playerRes error:', playerRes.error.message);
-    if (rankingsRes.error)    console.warn('[usePlayerDetail] rankingsRes error:', rankingsRes.error.message);
-    if (sleeperRankRes.error) console.warn('[usePlayerDetail] sleeperRankRes error:', sleeperRankRes.error.message);
-    if (lastSeasonRes.error)  console.warn('[usePlayerDetail] lastSeasonRes error:', lastSeasonRes.error.message);
-    if (statsRes.error)       console.warn('[usePlayerDetail] statsRes error:', statsRes.error.message);
-    if (pickRes.error)        console.warn('[usePlayerDetail] pickRes error:', pickRes.error.message);
-    if (boardRes.error)       console.warn('[usePlayerDetail] boardRes error:', boardRes.error.message);
+    if (playerRes.error)      console.warn('[usePlayerDetail] playerRes:', playerRes.error.message);
+    if (bioRes.error)         console.warn('[usePlayerDetail] bioRes:', bioRes.error.message);
+    if (rankingsRes.error)    console.warn('[usePlayerDetail] rankingsRes:', rankingsRes.error.message);
+    if (sleeperRankRes.error) console.warn('[usePlayerDetail] sleeperRankRes:', sleeperRankRes.error.message);
+    if (lastSeasonRes.error)  console.warn('[usePlayerDetail] lastSeasonRes:', lastSeasonRes.error.message);
+    if (statsRes.error)       console.warn('[usePlayerDetail] statsRes:', statsRes.error.message);
+    if (pickRes.error)        console.warn('[usePlayerDetail] pickRes:', pickRes.error.message);
+    if (boardRes.error)       console.warn('[usePlayerDetail] boardRes:', boardRes.error.message);
 
     const p = playerRes.data;
     if (!p) {
@@ -241,7 +257,12 @@ export function usePlayerDetail(
       blocks: toNum(statsRaw.blocks),
     } : null;
 
-    type PickRaw = { pick_number: number | null; round: number | null; pick_in_round: number | null; participant: { team_name: string | null } | null } | null;
+    type PickRaw = {
+      pick_number: number | null;
+      round: number | null;
+      pick_in_round: number | null;
+      participant: { team_name: string | null } | null;
+    } | null;
     const pickRaw = pickRes.data as PickRaw;
     const boardRaw = boardRes.data as { id: string; rank: number } | null;
 
@@ -254,6 +275,10 @@ export function usePlayerDetail(
       injury_status: p.injury_status,
       team_abbr: p.team_abbr,
       team_name: p.team_name,
+      headshot_url: p.headshot_url ?? null,
+      years_exp: p.years_exp ?? null,
+      college: bioRes.data?.college ?? null,
+      jersey_number: bioRes.data?.jersey_number ?? null,
       rankings,
       sleeperRanking,
       lastSeasonRanking,

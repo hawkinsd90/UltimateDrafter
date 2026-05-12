@@ -3,12 +3,65 @@ import type { PlayerDetail, PlayerSeasonStats } from '../../hooks/draft/usePlaye
 import { INJURY_COLORS, dt } from '../../hooks/draft/draftTypes';
 import { positionBadgeBg, positionBadgeColor } from './positionBadge';
 
-interface Props {
+// Responsive layout injected once into <head>. The panel is a right-side drawer on
+// desktop and full-screen on mobile (≤640px).
+const PANEL_STYLE_ID = 'player-detail-panel-styles';
+function ensureStyles() {
+  if (document.getElementById(PANEL_STYLE_ID)) return;
+  const el = document.createElement('style');
+  el.id = PANEL_STYLE_ID;
+  el.textContent = `
+    .player-detail-panel {
+      position: fixed;
+      top: 0; right: 0; bottom: 0;
+      width: min(440px, 100vw);
+      background: ${dt.card};
+      border-left: 1px solid ${dt.border};
+      z-index: 1001;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    .player-detail-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .player-detail-action-btn {
+      flex: 1 1 auto;
+    }
+    @media (max-width: 640px) {
+      .player-detail-panel {
+        left: 0;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        width: 100vw;
+        height: 100dvh;
+        border-left: none;
+        border-top: 1px solid ${dt.border};
+      }
+      .player-detail-actions {
+        flex-direction: column;
+      }
+      .player-detail-action-btn {
+        width: 100%;
+      }
+    }
+  `;
+  document.head.appendChild(el);
+}
+
+export interface PlayerDetailModalProps {
   detail: PlayerDetail | null;
   loading: boolean;
   isOnBoard: boolean;
   isPicked: boolean;
   canPick: boolean;
+  // Pass false to hide board/pick actions (e.g. when opened from My Team read-only)
+  showBoardActions?: boolean;
+  // Optional override badge shown in the header (e.g. 'Imported' from My Team)
+  sourceBadge?: 'Drafted' | 'Imported' | null;
   onAdd: (id: string) => void;
   onRemove: (rankingId: string) => void;
   onPick: (id: string) => void;
@@ -23,21 +76,22 @@ function fmt(v: number | null | undefined, decimals = 0): string {
 function StatRow({ label, value }: { label: string; value: string }) {
   return (
     <div style={{
-      display: 'flex', justifyContent: 'space-between',
-      padding: '5px 0', borderBottom: `1px solid ${dt.border}`,
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      padding: '7px 0', borderBottom: `1px solid ${dt.border}`,
+      minHeight: '36px',
     }}>
-      <span style={{ fontSize: '12px', color: dt.textSecondary }}>{label}</span>
-      <span style={{ fontSize: '12px', fontWeight: '600', color: value === '—' ? '#475569' : dt.textPrimary }}>{value}</span>
+      <span style={{ fontSize: '13px', color: dt.textSecondary }}>{label}</span>
+      <span style={{ fontSize: '13px', fontWeight: '600', color: value === '—' ? '#475569' : dt.textPrimary }}>{value}</span>
     </div>
   );
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: '18px' }}>
+    <div style={{ marginBottom: '20px' }}>
       <div style={{
         fontSize: '10px', fontWeight: '700', color: '#475569',
-        textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '8px',
+        textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '8px',
       }}>
         {title}
       </div>
@@ -68,44 +122,44 @@ function RankingCard({ label, ranking, pointsLabel = 'Proj Pts' }: {
       background: dt.bg, border: `1px solid ${dt.border}`,
       borderRadius: '7px', padding: '10px 12px', marginBottom: '6px',
     }}>
-      <div style={{ fontSize: '11px', fontWeight: '700', color: dt.textSecondary, marginBottom: '6px' }}>{label}</div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+      <div style={{ fontSize: '11px', fontWeight: '700', color: dt.textSecondary, marginBottom: '8px' }}>{label}</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px' }}>
         {ranking.overall_rank != null && (
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: dt.textPrimary }}>#{ranking.overall_rank}</div>
-            <div style={{ fontSize: '10px', color: dt.textSecondary }}>Overall</div>
+          <div style={{ textAlign: 'center', minWidth: '40px' }}>
+            <div style={{ fontSize: '17px', fontWeight: '700', color: dt.textPrimary }}>#{ranking.overall_rank}</div>
+            <div style={{ fontSize: '10px', color: dt.textSecondary, marginTop: '2px' }}>Overall</div>
           </div>
         )}
         {(ranking.position_rank_label || ranking.position_rank != null) && (
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: '#60a5fa' }}>
+          <div style={{ textAlign: 'center', minWidth: '40px' }}>
+            <div style={{ fontSize: '17px', fontWeight: '700', color: '#60a5fa' }}>
               {ranking.position_rank_label ?? `#${ranking.position_rank}`}
             </div>
-            <div style={{ fontSize: '10px', color: dt.textSecondary }}>Pos Rank</div>
+            <div style={{ fontSize: '10px', color: dt.textSecondary, marginTop: '2px' }}>Pos Rank</div>
           </div>
         )}
         {ranking.fantasy_points != null && (
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: dt.green }}>{ranking.fantasy_points.toFixed(1)}</div>
-            <div style={{ fontSize: '10px', color: dt.textSecondary }}>{pointsLabel}</div>
+          <div style={{ textAlign: 'center', minWidth: '40px' }}>
+            <div style={{ fontSize: '17px', fontWeight: '700', color: dt.green }}>{ranking.fantasy_points.toFixed(1)}</div>
+            <div style={{ fontSize: '10px', color: dt.textSecondary, marginTop: '2px' }}>{pointsLabel}</div>
           </div>
         )}
         {ranking.adp != null && (
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: dt.textPrimary }}>{ranking.adp.toFixed(1)}</div>
-            <div style={{ fontSize: '10px', color: dt.textSecondary }}>ADP</div>
+          <div style={{ textAlign: 'center', minWidth: '40px' }}>
+            <div style={{ fontSize: '17px', fontWeight: '700', color: dt.textPrimary }}>{ranking.adp.toFixed(1)}</div>
+            <div style={{ fontSize: '10px', color: dt.textSecondary, marginTop: '2px' }}>ADP</div>
           </div>
         )}
         {ranking.percent_owned != null && (
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: dt.textPrimary }}>{ranking.percent_owned.toFixed(0)}%</div>
-            <div style={{ fontSize: '10px', color: dt.textSecondary }}>Owned</div>
+          <div style={{ textAlign: 'center', minWidth: '40px' }}>
+            <div style={{ fontSize: '17px', fontWeight: '700', color: dt.textPrimary }}>{ranking.percent_owned.toFixed(0)}%</div>
+            <div style={{ fontSize: '10px', color: dt.textSecondary, marginTop: '2px' }}>Owned</div>
           </div>
         )}
         {ranking.auction_value != null && (
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: dt.amber }}>${ranking.auction_value.toFixed(0)}</div>
-            <div style={{ fontSize: '10px', color: dt.textSecondary }}>Auction</div>
+          <div style={{ textAlign: 'center', minWidth: '40px' }}>
+            <div style={{ fontSize: '17px', fontWeight: '700', color: dt.amber }}>${ranking.auction_value.toFixed(0)}</div>
+            <div style={{ fontSize: '10px', color: dt.textSecondary, marginTop: '2px' }}>Auction</div>
           </div>
         )}
       </div>
@@ -172,9 +226,59 @@ function StatsSection({ stats, position }: { stats: PlayerSeasonStats; position:
   );
 }
 
+function Initials({ name, position }: { name: string; position: string | null }) {
+  const parts = name.trim().split(/\s+/);
+  const initials = parts.length >= 2
+    ? `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
+    : name.slice(0, 2).toUpperCase();
+  return (
+    <div style={{
+      width: '52px', height: '52px', borderRadius: '50%', flexShrink: 0,
+      background: positionBadgeBg(position),
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: '17px', fontWeight: '700', color: positionBadgeColor(position),
+    }}>
+      {initials}
+    </div>
+  );
+}
+
+function Avatar({ url, name, position }: { url: string | null; name: string; position: string | null }) {
+  if (!url) return <Initials name={name} position={position} />;
+  return (
+    <img
+      src={url}
+      alt=""
+      width={52}
+      height={52}
+      style={{ width: '52px', height: '52px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0, background: dt.bg }}
+      onError={e => {
+        // Replace broken image with initials fallback
+        const parent = (e.target as HTMLImageElement).parentElement;
+        if (parent) {
+          (e.target as HTMLImageElement).style.display = 'none';
+          const initDiv = document.createElement('div');
+          const parts = name.trim().split(/\s+/);
+          const text = parts.length >= 2
+            ? `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
+            : name.slice(0, 2).toUpperCase();
+          initDiv.textContent = text;
+          initDiv.style.cssText = `width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;background:${positionBadgeBg(position)};color:${positionBadgeColor(position)};flex-shrink:0`;
+          parent.appendChild(initDiv);
+        }
+      }}
+    />
+  );
+}
+
 export default function PlayerDetailModal({
-  detail, loading, isOnBoard, isPicked, canPick, onAdd, onRemove, onPick, onClose,
-}: Props) {
+  detail, loading, isOnBoard, isPicked, canPick,
+  showBoardActions = true,
+  sourceBadge,
+  onAdd, onRemove, onPick, onClose,
+}: PlayerDetailModalProps) {
+  useEffect(() => { ensureStyles(); }, []);
+
   // Close on Escape key
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -193,7 +297,11 @@ export default function PlayerDetailModal({
   const espnPpr     = detail?.rankings.find(r => r.scoring_format === 'ppr');
   const hasEspn     = espnStandard != null || espnPpr != null;
 
-  // Draft pick label — show "Rd 2, Pick 5 (overall #17)"
+  // Determine effective source badge: caller-provided > drafted pick > on board
+  const effectiveBadge: 'Drafted' | 'Imported' | null =
+    sourceBadge ?? (isPicked ? 'Drafted' : null);
+
+  // Pick label: "Rd 2, Pick 5 (#17 overall)"
   function pickLabel(d: PlayerDetail): string {
     const parts: string[] = [];
     if (d.draftPickRound != null) parts.push(`Rd ${d.draftPickRound}`);
@@ -206,6 +314,11 @@ export default function PlayerDetailModal({
     return parts.length > 0 ? ` — ${parts.join(', ')}` : '';
   }
 
+  const btnBase: React.CSSProperties = {
+    padding: '10px 18px', fontSize: '13px', fontWeight: '700',
+    borderRadius: '7px', cursor: 'pointer', textAlign: 'center',
+  };
+
   return (
     <>
       {/* Backdrop */}
@@ -217,119 +330,133 @@ export default function PlayerDetailModal({
         }}
       />
 
-      {/* Drawer panel — right side */}
-      <div style={{
-        position: 'fixed',
-        top: 0, right: 0, bottom: 0,
-        width: 'min(420px, 100vw)',
-        background: dt.card,
-        borderLeft: `1px solid ${dt.border}`,
-        zIndex: 1001,
-        display: 'flex', flexDirection: 'column',
-        overflowY: 'auto',
-      }}>
-        {/* Header bar */}
+      {/* Panel — responsive via CSS class */}
+      <div className="player-detail-panel">
+
+        {/* Sticky header */}
         <div style={{
-          padding: '16px 20px',
+          padding: '14px 16px',
           borderBottom: `1px solid ${dt.border}`,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          position: 'sticky', top: 0, background: dt.card, zIndex: 1,
+          position: 'sticky', top: 0, background: dt.card, zIndex: 1, flexShrink: 0,
         }}>
-          <span style={{ fontSize: '13px', fontWeight: '700', color: dt.textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Player Detail
+          <span style={{ fontSize: '12px', fontWeight: '700', color: dt.textSecondary, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+            Player Profile
           </span>
           <button
             onClick={onClose}
-            style={{ background: 'transparent', border: 'none', color: dt.textSecondary, fontSize: '20px', cursor: 'pointer', lineHeight: 1, padding: '0 4px' }}
+            aria-label="Close player profile"
+            style={{
+              background: 'transparent', border: `1px solid ${dt.border}`,
+              color: dt.textSecondary, fontSize: '18px', cursor: 'pointer',
+              lineHeight: 1, padding: '4px 10px', borderRadius: '5px',
+              minWidth: '36px', minHeight: '36px',
+            }}
           >
             ×
           </button>
         </div>
 
-        {/* Loading state */}
+        {/* Loading */}
         {loading && (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px' }}>
             <span style={{ color: dt.textSecondary, fontSize: '14px' }}>Loading…</span>
           </div>
         )}
 
-        {/* Detail content */}
+        {/* Content */}
         {!loading && detail && (
-          <div style={{ padding: '20px', flex: 1 }}>
+          <div style={{ padding: '16px', flex: 1 }}>
 
-            {/* Player header */}
-            <div style={{ marginBottom: '20px' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
-                <span style={{
-                  padding: '3px 8px', borderRadius: '5px', fontSize: '11px', fontWeight: '700',
-                  background: positionBadgeBg(detail.fantasy_position),
-                  color: positionBadgeColor(detail.fantasy_position),
-                  flexShrink: 0, marginTop: '2px',
-                }}>
-                  {detail.fantasy_position ?? detail.nfl_position ?? '—'}
+            {/* Player header: avatar + name + meta */}
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', marginBottom: '14px' }}>
+              <Avatar url={detail.headshot_url} name={detail.display_name} position={detail.fantasy_position} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '20px', fontWeight: '700', color: dt.textPrimary, lineHeight: 1.15 }}>
+                  {detail.jersey_number ? `#${detail.jersey_number} ` : ''}{detail.display_name}
+                </div>
+                <div style={{ fontSize: '13px', color: dt.textSecondary, marginTop: '3px' }}>
+                  {detail.team_name ?? detail.team_abbr ?? 'Unknown Team'}
+                  {' · '}
+                  <span style={{ padding: '1px 5px', borderRadius: '3px', fontSize: '11px', fontWeight: '700', background: positionBadgeBg(detail.fantasy_position), color: positionBadgeColor(detail.fantasy_position) }}>
+                    {detail.fantasy_position ?? detail.nfl_position ?? '—'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Status badges row */}
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
+              {effectiveBadge === 'Drafted' && (
+                <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 8px', borderRadius: '4px', background: '#1e3a8a', color: '#93c5fd' }}>
+                  Drafted{pickLabel(detail)}
+                  {detail.draftPickTeamName ? ` by ${detail.draftPickTeamName}` : ''}
                 </span>
-                <div>
-                  <div style={{ fontSize: '18px', fontWeight: '700', color: dt.textPrimary, lineHeight: 1.2 }}>
-                    {detail.display_name}
-                  </div>
-                  <div style={{ fontSize: '12px', color: dt.textSecondary, marginTop: '3px' }}>
-                    {detail.team_name ?? detail.team_abbr ?? 'Unknown Team'}
-                  </div>
-                </div>
-              </div>
-
-              {/* Status badges */}
-              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
-                {isPicked && (
-                  <span style={{ fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '4px', background: '#1e3a8a', color: '#93c5fd' }}>
-                    Drafted{pickLabel(detail)}
-                    {detail.draftPickTeamName ? ` by ${detail.draftPickTeamName}` : ''}
-                  </span>
-                )}
-                {!isPicked && isOnBoard && (
-                  <span style={{ fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '4px', background: '#064e3b', color: '#6ee7b7' }}>
-                    On Board{detail.boardRank != null ? ` — Rank #${detail.boardRank}` : ''}
-                  </span>
-                )}
-                {injuryLabel && injuryColor && (
-                  <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 8px', borderRadius: '4px', background: '#1c0a0a', color: injuryColor, border: `1px solid ${injuryColor}` }}>
-                    {injuryLabel}
-                  </span>
-                )}
-              </div>
-
-              {/* Action buttons */}
-              {!isPicked && (
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  {canPick && (
-                    <button
-                      onClick={() => { onPick(detail.id); onClose(); }}
-                      style={{ padding: '8px 16px', fontSize: '13px', fontWeight: '700', background: '#14532d', color: dt.green, border: `1px solid ${dt.greenDark}`, borderRadius: '7px', cursor: 'pointer' }}
-                    >
-                      Pick
-                    </button>
-                  )}
-                  {!isOnBoard && (
-                    <button
-                      onClick={() => { onAdd(detail.id); onClose(); }}
-                      style={{ padding: '8px 16px', fontSize: '13px', fontWeight: '700', background: 'transparent', color: dt.blue, border: `1px solid ${dt.blue}`, borderRadius: '7px', cursor: 'pointer' }}
-                    >
-                      + Add to My Rankings
-                    </button>
-                  )}
-                  {isOnBoard && detail.boardRankingId && (
-                    <button
-                      onClick={() => { onRemove(detail.boardRankingId!); onClose(); }}
-                      style={{ padding: '8px 16px', fontSize: '13px', fontWeight: '600', background: 'transparent', color: '#ef4444', border: '1px solid #ef4444', borderRadius: '7px', cursor: 'pointer' }}
-                    >
-                      Remove from Board
-                    </button>
-                  )}
-                </div>
+              )}
+              {effectiveBadge === 'Imported' && (
+                <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 8px', borderRadius: '4px', background: '#1c3340', color: '#67e8f9' }}>
+                  Imported
+                </span>
+              )}
+              {!effectiveBadge && isOnBoard && (
+                <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 8px', borderRadius: '4px', background: '#064e3b', color: '#6ee7b7' }}>
+                  On Board{detail.boardRank != null ? ` — Rank #${detail.boardRank}` : ''}
+                </span>
+              )}
+              {injuryLabel && injuryColor && (
+                <span style={{ fontSize: '11px', fontWeight: '600', padding: '3px 8px', borderRadius: '4px', background: '#1c0a0a', color: injuryColor, border: `1px solid ${injuryColor}` }}>
+                  {injuryLabel}
+                </span>
               )}
             </div>
 
-            {/* Rankings section */}
+            {/* Action buttons — only shown when showBoardActions=true and not drafted */}
+            {showBoardActions && !isPicked && !sourceBadge && (
+              <div className="player-detail-actions" style={{ marginBottom: '20px' }}>
+                {canPick && (
+                  <button
+                    className="player-detail-action-btn"
+                    onClick={() => { onPick(detail.id); onClose(); }}
+                    style={{ ...btnBase, background: '#14532d', color: dt.green, border: `1px solid ${dt.greenDark}` }}
+                  >
+                    Pick
+                  </button>
+                )}
+                {!isOnBoard && (
+                  <button
+                    className="player-detail-action-btn"
+                    onClick={() => { onAdd(detail.id); onClose(); }}
+                    style={{ ...btnBase, background: 'transparent', color: dt.blue, border: `1px solid ${dt.blue}` }}
+                  >
+                    + Add to My Rankings
+                  </button>
+                )}
+                {isOnBoard && detail.boardRankingId && (
+                  <button
+                    className="player-detail-action-btn"
+                    onClick={() => { onRemove(detail.boardRankingId!); onClose(); }}
+                    style={{ ...btnBase, background: 'transparent', color: '#ef4444', border: '1px solid #ef4444' }}
+                  >
+                    Remove from Board
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Bio section */}
+            {(detail.years_exp != null || detail.college) && (
+              <Section title="Bio">
+                {detail.years_exp != null && (
+                  <StatRow
+                    label="Experience"
+                    value={detail.years_exp === 0 ? 'Rookie' : `${detail.years_exp} yr${detail.years_exp !== 1 ? 's' : ''}`}
+                  />
+                )}
+                {detail.college && <StatRow label="College" value={detail.college} />}
+              </Section>
+            )}
+
+            {/* 2026 Rankings */}
             <Section title="2026 Rankings">
               {hasEspn ? (
                 <>
@@ -343,11 +470,11 @@ export default function PlayerDetailModal({
               {detail.sleeperRanking ? (
                 <RankingCard label="Sleeper Relevance" ranking={detail.sleeperRanking} pointsLabel="Proj Pts" />
               ) : (
-                <div style={{ fontSize: '11px', color: '#475569', padding: '2px 0' }}>Sleeper — no rank data</div>
+                <div style={{ fontSize: '11px', color: '#475569', padding: '2px 0 4px' }}>Sleeper — no rank data</div>
               )}
 
               <div style={{ fontSize: '11px', color: '#475569', padding: '2px 0' }}>
-                FantasyPros — not synced yet
+                FantasyPros rankings are not synced yet. Use ESPN, Sleeper, or Last Season for now.
               </div>
             </Section>
 
@@ -359,15 +486,13 @@ export default function PlayerDetailModal({
             )}
 
             {/* 2025 season stats */}
-            {detail.stats ? (
-              <Section title="2025 Season Stats">
+            <Section title="2025 Season Stats">
+              {detail.stats ? (
                 <StatsSection stats={detail.stats} position={detail.fantasy_position} />
-              </Section>
-            ) : (
-              <Section title="2025 Season Stats">
+              ) : (
                 <div style={{ fontSize: '12px', color: '#475569', padding: '8px 0' }}>No stats on record.</div>
-              </Section>
-            )}
+              )}
+            </Section>
 
           </div>
         )}

@@ -3,6 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import UserMenu from '../components/UserMenu';
+import { usePlayerDetail } from '../hooks/draft/usePlayerDetail';
+import PlayerDetailModal from '../components/draft/PlayerDetailModal';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -136,6 +138,9 @@ export default function MyTeam() {
   const [totalParticipants, setTotalParticipants] = useState(0);
   const [participants, setParticipants]       = useState<Participant[]>([]);
   const [viewingId, setViewingId]             = useState<string | null>(null);
+
+  // Player detail panel — no scoring rule needed for My Team (read-only view)
+  const playerDetail = usePlayerDetail(draftId!, user?.id, null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const viewingIdRef = useRef<string | null>(viewingId);
@@ -419,7 +424,7 @@ export default function MyTeam() {
                 {draft.status === 'pending' ? 'Draft has not started.' : 'No starters yet.'}
               </p>
             ) : (
-              starters.map((slot, i) => <SlotRow key={i} slot={slot} />)
+              starters.map((slot, i) => <SlotRow key={i} slot={slot} onOpenDetail={playerDetail.openPlayerDetail} />)
             )}
           </div>
 
@@ -431,7 +436,7 @@ export default function MyTeam() {
                   Bench
                 </span>
               </div>
-              {bench.map((slot, i) => <SlotRow key={i} slot={slot} />)}
+              {bench.map((slot, i) => <SlotRow key={i} slot={slot} onOpenDetail={playerDetail.openPlayerDetail} />)}
             </div>
           )}
 
@@ -451,6 +456,29 @@ export default function MyTeam() {
           )}
         </>
       )}
+
+      {/* Player profile panel */}
+      <PlayerDetailModal
+        detail={playerDetail.playerDetail}
+        loading={playerDetail.detailLoading}
+        isOnBoard={false}
+        isPicked={playerDetail.playerDetail != null && players.find(p => p.playerId === playerDetail.playerDetail!.id)?.source === 'drafted'}
+        canPick={false}
+        showBoardActions={false}
+        sourceBadge={
+          playerDetail.playerDetail
+            ? (players.find(p => p.playerId === playerDetail.playerDetail!.id)?.source === 'imported'
+                ? 'Imported'
+                : players.find(p => p.playerId === playerDetail.playerDetail!.id)?.source === 'drafted'
+                  ? 'Drafted'
+                  : null)
+            : null
+        }
+        onAdd={() => {}}
+        onRemove={() => {}}
+        onPick={() => {}}
+        onClose={playerDetail.closePlayerDetail}
+      />
     </div>
   );
 }
@@ -480,11 +508,13 @@ const SOURCE_BADGE: Record<PlayerSource, { label: string; bg: string; color: str
   keeper:   { label: 'Keeper',   bg: '#3b2a0a', color: '#fcd34d' },
 };
 
-function SlotRow({ slot }: { slot: RosterSlot }) {
-  const col       = slotColor(slot.slotType);
-  const isEmpty   = !slot.player;
-  const srcBadge  = slot.player ? SOURCE_BADGE[slot.player.source] : null;
+function SlotRow({ slot, onOpenDetail }: { slot: RosterSlot; onOpenDetail: (id: string) => void }) {
+  const col        = slotColor(slot.slotType);
+  const isEmpty    = !slot.player;
+  const srcBadge   = slot.player ? SOURCE_BADGE[slot.player.source] : null;
   const unresolved = slot.player?.unresolved ?? false;
+  // Only resolved players with a known sports_player_id are clickable
+  const isClickable = !isEmpty && !unresolved && !!slot.player?.playerId;
 
   return (
     <div style={{
@@ -497,7 +527,7 @@ function SlotRow({ slot }: { slot: RosterSlot }) {
       {/* Slot label */}
       <span style={{
         minWidth: '40px', padding: '2px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700',
-        textAlign: 'center', background: col.bg, color: col.text,
+        textAlign: 'center', background: col.bg, color: col.text, flexShrink: 0,
       }}>
         {slot.slotLabel}
       </span>
@@ -505,25 +535,41 @@ function SlotRow({ slot }: { slot: RosterSlot }) {
       {isEmpty ? (
         <span style={{ flex: 1, fontSize: '13px', color: '#475569' }}>— Empty —</span>
       ) : (
-        <>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: '600', fontSize: '14px', color: textPrimary }}>{slot.player!.displayName}</span>
-              {srcBadge && (
-                <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '4px', background: srcBadge.bg, color: srcBadge.color }}>
-                  {unresolved ? 'Unresolved' : srcBadge.label}
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize: '11px', color: textSecondary, marginTop: '1px' }}>
-              {slot.player!.teamAbbr && `${slot.player!.teamAbbr} · `}
-              {slot.player!.fantasyPosition ?? '—'}
-              {slot.player!.source === 'drafted' && slot.player!.round !== null && (
-                <span style={{ marginLeft: '6px' }}>Rd {slot.player!.round}</span>
-              )}
-            </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            {isClickable ? (
+              <button
+                onClick={e => { e.stopPropagation(); onOpenDetail(slot.player!.playerId!); }}
+                style={{
+                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                  fontWeight: '600', fontSize: '14px', color: textPrimary, textAlign: 'left',
+                  textDecoration: 'underline', textDecorationColor: 'transparent',
+                  transition: 'text-decoration-color 0.12s',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.textDecorationColor = '#60a5fa')}
+                onMouseLeave={e => (e.currentTarget.style.textDecorationColor = 'transparent')}
+              >
+                {slot.player!.displayName}
+              </button>
+            ) : (
+              <span style={{ fontWeight: '600', fontSize: '14px', color: textPrimary }}>
+                {slot.player!.displayName}
+              </span>
+            )}
+            {srcBadge && (
+              <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '4px', background: srcBadge.bg, color: srcBadge.color }}>
+                {unresolved ? 'Unresolved' : srcBadge.label}
+              </span>
+            )}
           </div>
-        </>
+          <div style={{ fontSize: '11px', color: textSecondary, marginTop: '1px' }}>
+            {slot.player!.teamAbbr && `${slot.player!.teamAbbr} · `}
+            {slot.player!.fantasyPosition ?? '—'}
+            {slot.player!.source === 'drafted' && slot.player!.round !== null && (
+              <span style={{ marginLeft: '6px' }}>Rd {slot.player!.round}</span>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
