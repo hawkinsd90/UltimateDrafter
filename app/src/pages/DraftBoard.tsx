@@ -108,6 +108,7 @@ export default function DraftBoard() {
       {showPlayerSearch && (
         <PlayerSearch
           draftId={draftId!}
+          rookieOnly={board.isRookieDraft}
           onSelectPlayer={handleMakePick}
           onClose={() => setShowPlayerSearch(false)}
         />

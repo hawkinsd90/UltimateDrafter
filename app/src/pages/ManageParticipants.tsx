@@ -38,6 +38,8 @@ export default function ManageParticipants() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [resetConfirm, setResetConfirm] = useState(false);
 
   useEffect(() => {
     if (draftId) loadData();
@@ -144,6 +146,22 @@ export default function ManageParticipants() {
 
   function handleDragEnd() {
     setDragIdx(null);
+  }
+
+  async function handleReset() {
+    if (!draft) return;
+    setResetting(true);
+    setError('');
+    setResetConfirm(false);
+    const { error: rpcError } = await supabase.rpc('reset_draft', { p_draft_id: draft.id });
+    if (rpcError) {
+      setError('Failed to reset draft: ' + rpcError.message);
+      setResetting(false);
+      return;
+    }
+    // Reload fresh data after reset
+    await loadData();
+    setResetting(false);
   }
 
   async function handleSaveAndStart() {
@@ -326,44 +344,83 @@ export default function ManageParticipants() {
         <Link
           to={`/drafts/${draft.id}/import`}
           style={{
-            display: 'block',
-            width: '100%',
-            padding: '14px',
-            marginBottom: '12px',
-            background: 'white',
-            color: '#1d4ed8',
-            border: '1px solid #bfdbfe',
-            borderRadius: '8px',
-            fontWeight: '600',
-            fontSize: '16px',
-            textAlign: 'center',
-            textDecoration: 'none',
-            boxSizing: 'border-box',
+            display: 'block', width: '100%', padding: '14px', marginBottom: '12px',
+            background: 'white', color: '#1d4ed8', border: '1px solid #bfdbfe',
+            borderRadius: '8px', fontWeight: '600', fontSize: '16px',
+            textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box',
           }}
         >
           Import ESPN / Sleeper League
         </Link>
       )}
 
-      <button
-        onClick={handleSaveAndStart}
-        disabled={saving || participants.length < 2}
-        title={participants.length < 2 ? 'Select at least 2 participants' : undefined}
-        style={{
-          width: '100%',
-          padding: '14px',
-          background: saving || participants.length < 2 ? '#9ca3af' : '#059669',
-          color: 'white',
-          border: 'none',
-          borderRadius: '8px',
-          fontWeight: '600',
-          fontSize: '16px',
-          cursor: saving || participants.length < 2 ? 'not-allowed' : 'pointer',
-        }}
-      >
-        {saving ? 'Starting Draft...' : `Start Draft with ${participants.length} Participant${participants.length !== 1 ? 's' : ''}`}
-      </button>
-      {participants.length < 2 && (
+      {/* Reset Draft — shown when draft has started or is paused */}
+      {user?.id === draft.league_owner_id && (draft.status === 'in_progress' || draft.status === 'paused' || draft.status === 'completed') && (
+        <div style={{ marginBottom: '12px' }}>
+          {!resetConfirm ? (
+            <button
+              onClick={() => setResetConfirm(true)}
+              disabled={resetting}
+              style={{
+                width: '100%', padding: '12px', fontSize: '14px', fontWeight: '600',
+                background: 'transparent', color: '#ef4444',
+                border: '1px solid #ef4444', borderRadius: '8px',
+                cursor: resetting ? 'not-allowed' : 'pointer',
+              }}
+            >
+              Reset Draft
+            </button>
+          ) : (
+            <div style={{ padding: '16px', background: '#450a0a', border: '1px solid #ef4444', borderRadius: '8px' }}>
+              <p style={{ margin: '0 0 12px', fontSize: '14px', color: '#fca5a5', lineHeight: '1.5' }}>
+                <strong>Reset this draft?</strong> All picks will be deleted and the draft will return to setup. This cannot be undone.
+              </p>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={handleReset}
+                  disabled={resetting}
+                  style={{
+                    padding: '8px 20px', fontWeight: '700', fontSize: '14px',
+                    background: '#dc2626', color: '#fff', border: 'none',
+                    borderRadius: '6px', cursor: resetting ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {resetting ? 'Resetting…' : 'Yes, Reset Draft'}
+                </button>
+                <button
+                  onClick={() => setResetConfirm(false)}
+                  style={{
+                    padding: '8px 16px', fontSize: '14px', background: 'transparent',
+                    color: '#9ca3af', border: '1px solid #374151',
+                    borderRadius: '6px', cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {draft.status === 'pending' && (
+        <button
+          onClick={handleSaveAndStart}
+          disabled={saving || participants.length < 2}
+          title={participants.length < 2 ? 'Select at least 2 participants' : undefined}
+          style={{
+            width: '100%', padding: '14px',
+            background: saving || participants.length < 2 ? '#9ca3af' : '#059669',
+            color: 'white', border: 'none', borderRadius: '8px',
+            fontWeight: '600', fontSize: '16px',
+            cursor: saving || participants.length < 2 ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {saving ? 'Starting Draft...' : `Start Draft with ${participants.length} Participant${participants.length !== 1 ? 's' : ''}`}
+        </button>
+      )}
+
+      {draft.status === 'pending' && participants.length < 2 && (
         <p style={{ textAlign: 'center', marginTop: '10px', color: '#9ca3af', fontSize: '14px' }}>
           Select at least 2 participants to start.
         </p>

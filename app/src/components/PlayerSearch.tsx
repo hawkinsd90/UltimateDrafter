@@ -18,6 +18,7 @@ type UnavailableReason = 'picked' | 'keeper' | 'excluded';
 
 interface PlayerSearchProps {
   draftId: string;
+  rookieOnly?: boolean;
   onSelectPlayer: (playerId: string) => void;
   onClose: () => void;
 }
@@ -38,7 +39,7 @@ const UNAVAILABLE_LABEL: Record<UnavailableReason, string> = {
   excluded: 'Unavailable',
 };
 
-export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: PlayerSearchProps) {
+export default function PlayerSearch({ draftId, rookieOnly = false, onSelectPlayer, onClose }: PlayerSearchProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [positionFilter, setPositionFilter] = useState<PositionFilter>('All');
   const [players, setPlayers] = useState<DraftPoolPlayer[]>([]);
@@ -63,7 +64,7 @@ export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: Playe
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [searchTerm, positionFilter]);
+  }, [searchTerm, positionFilter, rookieOnly]);
 
   async function loadUnavailableSets() {
     const [picksRes, keepersRes, exclusionsRes] = await Promise.all([
@@ -95,6 +96,10 @@ export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: Playe
       .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, team_name, years_exp')
       .order('display_name')
       .limit(50);
+
+    if (rookieOnly) {
+      query = query.eq('years_exp', 0);
+    }
 
     if (positionFilter !== 'All') {
       query = query.eq('fantasy_position', positionFilter);
@@ -144,7 +149,14 @@ export default function PlayerSearch({ draftId, onSelectPlayer, onClose }: Playe
       >
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#0f172a' }}>Select Player</h2>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#0f172a' }}>
+              {rookieOnly ? 'Select Rookie' : 'Select Player'}
+            </h2>
+            {rookieOnly && (
+              <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#64748b' }}>Showing rookies only (0 years experience)</p>
+            )}
+          </div>
           <button
             onClick={onClose}
             style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer', color: '#94a3b8', lineHeight: 1, padding: '4px' }}

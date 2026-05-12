@@ -26,6 +26,7 @@ export interface UseDraftBoardReturn {
   totalRounds: number | null;
   currentRound: number;
   roundsRemaining: number | null;
+  isRookieDraft: boolean;
 
   // Actions
   startDraft: () => Promise<void>;
@@ -226,10 +227,15 @@ export function useDraftBoard(draftId: string, userId: string | undefined): UseD
   const canForcePick = !!(draft && draft.status === 'in_progress' && currentParticipant && isOwner && !isMyTurn);
   const pickedPlayerIds = new Set(picks.map(p => p.player_id).filter(Boolean) as string[]);
 
+  // For rookie drafts, num_rounds overrides the roster-sum calculation
+  const settingsExt = draftSettings as (typeof draftSettings & { num_rounds?: number | null; draft_type?: string | null }) | null;
+  const isRookieDraft = (settingsExt?.draft_type ?? draft?.draft_type) === 'rookie';
   const totalRounds = draftSettings
-    ? (draftSettings.roster_qb ?? 0) + (draftSettings.roster_rb ?? 0) + (draftSettings.roster_wr ?? 0)
-      + (draftSettings.roster_te ?? 0) + (draftSettings.roster_flex ?? 0) + (draftSettings.roster_k ?? 0)
-      + (draftSettings.roster_dst ?? 0) + (draftSettings.bench ?? 0)
+    ? (isRookieDraft && settingsExt?.num_rounds != null
+        ? settingsExt.num_rounds
+        : (draftSettings.roster_qb ?? 0) + (draftSettings.roster_rb ?? 0) + (draftSettings.roster_wr ?? 0)
+          + (draftSettings.roster_te ?? 0) + (draftSettings.roster_flex ?? 0) + (draftSettings.roster_k ?? 0)
+          + (draftSettings.roster_dst ?? 0) + (draftSettings.bench ?? 0))
     : null;
   const currentRound = participants.length > 0 ? Math.ceil((draft?.current_pick_number ?? 1) / participants.length) : 1;
   const roundsRemaining = totalRounds != null ? Math.max(0, totalRounds - currentRound + 1) : null;
@@ -237,7 +243,7 @@ export function useDraftBoard(draftId: string, userId: string | undefined): UseD
   return {
     draft, league, draftSettings, participants, picks, currentParticipant, loading, error, setError,
     isOwner, myParticipant, isMyTurn, draftNotStarted, canMakePick, canForcePick, pickedPlayerIds,
-    totalRounds, currentRound, roundsRemaining,
+    totalRounds, currentRound, roundsRemaining, isRookieDraft,
     startDraft, pauseDraft, resumeDraft, makePick,
   };
 }
