@@ -24,9 +24,11 @@ type DraftPoolCounts = {
   DST: number;
 };
 
+// Mock provider is only shown in local dev — it inserts hardcoded test players
+// that must not appear in a real draft pool.
 const PROVIDERS = [
-  { value: 'mock',        label: 'Mock (no credentials needed)' },
-  { value: 'sleeper',     label: 'Sleeper (free public API)' },
+  ...(import.meta.env.DEV ? [{ value: 'mock', label: 'Mock — dev only (no credentials needed)' }] : []),
+  { value: 'sleeper',      label: 'Sleeper (free public API)' },
   { value: 'sportsdataio', label: 'SportsDataIO (requires API key)' },
 ];
 
@@ -39,7 +41,7 @@ const POOL_MAX = 2000;
 const POOL_MIN_TOTAL = 200;
 
 export default function AdminNFLRosterImportPanel() {
-  const [provider, setProvider] = useState('mock');
+  const [provider, setProvider] = useState(import.meta.env.DEV ? 'mock' : 'sleeper');
   const [season, setSeason] = useState(currentYear);
   const [importing, setImporting] = useState(false);
   const [lastResult, setLastResult] = useState<Record<string, unknown> | null>(null);
@@ -277,6 +279,12 @@ export default function AdminNFLRosterImportPanel() {
             {importing ? 'Importing…' : 'Run Import'}
           </button>
         </div>
+
+        {provider === 'sleeper' && (
+          <div style={{ marginTop: '12px', padding: '10px 14px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', fontSize: '13px', color: '#166534' }}>
+            Sleeper is the recommended provider — free public API, no credentials required.
+          </div>
+        )}
 
         {provider === 'sportsdataio' && (
           <div style={{ marginTop: '12px', padding: '10px 14px', background: '#fef9c3', border: '1px solid #fde047', borderRadius: '6px', fontSize: '13px', color: '#713f12' }}>

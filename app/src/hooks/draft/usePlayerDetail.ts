@@ -50,13 +50,14 @@ export type PlayerDetail = {
   injury_status: string | null;
   team_abbr: string | null;
   team_name: string | null;
-  season_outlook: string | null;
   rankings: PlayerDetailRanking[];
+  sleeperRanking: PlayerDetailRanking | null;
   lastSeasonRanking: PlayerDetailRanking | null;
   stats: PlayerSeasonStats | null;
   boardRankingId: string | null;
   boardRank: number | null;
   draftPickRound: number | null;
+  draftPickInRound: number | null;
   draftPickNumber: number | null;
   draftPickTeamName: string | null;
 };
@@ -67,6 +68,12 @@ export type UsePlayerDetailReturn = {
   openPlayerDetail: (sportsPlayerId: string) => void;
   closePlayerDetail: () => void;
 };
+
+function toNum(v: unknown): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return isNaN(n) ? null : n;
+}
 
 export function usePlayerDetail(
   draftId: string,
@@ -80,15 +87,15 @@ export function usePlayerDetail(
     setDetailLoading(true);
     setPlayerDetail(null);
 
-    const [playerRes, rankingsRes, lastSeasonRes, statsRes, pickRes, boardRes] = await Promise.all([
-      // 1. Player base info + team
+    const [playerRes, rankingsRes, sleeperRankRes, lastSeasonRes, statsRes, pickRes, boardRes] = await Promise.all([
+      // 1. Player base info from draft pool view (includes team_name)
       supabase
         .from('nfl_draft_player_pool')
         .select('id, display_name, fantasy_position, position, status, injury_status, team_abbr, team_name')
         .eq('id', sportsPlayerId)
         .maybeSingle(),
 
-      // 2. ESPN rankings (standard + ppr) for 2026
+      // 2. ESPN rankings (standard + ppr) for current season
       supabase
         .from('player_rankings')
         .select('provider, scoring_format, overall_rank, position_rank, position_rank_label, fantasy_points, adp, auction_value, percent_owned')
@@ -98,7 +105,19 @@ export function usePlayerDetail(
         .eq('season', CURRENT_SEASON)
         .is('draft_scoring_rule_id', null),
 
-      // 3. Last Season ranking (if scoring rule available)
+      // 3. Sleeper search rank
+      supabase
+        .from('player_rankings')
+        .select('provider, scoring_format, overall_rank, position_rank, position_rank_label, fantasy_points, adp, auction_value, percent_owned')
+        .eq('sports_player_id', sportsPlayerId)
+        .eq('provider', 'sleeper')
+        .eq('ranking_type', 'search_rank')
+        .eq('season', CURRENT_SEASON)
+        .eq('scoring_format', 'any')
+        .is('draft_scoring_rule_id', null)
+        .maybeSingle(),
+
+      // 4. Last Season ranking (only if a scoring rule is attached to this draft)
       draftScoringRuleId
         ? supabase
             .from('player_rankings')
@@ -110,7 +129,7 @@ export function usePlayerDetail(
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
 
-      // 4. 2025 regular season stats
+      // 5. 2025 regular season stats (Sleeper is the stats provider)
       supabase
         .from('player_season_stats')
         .select('season, stat_type, games, passing_yards, passing_tds, passing_ints, rushing_yards, rushing_tds, receptions, receiving_yards, receiving_tds, fumbles_lost, fg_made_0_39, fg_made_40_49, fg_made_50_plus, fg_missed, xp_made, xp_missed, sacks, def_interceptions, fumble_recoveries, def_tds, safeties, blocks')
@@ -120,15 +139,16 @@ export function usePlayerDetail(
         .eq('provider', 'sleeper')
         .maybeSingle(),
 
-      // 5. Draft pick for this player in this draft
+      // 6. Draft pick for this player in this draft
+      // Columns: pick_number (overall), round, pick_in_round
       supabase
         .from('draft_picks')
-        .select('pick_number, round_number, participant:draft_participants(team_name)')
+        .select('pick_number, round, pick_in_round, participant:draft_participants(team_name)')
         .eq('draft_id', draftId)
         .eq('player_id', sportsPlayerId)
         .maybeSingle(),
 
-      // 6. Board ranking for this user/draft/player
+      // 7. Board ranking for current user/draft/player
       userId
         ? supabase
             .from('draft_board_rankings')
@@ -139,6 +159,15 @@ export function usePlayerDetail(
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
     ]);
+
+    // Log non-critical errors without blocking the modal
+    if (playerRes.error)      console.warn('[usePlayerDetail] playerRes error:', playerRes.error.message);
+    if (rankingsRes.error)    console.warn('[usePlayerDetail] rankingsRes error:', rankingsRes.error.message);
+    if (sleeperRankRes.error) console.warn('[usePlayerDetail] sleeperRankRes error:', sleeperRankRes.error.message);
+    if (lastSeasonRes.error)  console.warn('[usePlayerDetail] lastSeasonRes error:', lastSeasonRes.error.message);
+    if (statsRes.error)       console.warn('[usePlayerDetail] statsRes error:', statsRes.error.message);
+    if (pickRes.error)        console.warn('[usePlayerDetail] pickRes error:', pickRes.error.message);
+    if (boardRes.error)       console.warn('[usePlayerDetail] boardRes error:', boardRes.error.message);
 
     const p = playerRes.data;
     if (!p) {
@@ -152,11 +181,24 @@ export function usePlayerDetail(
       overall_rank: r.overall_rank,
       position_rank: r.position_rank,
       position_rank_label: r.position_rank_label,
-      fantasy_points: r.fantasy_points != null ? Number(r.fantasy_points) : null,
-      adp: r.adp != null ? Number(r.adp) : null,
-      auction_value: r.auction_value != null ? Number(r.auction_value) : null,
-      percent_owned: r.percent_owned != null ? Number(r.percent_owned) : null,
+      fantasy_points: toNum(r.fantasy_points),
+      adp: toNum(r.adp),
+      auction_value: toNum(r.auction_value),
+      percent_owned: toNum(r.percent_owned),
     }));
+
+    const srRaw = sleeperRankRes.data;
+    const sleeperRanking: PlayerDetailRanking | null = srRaw ? {
+      provider: srRaw.provider,
+      scoring_format: srRaw.scoring_format,
+      overall_rank: srRaw.overall_rank,
+      position_rank: srRaw.position_rank,
+      position_rank_label: srRaw.position_rank_label,
+      fantasy_points: toNum(srRaw.fantasy_points),
+      adp: toNum(srRaw.adp),
+      auction_value: null,
+      percent_owned: toNum(srRaw.percent_owned),
+    } : null;
 
     const lsRaw = lastSeasonRes.data;
     const lastSeasonRanking: PlayerDetailRanking | null = lsRaw ? {
@@ -165,7 +207,7 @@ export function usePlayerDetail(
       overall_rank: lsRaw.overall_rank,
       position_rank: lsRaw.position_rank,
       position_rank_label: lsRaw.position_rank_label,
-      fantasy_points: lsRaw.fantasy_points != null ? Number(lsRaw.fantasy_points) : null,
+      fantasy_points: toNum(lsRaw.fantasy_points),
       adp: null,
       auction_value: null,
       percent_owned: null,
@@ -175,31 +217,32 @@ export function usePlayerDetail(
     const stats: PlayerSeasonStats | null = statsRaw ? {
       season: statsRaw.season,
       stat_type: statsRaw.stat_type,
-      games: statsRaw.games != null ? Number(statsRaw.games) : null,
-      passing_yards: statsRaw.passing_yards != null ? Number(statsRaw.passing_yards) : null,
-      passing_tds: statsRaw.passing_tds != null ? Number(statsRaw.passing_tds) : null,
-      passing_ints: statsRaw.passing_ints != null ? Number(statsRaw.passing_ints) : null,
-      rushing_yards: statsRaw.rushing_yards != null ? Number(statsRaw.rushing_yards) : null,
-      rushing_tds: statsRaw.rushing_tds != null ? Number(statsRaw.rushing_tds) : null,
-      receptions: statsRaw.receptions != null ? Number(statsRaw.receptions) : null,
-      receiving_yards: statsRaw.receiving_yards != null ? Number(statsRaw.receiving_yards) : null,
-      receiving_tds: statsRaw.receiving_tds != null ? Number(statsRaw.receiving_tds) : null,
-      fumbles_lost: statsRaw.fumbles_lost != null ? Number(statsRaw.fumbles_lost) : null,
-      fg_made_0_39: statsRaw.fg_made_0_39 != null ? Number(statsRaw.fg_made_0_39) : null,
-      fg_made_40_49: statsRaw.fg_made_40_49 != null ? Number(statsRaw.fg_made_40_49) : null,
-      fg_made_50_plus: statsRaw.fg_made_50_plus != null ? Number(statsRaw.fg_made_50_plus) : null,
-      fg_missed: statsRaw.fg_missed != null ? Number(statsRaw.fg_missed) : null,
-      xp_made: statsRaw.xp_made != null ? Number(statsRaw.xp_made) : null,
-      xp_missed: statsRaw.xp_missed != null ? Number(statsRaw.xp_missed) : null,
-      sacks: statsRaw.sacks != null ? Number(statsRaw.sacks) : null,
-      def_interceptions: statsRaw.def_interceptions != null ? Number(statsRaw.def_interceptions) : null,
-      fumble_recoveries: statsRaw.fumble_recoveries != null ? Number(statsRaw.fumble_recoveries) : null,
-      def_tds: statsRaw.def_tds != null ? Number(statsRaw.def_tds) : null,
-      safeties: statsRaw.safeties != null ? Number(statsRaw.safeties) : null,
-      blocks: statsRaw.blocks != null ? Number(statsRaw.blocks) : null,
+      games: toNum(statsRaw.games),
+      passing_yards: toNum(statsRaw.passing_yards),
+      passing_tds: toNum(statsRaw.passing_tds),
+      passing_ints: toNum(statsRaw.passing_ints),
+      rushing_yards: toNum(statsRaw.rushing_yards),
+      rushing_tds: toNum(statsRaw.rushing_tds),
+      receptions: toNum(statsRaw.receptions),
+      receiving_yards: toNum(statsRaw.receiving_yards),
+      receiving_tds: toNum(statsRaw.receiving_tds),
+      fumbles_lost: toNum(statsRaw.fumbles_lost),
+      fg_made_0_39: toNum(statsRaw.fg_made_0_39),
+      fg_made_40_49: toNum(statsRaw.fg_made_40_49),
+      fg_made_50_plus: toNum(statsRaw.fg_made_50_plus),
+      fg_missed: toNum(statsRaw.fg_missed),
+      xp_made: toNum(statsRaw.xp_made),
+      xp_missed: toNum(statsRaw.xp_missed),
+      sacks: toNum(statsRaw.sacks),
+      def_interceptions: toNum(statsRaw.def_interceptions),
+      fumble_recoveries: toNum(statsRaw.fumble_recoveries),
+      def_tds: toNum(statsRaw.def_tds),
+      safeties: toNum(statsRaw.safeties),
+      blocks: toNum(statsRaw.blocks),
     } : null;
 
-    const pickRaw = pickRes.data as { pick_number: number | null; round_number: number | null; participant: { team_name: string | null } | null } | null;
+    type PickRaw = { pick_number: number | null; round: number | null; pick_in_round: number | null; participant: { team_name: string | null } | null } | null;
+    const pickRaw = pickRes.data as PickRaw;
     const boardRaw = boardRes.data as { id: string; rank: number } | null;
 
     setPlayerDetail({
@@ -211,13 +254,14 @@ export function usePlayerDetail(
       injury_status: p.injury_status,
       team_abbr: p.team_abbr,
       team_name: p.team_name,
-      season_outlook: null,
       rankings,
+      sleeperRanking,
       lastSeasonRanking,
       stats,
       boardRankingId: boardRaw?.id ?? null,
       boardRank: boardRaw?.rank ?? null,
-      draftPickRound: pickRaw?.round_number ?? null,
+      draftPickRound: pickRaw?.round ?? null,
+      draftPickInRound: pickRaw?.pick_in_round ?? null,
       draftPickNumber: pickRaw?.pick_number ?? null,
       draftPickTeamName: pickRaw?.participant?.team_name ?? null,
     });

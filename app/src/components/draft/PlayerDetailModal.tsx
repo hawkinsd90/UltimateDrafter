@@ -22,7 +22,10 @@ function fmt(v: number | null | undefined, decimals = 0): string {
 
 function StatRow({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: `1px solid ${dt.border}` }}>
+    <div style={{
+      display: 'flex', justifyContent: 'space-between',
+      padding: '5px 0', borderBottom: `1px solid ${dt.border}`,
+    }}>
       <span style={{ fontSize: '12px', color: dt.textSecondary }}>{label}</span>
       <span style={{ fontSize: '12px', fontWeight: '600', color: value === '—' ? '#475569' : dt.textPrimary }}>{value}</span>
     </div>
@@ -32,7 +35,10 @@ function StatRow({ label, value }: { label: string; value: string }) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: '18px' }}>
-      <div style={{ fontSize: '10px', fontWeight: '700', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '8px' }}>
+      <div style={{
+        fontSize: '10px', fontWeight: '700', color: '#475569',
+        textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '8px',
+      }}>
         {title}
       </div>
       {children}
@@ -40,11 +46,28 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function RankingCard({ label, ranking }: { label: string; ranking: { overall_rank: number | null; position_rank_label: string | null; position_rank: number | null; fantasy_points: number | null; adp: number | null; percent_owned: number | null; auction_value: number | null } }) {
+type RankingLike = {
+  overall_rank: number | null;
+  position_rank_label: string | null;
+  position_rank: number | null;
+  fantasy_points: number | null;
+  adp: number | null;
+  percent_owned: number | null;
+  auction_value: number | null;
+};
+
+function RankingCard({ label, ranking, pointsLabel = 'Proj Pts' }: {
+  label: string;
+  ranking: RankingLike;
+  pointsLabel?: string;
+}) {
   const hasAny = ranking.overall_rank != null || ranking.fantasy_points != null || ranking.adp != null;
   if (!hasAny) return null;
   return (
-    <div style={{ background: dt.bg, border: `1px solid ${dt.border}`, borderRadius: '7px', padding: '10px 12px', marginBottom: '6px' }}>
+    <div style={{
+      background: dt.bg, border: `1px solid ${dt.border}`,
+      borderRadius: '7px', padding: '10px 12px', marginBottom: '6px',
+    }}>
       <div style={{ fontSize: '11px', fontWeight: '700', color: dt.textSecondary, marginBottom: '6px' }}>{label}</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
         {ranking.overall_rank != null && (
@@ -64,7 +87,7 @@ function RankingCard({ label, ranking }: { label: string; ranking: { overall_ran
         {ranking.fantasy_points != null && (
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '16px', fontWeight: '700', color: dt.green }}>{ranking.fantasy_points.toFixed(1)}</div>
-            <div style={{ fontSize: '10px', color: dt.textSecondary }}>Proj Pts</div>
+            <div style={{ fontSize: '10px', color: dt.textSecondary }}>{pointsLabel}</div>
           </div>
         )}
         {ranking.adp != null && (
@@ -167,8 +190,21 @@ export default function PlayerDetailModal({
   const injuryColor = injuryLabel ? (INJURY_COLORS[injuryLabel] ?? '#64748b') : null;
 
   const espnStandard = detail?.rankings.find(r => r.scoring_format === 'standard');
-  const espnPpr = detail?.rankings.find(r => r.scoring_format === 'ppr');
-  const hasEspn = espnStandard != null || espnPpr != null;
+  const espnPpr     = detail?.rankings.find(r => r.scoring_format === 'ppr');
+  const hasEspn     = espnStandard != null || espnPpr != null;
+
+  // Draft pick label — show "Rd 2, Pick 5 (overall #17)"
+  function pickLabel(d: PlayerDetail): string {
+    const parts: string[] = [];
+    if (d.draftPickRound != null) parts.push(`Rd ${d.draftPickRound}`);
+    if (d.draftPickInRound != null) parts.push(`Pick ${d.draftPickInRound}`);
+    if (d.draftPickNumber != null && (d.draftPickRound != null || d.draftPickInRound != null)) {
+      parts.push(`(#${d.draftPickNumber} overall)`);
+    } else if (d.draftPickNumber != null) {
+      parts.push(`Pick #${d.draftPickNumber}`);
+    }
+    return parts.length > 0 ? ` — ${parts.join(', ')}` : '';
+  }
 
   return (
     <>
@@ -181,7 +217,7 @@ export default function PlayerDetailModal({
         }}
       />
 
-      {/* Modal panel */}
+      {/* Drawer panel — right side */}
       <div style={{
         position: 'fixed',
         top: 0, right: 0, bottom: 0,
@@ -246,7 +282,7 @@ export default function PlayerDetailModal({
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
                 {isPicked && (
                   <span style={{ fontSize: '11px', fontWeight: '700', padding: '2px 8px', borderRadius: '4px', background: '#1e3a8a', color: '#93c5fd' }}>
-                    Drafted{detail.draftPickRound != null ? ` — Rd ${detail.draftPickRound}, Pick ${detail.draftPickNumber}` : ''}
+                    Drafted{pickLabel(detail)}
                     {detail.draftPickTeamName ? ` by ${detail.draftPickTeamName}` : ''}
                   </span>
                 )}
@@ -297,13 +333,20 @@ export default function PlayerDetailModal({
             <Section title="2026 Rankings">
               {hasEspn ? (
                 <>
-                  {espnStandard && <RankingCard label="ESPN Standard" ranking={espnStandard} />}
-                  {espnPpr && <RankingCard label="ESPN PPR" ranking={espnPpr} />}
+                  {espnStandard && <RankingCard label="ESPN Standard" ranking={espnStandard} pointsLabel="Proj Pts" />}
+                  {espnPpr      && <RankingCard label="ESPN PPR"      ranking={espnPpr}      pointsLabel="Proj Pts" />}
                 </>
               ) : (
-                <div style={{ fontSize: '12px', color: '#475569', padding: '8px 0' }}>No ESPN rankings available.</div>
+                <div style={{ fontSize: '12px', color: '#475569', padding: '4px 0 8px' }}>No ESPN rankings available.</div>
               )}
-              <div style={{ fontSize: '11px', color: '#475569', padding: '4px 0' }}>
+
+              {detail.sleeperRanking ? (
+                <RankingCard label="Sleeper Relevance" ranking={detail.sleeperRanking} pointsLabel="Proj Pts" />
+              ) : (
+                <div style={{ fontSize: '11px', color: '#475569', padding: '2px 0' }}>Sleeper — no rank data</div>
+              )}
+
+              <div style={{ fontSize: '11px', color: '#475569', padding: '2px 0' }}>
                 FantasyPros — not synced yet
               </div>
             </Section>
@@ -311,7 +354,7 @@ export default function PlayerDetailModal({
             {/* Last Season ranking */}
             {detail.lastSeasonRanking && (
               <Section title="Last Season (2025) — League Scoring">
-                <RankingCard label="Last Season" ranking={detail.lastSeasonRanking} />
+                <RankingCard label="Last Season" ranking={detail.lastSeasonRanking} pointsLabel="2025 Pts" />
               </Section>
             )}
 
