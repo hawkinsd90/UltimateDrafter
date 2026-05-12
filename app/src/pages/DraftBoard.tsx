@@ -168,6 +168,8 @@ export default function DraftBoard() {
           onAddPlayer={myBoard.addPlayerToBoard}
           onAddAll={myBoard.addAllAvailableToBoard}
           onReorderInPositionGroup={myBoard.reorderInPositionGroup}
+          onApplySort={myBoard.applySortToBoard}
+          applySortLoading={myBoard.applySortLoading}
           onOpenDetail={detail.openPlayerDetail}
         />
       )}

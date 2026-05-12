@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { BoardPlayer, RankingSource, SortByMode } from '../../hooks/draft/draftTypes';
-import { dt } from '../../hooks/draft/draftTypes';
-import type { PositionGroupTab } from '../../hooks/draft/useMyDraftBoard';
+import { dt, RANKING_SOURCE_LABELS } from '../../hooks/draft/draftTypes';
+import type { PositionGroupTab, ApplySortMode } from '../../hooks/draft/useMyDraftBoard';
 import { POSITION_GROUP_TABS } from '../../hooks/draft/useMyDraftBoard';
 import BoardPlayerRow from './BoardPlayerRow';
 
@@ -13,21 +13,24 @@ interface Props {
   reorderError: string | null;
   sortByMode: SortByMode;
   rankingSource: RankingSource;
+  applySortLoading: boolean;
   onReorder: (subFrom: number, subTo: number, group: PositionGroupTab) => void;
   onRemove: (rankingId: string) => void;
   onRemoveAll: () => void;
   onPick: (playerId: string) => void;
   onGoToAddPlayers: () => void;
+  onApplySort: (mode: ApplySortMode) => Promise<void>;
   onOpenDetail: (id: string) => void;
 }
 
 export default function MyRankingsTab({
   boardPlayers, boardLoading, pickedPlayerIds, canPick,
-  reorderError, sortByMode, rankingSource,
-  onReorder, onRemove, onRemoveAll, onPick, onGoToAddPlayers, onOpenDetail,
+  reorderError, sortByMode, rankingSource, applySortLoading,
+  onReorder, onRemove, onRemoveAll, onPick, onGoToAddPlayers, onApplySort, onOpenDetail,
 }: Props) {
   const [positionTab, setPositionTab] = useState<PositionGroupTab>('Overall');
   const [openMoveId, setOpenMoveId] = useState<string | null>(null);
+  const [confirmSort, setConfirmSort] = useState<ApplySortMode | null>(null);
 
   // Filter players for the current position tab
   const filteredPlayers: BoardPlayer[] = positionTab === 'Overall'
@@ -54,6 +57,14 @@ export default function MyRankingsTab({
     onReorder(subFrom, subTo, positionTab);
   }
 
+  async function handleConfirmSort() {
+    if (!confirmSort) return;
+    setConfirmSort(null);
+    await onApplySort(confirmSort);
+  }
+
+  const srcLabel = RANKING_SOURCE_LABELS[rankingSource];
+
   const tabStyle = (active: boolean): React.CSSProperties => ({
     padding: '5px 10px',
     fontSize: '12px',
@@ -71,7 +82,7 @@ export default function MyRankingsTab({
       {/* Position sub-tabs */}
       <div style={{
         display: 'flex', gap: '6px', flexWrap: 'wrap',
-        marginBottom: '12px', paddingBottom: '12px',
+        marginBottom: '10px', paddingBottom: '10px',
         borderBottom: `1px solid ${dt.border}`,
       }}>
         {POSITION_GROUP_TABS.map(tab => {
@@ -102,6 +113,71 @@ export default function MyRankingsTab({
           </button>
         )}
       </div>
+
+      {/* Sort Board controls — only shown when board has players */}
+      {boardPlayers.length > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
+          marginBottom: '10px', paddingBottom: '10px',
+          borderBottom: `1px solid ${dt.border}`,
+        }}>
+          <span style={{ fontSize: '11px', fontWeight: '600', color: dt.textSecondary, whiteSpace: 'nowrap' }}>
+            Sort Board:
+          </span>
+          <button
+            onClick={() => setConfirmSort('overall_rank')}
+            disabled={applySortLoading}
+            style={{
+              padding: '4px 10px', fontSize: '11px', fontWeight: '600', cursor: applySortLoading ? 'not-allowed' : 'pointer',
+              background: 'transparent', color: '#60a5fa', border: '1px solid #1d4ed8', borderRadius: '5px',
+              opacity: applySortLoading ? 0.5 : 1,
+            }}
+          >
+            {srcLabel} Overall
+          </button>
+          <button
+            onClick={() => setConfirmSort('position_rank')}
+            disabled={applySortLoading}
+            style={{
+              padding: '4px 10px', fontSize: '11px', fontWeight: '600', cursor: applySortLoading ? 'not-allowed' : 'pointer',
+              background: 'transparent', color: '#60a5fa', border: '1px solid #1d4ed8', borderRadius: '5px',
+              opacity: applySortLoading ? 0.5 : 1,
+            }}
+          >
+            {srcLabel} Position
+          </button>
+          {applySortLoading && (
+            <span style={{ fontSize: '11px', color: dt.textSecondary }}>Sorting…</span>
+          )}
+        </div>
+      )}
+
+      {/* Confirm sort dialog */}
+      {confirmSort && (
+        <div style={{
+          marginBottom: '12px', padding: '12px 14px',
+          borderRadius: '8px', background: '#1a2540', border: `1px solid ${dt.border}`,
+        }}>
+          <p style={{ margin: '0 0 10px', fontSize: '13px', color: dt.textPrimary }}>
+            Sort My Rankings by <strong>{srcLabel} {confirmSort === 'overall_rank' ? 'Overall Rank' : 'Position Rank'}</strong>?
+            {' '}This will overwrite your current manual order. Drafted players move to the bottom.
+          </p>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={handleConfirmSort}
+              style={{ padding: '6px 14px', fontSize: '12px', fontWeight: '700', background: dt.blue, color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+            >
+              Sort Now
+            </button>
+            <button
+              onClick={() => setConfirmSort(null)}
+              style={{ padding: '6px 14px', fontSize: '12px', fontWeight: '600', background: 'transparent', color: dt.textSecondary, border: `1px solid ${dt.border}`, borderRadius: '5px', cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {reorderError && (
         <div style={{ marginBottom: '10px', padding: '8px 12px', borderRadius: '6px', background: '#450a0a', border: '1px solid #ef4444', color: '#fca5a5', fontSize: '12px' }}>

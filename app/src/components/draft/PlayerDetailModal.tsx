@@ -444,8 +444,16 @@ export default function PlayerDetailModal({
             )}
 
             {/* Bio section */}
-            {(detail.years_exp != null || detail.college) && (
+            {(detail.years_exp != null || detail.college || detail.height_inches != null || detail.weight_lbs != null || detail.age != null) && (
               <Section title="Bio">
+                {detail.age != null && <StatRow label="Age" value={String(detail.age)} />}
+                {detail.height_inches != null && (
+                  <StatRow
+                    label="Height"
+                    value={`${Math.floor(detail.height_inches / 12)}'${detail.height_inches % 12}"`}
+                  />
+                )}
+                {detail.weight_lbs != null && <StatRow label="Weight" value={`${detail.weight_lbs} lbs`} />}
                 {detail.years_exp != null && (
                   <StatRow
                     label="Experience"
@@ -453,6 +461,12 @@ export default function PlayerDetailModal({
                   />
                 )}
                 {detail.college && <StatRow label="College" value={detail.college} />}
+                {detail.depth_chart_position && detail.depth_chart_order != null && (
+                  <StatRow
+                    label="Depth Chart"
+                    value={`${detail.depth_chart_position} #${detail.depth_chart_order}`}
+                  />
+                )}
               </Section>
             )}
 

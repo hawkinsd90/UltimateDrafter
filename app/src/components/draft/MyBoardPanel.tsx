@@ -43,6 +43,8 @@ interface Props {
   onAddPlayer: (id: string) => void;
   onAddAll: () => void;
   onReorderInPositionGroup: (subFrom: number, subTo: number, group: PositionGroupTab) => void;
+  onApplySort: (mode: import('../../hooks/draft/useMyDraftBoard').ApplySortMode) => Promise<void>;
+  applySortLoading: boolean;
   onOpenDetail: (id: string) => void;
 }
 
@@ -56,7 +58,7 @@ export default function MyBoardPanel({
   boardAvailablePlayers, boardAvailableLoading, rankingDataAvailable,
   showBoardSearch, addAllLoading, addAllError, reorderError,
   draftScoringRuleId, lastSeasonRankingsAvailable,
-  onAddPlayer, onAddAll, onReorderInPositionGroup, onOpenDetail,
+  onAddPlayer, onAddAll, onReorderInPositionGroup, onApplySort, applySortLoading, onOpenDetail,
 }: Props) {
   const [subTab, setSubTab] = useState<'rankings' | 'available'>('rankings');
 
@@ -105,6 +107,8 @@ export default function MyBoardPanel({
           onRemoveAll={onRemoveAll}
           onPick={onPickFromBoard}
           onGoToAddPlayers={() => setSubTab('available')}
+          onApplySort={onApplySort}
+          applySortLoading={applySortLoading}
           onOpenDetail={onOpenDetail}
         />
       )}

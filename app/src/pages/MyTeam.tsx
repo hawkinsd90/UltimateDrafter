@@ -138,9 +138,10 @@ export default function MyTeam() {
   const [totalParticipants, setTotalParticipants] = useState(0);
   const [participants, setParticipants]       = useState<Participant[]>([]);
   const [viewingId, setViewingId]             = useState<string | null>(null);
+  const [draftScoringRuleId, setDraftScoringRuleId] = useState<string | null>(null);
 
-  // Player detail panel — no scoring rule needed for My Team (read-only view)
-  const playerDetail = usePlayerDetail(draftId!, user?.id, null);
+  // Player detail panel — passes scoring rule so Last Season rankings show in the profile
+  const playerDetail = usePlayerDetail(draftId!, user?.id, draftScoringRuleId);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const viewingIdRef = useRef<string | null>(viewingId);
@@ -211,19 +212,38 @@ export default function MyTeam() {
 
         if (!rosterRows || rosterRows.length === 0) continue;
 
-        // Step 2c: fetch sports_player details for resolved rows in bulk
+        // Step 2c: fetch sports_player details for resolved rows in bulk.
+        // Primary source: nfl_draft_player_pool (enriched view with team_abbr).
+        // Fallback: sports_players directly for any IDs the pool excludes (e.g. retired/inactive players
+        // that are fantasy_relevant but filtered out of the pool view).
         const resolvedIds = rosterRows
           .filter(r => r.sports_player_id)
           .map(r => r.sports_player_id as string);
 
         const playerDetailMap = new Map<string, { display_name: string; fantasy_position: string | null; team_abbr: string | null }>();
         if (resolvedIds.length > 0) {
-          const { data: spRows } = await supabase
+          const { data: poolRows } = await supabase
             .from('nfl_draft_player_pool')
             .select('id, display_name, fantasy_position, team_abbr')
             .in('id', resolvedIds);
-          for (const sp of spRows ?? []) {
+          for (const sp of poolRows ?? []) {
             playerDetailMap.set(sp.id, { display_name: sp.display_name, fantasy_position: sp.fantasy_position, team_abbr: sp.team_abbr });
+          }
+
+          // Fall back to sports_players for any IDs the pool view excluded
+          const missingIds = resolvedIds.filter(id => !playerDetailMap.has(id));
+          if (missingIds.length > 0) {
+            const { data: spRows } = await supabase
+              .from('sports_players')
+              .select('id, display_name, fantasy_position, team:sports_teams(abbreviation)')
+              .in('id', missingIds);
+            for (const sp of spRows ?? []) {
+              playerDetailMap.set(sp.id, {
+                display_name:    sp.display_name,
+                fantasy_position: sp.fantasy_position,
+                team_abbr:       (sp.team as unknown as { abbreviation: string | null } | null)?.abbreviation ?? null,
+              });
+            }
           }
         }
 
@@ -266,10 +286,12 @@ export default function MyTeam() {
     if (!draftData) { setError('Draft not found.'); setLoading(false); return; }
     setDraft(draftData);
 
-    const [participantsRes, settingsRes] = await Promise.all([
+    const [participantsRes, settingsRes, scoringRuleRes] = await Promise.all([
       supabase.from('draft_participants').select('id, user_id, team_name, draft_position').eq('draft_id', draftId).order('draft_position', { ascending: true }),
       supabase.from('draft_settings').select('roster_qb, roster_rb, roster_wr, roster_te, roster_flex, roster_k, roster_dst, bench, draft_format').eq('draft_id', draftId).maybeSingle(),
+      supabase.from('draft_scoring_rules').select('id').eq('draft_id', draftId).maybeSingle(),
     ]);
+    setDraftScoringRuleId(scoringRuleRes.data?.id ?? null);
 
     const allParticipants: Participant[] = participantsRes.data ?? [];
     setParticipants(allParticipants);

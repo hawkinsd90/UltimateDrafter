@@ -55,6 +55,12 @@ export type PlayerDetail = {
   years_exp: number | null;
   college: string | null;
   jersey_number: string | null;
+  height_inches: number | null;
+  weight_lbs: number | null;
+  birth_date: string | null;
+  age: number | null;
+  depth_chart_position: string | null;
+  depth_chart_order: number | null;
   // Rankings
   rankings: PlayerDetailRanking[];
   sleeperRanking: PlayerDetailRanking | null;
@@ -103,10 +109,10 @@ export function usePlayerDetail(
         .eq('id', sportsPlayerId)
         .maybeSingle(),
 
-      // 2. Bio fields not in the view (college, jersey_number) from sports_players directly
+      // 2. Bio fields not in the view (college, jersey_number, raw_data) from sports_players directly
       supabase
         .from('sports_players')
-        .select('college, jersey_number')
+        .select('college, jersey_number, raw_data')
         .eq('id', sportsPlayerId)
         .maybeSingle(),
 
@@ -266,6 +272,15 @@ export function usePlayerDetail(
     const pickRaw = pickRes.data as PickRaw;
     const boardRaw = boardRes.data as { id: string; rank: number } | null;
 
+    // Parse bio fields from raw_data (stored by Sleeper provider)
+    const raw = bioRes.data?.raw_data as Record<string, unknown> | null ?? null;
+    const rawHeight = raw?.height != null ? Number(raw.height) : null;
+    const rawWeight = raw?.weight != null ? Number(raw.weight) : null;
+    const rawAge    = raw?.age    != null ? Number(raw.age)    : null;
+    const rawBirthDate       = typeof raw?.birth_date === 'string' ? raw.birth_date : null;
+    const rawDepthPos        = typeof raw?.depth_chart_position === 'string' ? raw.depth_chart_position : null;
+    const rawDepthOrder      = raw?.depth_chart_order != null ? Number(raw.depth_chart_order) : null;
+
     setPlayerDetail({
       id: p.id,
       display_name: p.display_name,
@@ -279,6 +294,12 @@ export function usePlayerDetail(
       years_exp: p.years_exp ?? null,
       college: bioRes.data?.college ?? null,
       jersey_number: bioRes.data?.jersey_number ?? null,
+      height_inches: isNaN(rawHeight!) ? null : rawHeight,
+      weight_lbs:    isNaN(rawWeight!) ? null : rawWeight,
+      birth_date:    rawBirthDate,
+      age:           isNaN(rawAge!)    ? null : rawAge,
+      depth_chart_position: rawDepthPos,
+      depth_chart_order:    isNaN(rawDepthOrder!) ? null : rawDepthOrder,
       rankings,
       sleeperRanking,
       lastSeasonRanking,
