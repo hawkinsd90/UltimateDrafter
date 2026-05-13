@@ -11,13 +11,13 @@ const ESPN_SLOT_MAP: Record<number, keyof NormalizedRosterSettings> = {
   2:  "rb",
   4:  "wr",
   6:  "te",
+  7:  "op",
   16: "dst",
   17: "k",
   20: "bench",
   21: "ir",
   23: "flex",
   24: "taxi",
-  25: "op",
 };
 
 // ESPN defaultPositionId → fantasy position string

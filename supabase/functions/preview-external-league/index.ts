@@ -146,7 +146,7 @@ function espnRosterSettings(lineupSlotCounts: unknown): SleeperRosterSettings {
     wr: n('4'),
     te: n('6'),
     flex: n('23'),
-    op: n('25'),
+    op: n('7'),
     k: n('17'),
     dst: n('16'),
     bench: n('20'),
