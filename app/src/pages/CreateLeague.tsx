@@ -81,6 +81,7 @@ export default function CreateLeague() {
   const [importLoading, setImportLoading] = useState(false);
   const [importError, setImportError] = useState('');
   const [preview, setPreview] = useState<LeaguePreview | null>(null);
+  const [creatorTeamId, setCreatorTeamId] = useState<string | null>(null);
 
   const season = getSeasonLabel(sport);
 
@@ -117,6 +118,7 @@ export default function CreateLeague() {
 
     const p = data as LeaguePreview & { success: true };
     setPreview(p);
+    setCreatorTeamId(null);
 
     // Pre-fill name, roster settings, and scoring rules from the imported league
     setName(p.displayName);
@@ -144,6 +146,7 @@ export default function CreateLeague() {
 
   function clearPreview() {
     setPreview(null);
+    setCreatorTeamId(null);
     setImportLeagueId('');
     setImportError('');
   }
@@ -222,10 +225,11 @@ export default function CreateLeague() {
       await supabase.from('league_scoring_rules').insert(scoringRows);
     }
 
-    // Save imported member names so they can be invited later
+    // Save imported member names so they can be invited later.
+    // If the creator selected their team, mark it as claimed immediately.
     if (preview && preview.teams.length > 0) {
       const rows = preview.teams
-        .filter(t => t.externalOwnerId || t.externalOwnerName)
+        .filter(t => t.externalOwnerId || t.externalOwnerName || t.externalTeamId === creatorTeamId)
         .map(t => ({
           league_id: leagueData.id,
           provider: preview.provider,
@@ -234,6 +238,7 @@ export default function CreateLeague() {
           external_owner_id: t.externalOwnerId ?? null,
           external_owner_name: t.externalOwnerName ?? null,
           team_name: t.teamName,
+          invited_user_id: t.externalTeamId === creatorTeamId ? user.id : null,
         }));
       if (rows.length > 0) {
         await supabase.from('league_imported_members').insert(rows);
@@ -449,21 +454,65 @@ export default function CreateLeague() {
                   ))}
                 </div>
 
-                {/* Teams / members */}
+                {/* Teams / creator team selector */}
                 {preview.teams.length > 0 && (
                   <div>
                     <div style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      Teams ({preview.teams.length}) — member names will be saved for invites
+                      Your Team ({preview.teams.length} imported)
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '200px', overflowY: 'auto' }}>
-                      {preview.teams.map(t => (
-                        <div key={t.externalTeamId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#1e293b', borderRadius: '5px' }}>
-                          <span style={{ fontSize: '13px', color: '#e2e8f0' }}>{t.teamName}</span>
-                          {t.externalOwnerName && t.externalOwnerName !== t.teamName && (
-                            <span style={{ fontSize: '11px', color: '#64748b' }}>{t.externalOwnerName}</span>
-                          )}
-                        </div>
-                      ))}
+                    <p style={{ margin: '0 0 10px', fontSize: '12px', color: '#64748b', lineHeight: '1.5' }}>
+                      Select the team you own in this league. It will be reserved for you and no one else can claim it. Choose "None" if you are only managing.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '260px', overflowY: 'auto' }}>
+                      {/* None option */}
+                      <button
+                        type="button"
+                        onClick={() => setCreatorTeamId(null)}
+                        style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', textAlign: 'left',
+                          background: creatorTeamId === null ? '#1e3a5f' : '#1e293b',
+                          border: `1px solid ${creatorTeamId === null ? '#3b82f6' : 'transparent'}`,
+                          transition: 'background 0.1s, border-color 0.1s',
+                        }}
+                      >
+                        <span style={{ fontSize: '13px', color: creatorTeamId === null ? '#93c5fd' : '#94a3b8', fontStyle: 'italic' }}>
+                          None — I'm just managing the league
+                        </span>
+                        {creatorTeamId === null && (
+                          <span style={{ fontSize: '11px', color: '#3b82f6', fontWeight: '700' }}>SELECTED</span>
+                        )}
+                      </button>
+
+                      {preview.teams.map(t => {
+                        const selected = creatorTeamId === t.externalTeamId;
+                        return (
+                          <button
+                            key={t.externalTeamId}
+                            type="button"
+                            onClick={() => setCreatorTeamId(t.externalTeamId)}
+                            style={{
+                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                              padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', textAlign: 'left',
+                              background: selected ? '#1e3a5f' : '#1e293b',
+                              border: `1px solid ${selected ? '#3b82f6' : 'transparent'}`,
+                              transition: 'background 0.1s, border-color 0.1s',
+                            }}
+                          >
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                              <span style={{ fontSize: '13px', color: selected ? '#e2e8f0' : '#cbd5e1', fontWeight: selected ? '600' : '400' }}>
+                                {t.teamName}
+                              </span>
+                              {t.externalOwnerName && t.externalOwnerName !== t.teamName && (
+                                <span style={{ fontSize: '11px', color: '#64748b' }}>{t.externalOwnerName}</span>
+                              )}
+                            </div>
+                            {selected && (
+                              <span style={{ fontSize: '11px', color: '#3b82f6', fontWeight: '700', whiteSpace: 'nowrap', marginLeft: '8px' }}>SELECTED</span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
