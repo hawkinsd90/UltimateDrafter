@@ -22,6 +22,9 @@ interface PreviewTeam {
   teamName: string;
 }
 
+// Canonical stat key → points value map returned to client
+type ScoringRules = Record<string, number>;
+
 interface PreviewResult {
   provider: string;
   externalLeagueId: string;
@@ -29,6 +32,7 @@ interface PreviewResult {
   numTeams: number;
   scoringType: string;
   rosterSettings: SleeperRosterSettings;
+  scoringRules: ScoringRules;
   teams: PreviewTeam[];
   warnings: string[];
 }
@@ -63,6 +67,96 @@ function sleeperScoringType(scoringSettings: unknown): string {
   return 'standard';
 }
 
+// Sleeper scoring_settings key → canonical stat_key map
+const SLEEPER_STAT_MAP: Record<string, string> = {
+  pass_yd: 'pass_yd', pass_td: 'pass_td', pass_int: 'pass_int',
+  pass_2pt: 'pass_2pt', pass_cmp: 'pass_cmp', pass_inc: 'pass_inc',
+  pass_sack: 'pass_sack', pass_fd: 'pass_fd',
+  pass_300_yds: 'pass_300_yds', pass_400_yds: 'pass_400_yds',
+  rush_yd: 'rush_yd', rush_td: 'rush_td', rush_2pt: 'rush_2pt',
+  rush_fd: 'rush_fd', rush_100_yds: 'rush_100_yds', rush_200_yds: 'rush_200_yds',
+  rec: 'rec', rec_yd: 'rec_yd', rec_td: 'rec_td', rec_2pt: 'rec_2pt',
+  rec_fd: 'rec_fd', rec_100_yds: 'rec_100_yds', rec_200_yds: 'rec_200_yds',
+  rec_tgt: 'rec_tgt',
+  fum: 'fum', fum_lost: 'fum_lost',
+  xpm: 'xpm', xpmiss: 'xpmiss',
+  fg_0_19: 'fg_0_19', fg_20_29: 'fg_20_29', fg_30_39: 'fg_30_39',
+  fg_40_49: 'fg_40_49', fg_50_59: 'fg_50_59', fg_60p: 'fg_60p',
+  fgmiss: 'fgmiss', fgmiss_40_49: 'fgmiss_40_49', fgmiss_50p: 'fgmiss_50p',
+  def_st_td: 'def_st_td', def_int: 'def_int', def_fum_rec: 'def_fum_rec',
+  def_sack: 'def_sack', def_safe: 'def_safe', def_blk_kick: 'def_blk_kick',
+  def_td: 'def_td', def_st_ff: 'def_st_ff', def_st_fum_rec: 'def_st_fum_rec',
+  def_pr_td: 'def_pr_td', def_kr_td: 'def_kr_td',
+  pts_allow_0: 'dst_pa0', pts_allow_1_6: 'dst_pa1', pts_allow_7_13: 'dst_pa7',
+  pts_allow_14_20: 'dst_pa14', pts_allow_21_27: 'dst_pa21',
+  pts_allow_28_34: 'dst_pa28', pts_allow_35p: 'dst_pa35',
+  yds_allow_0_100: 'dst_ya100', yds_allow_100_199: 'dst_ya199',
+  yds_allow_200_299: 'dst_ya299', yds_allow_300_349: 'dst_ya349',
+  yds_allow_350_399: 'dst_ya399', yds_allow_400_449: 'dst_ya449',
+  yds_allow_450_499: 'dst_ya499', yds_allow_500_549: 'dst_ya549',
+  yds_allow_550p: 'dst_ya550',
+};
+
+function sleeperScoringRules(scoringSettings: unknown): ScoringRules {
+  if (typeof scoringSettings !== 'object' || scoringSettings === null) return {};
+  const s = scoringSettings as Record<string, unknown>;
+  const rules: ScoringRules = {};
+  for (const [key, val] of Object.entries(s)) {
+    const pts = typeof val === 'number' ? val : Number(val);
+    if (!isNaN(pts) && pts !== 0) {
+      const canonical = SLEEPER_STAT_MAP[key] ?? key;
+      rules[canonical] = pts;
+    }
+  }
+  return rules;
+}
+
+// ESPN statId → canonical stat_key map (matches SETTINGS_SCORING_FORMAT_MAP from espn-api)
+const ESPN_STAT_ID_MAP: Record<number, string> = {
+  3: 'pass_yd', 4: 'pass_td', 20: 'pass_int', 19: 'pass_2pt',
+  1: 'pass_cmp', 2: 'pass_inc', 64: 'pass_sack', 211: 'pass_fd',
+  17: 'pass_300_yds', 18: 'pass_400_yds',
+  24: 'rush_yd', 25: 'rush_td', 26: 'rush_2pt', 212: 'rush_fd',
+  37: 'rush_100_yds', 38: 'rush_200_yds',
+  53: 'rec', 42: 'rec_yd', 43: 'rec_td', 44: 'rec_2pt', 213: 'rec_fd',
+  56: 'rec_100_yds', 57: 'rec_200_yds', 58: 'rec_tgt',
+  72: 'fum_lost', 68: 'fum',
+  86: 'xpm', 88: 'xpmiss',
+  80: 'fg_0_19', 77: 'fg_40_49', 74: 'fg_50_59', 201: 'fg_60p',
+  85: 'fgmiss', 79: 'fgmiss_40_49', 76: 'fgmiss_50p',
+  101: 'def_kr_td', 102: 'def_pr_td', 103: 'def_st_td', 104: 'def_td',
+  95: 'def_int', 96: 'def_fum_rec', 99: 'def_sack', 98: 'def_safe',
+  97: 'def_blk_kick', 93: 'def_blk_kick_td', 106: 'def_ff',
+  89: 'dst_pa0', 90: 'dst_pa1', 91: 'dst_pa7', 92: 'dst_pa14',
+  121: 'dst_pa18', 122: 'dst_pa22', 123: 'dst_pa28', 124: 'dst_pa35', 125: 'dst_pa46',
+  128: 'dst_ya100', 129: 'dst_ya199', 130: 'dst_ya299', 131: 'dst_ya349',
+  132: 'dst_ya399', 133: 'dst_ya449', 134: 'dst_ya499', 135: 'dst_ya549', 136: 'dst_ya550',
+  205: 'two_pt_ret', 209: 'one_pt_sf',
+};
+
+function espnScoringRules(scoringSettings: unknown): ScoringRules {
+  const rules: ScoringRules = {};
+  if (typeof scoringSettings !== 'object' || scoringSettings === null) return rules;
+
+  // scoringSettings may be { scoringItems: [...] } or a flat { "3": 0.04, ... }
+  const s = scoringSettings as Record<string, unknown>;
+  const items = Array.isArray(s.scoringItems) ? s.scoringItems as unknown[] : [];
+
+  if (items.length > 0) {
+    for (const item of items) {
+      if (typeof item !== 'object' || item === null) continue;
+      const si = item as Record<string, unknown>;
+      const statId = Number(si?.statId ?? si?.stat_id);
+      const pts = Number(si?.pointsPerUnit ?? si?.points_per_unit ?? 0);
+      if (!isNaN(statId) && !isNaN(pts) && pts !== 0) {
+        const key = ESPN_STAT_ID_MAP[statId];
+        if (key) rules[key] = pts;
+      }
+    }
+  }
+  return rules;
+}
+
 async function previewSleeper(leagueId: string): Promise<PreviewResult> {
   const SLEEPER = 'https://api.sleeper.app/v1';
   const [leagueResp, rostersResp, usersResp] = await Promise.all([
@@ -85,6 +179,7 @@ async function previewSleeper(leagueId: string): Promise<PreviewResult> {
   const displayName = (leagueData?.name as string | undefined) ?? `Sleeper League ${leagueId}`;
   const rosterSettings = sleeperRosterSettings(leagueData?.roster_positions);
   const scoringType = sleeperScoringType(leagueData?.scoring_settings);
+  const scoringRules = sleeperScoringRules(leagueData?.scoring_settings);
 
   // Build user map
   const userMap = new Map<string, { displayName: string; teamName?: string }>();
@@ -123,6 +218,7 @@ async function previewSleeper(leagueId: string): Promise<PreviewResult> {
     numTeams: teams.length,
     scoringType,
     rosterSettings,
+    scoringRules,
     teams,
     warnings: [],
   };
@@ -213,6 +309,7 @@ async function previewEspn(
 
   const scoringSettings = (settings?.scoringSettings as unknown) ?? undefined;
   const scoringType = espnScoringType(scoringSettings);
+  const scoringRules = espnScoringRules(scoringSettings);
 
   // Member map
   const membersRaw = Array.isArray(data?.members) ? data.members as unknown[] : [];
@@ -256,6 +353,7 @@ async function previewEspn(
     numTeams: teams.length,
     scoringType,
     rosterSettings,
+    scoringRules,
     teams,
     warnings: [],
   };

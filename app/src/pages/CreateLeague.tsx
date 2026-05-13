@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { getSeasonLabel } from '../utils/season';
 import { useAuth } from '../contexts/AuthContext';
 import UserMenu from '../components/UserMenu';
+import ScoringRulesPanel, { type ScoringRules } from '../components/ScoringRulesPanel';
 
 type Provider = 'sleeper' | 'espn';
 
@@ -24,6 +25,7 @@ interface LeaguePreview {
     qb: number; rb: number; wr: number; te: number;
     flex: number; op: number; k: number; dst: number; bench: number;
   };
+  scoringRules: ScoringRules;
   teams: ImportedTeam[];
   warnings: string[];
 }
@@ -56,6 +58,16 @@ export default function CreateLeague() {
     allow_pick_trades: true,
     allow_future_picks: false,
     future_pick_years: 1,
+  });
+
+  const [scoringRules, setScoringRules] = useState<ScoringRules>({
+    pass_yd: 0.04, pass_td: 4, pass_int: -2, pass_2pt: 2,
+    rush_yd: 0.1, rush_td: 6, rush_2pt: 2,
+    rec_yd: 0.1, rec_td: 6, rec_2pt: 2,
+    xpm: 1, fgmiss: -1, fg_0_19: 3, fg_20_29: 3, fg_30_39: 3, fg_40_49: 4, fg_50_59: 5, fg_60p: 5,
+    def_sack: 1, def_int: 2, def_fum_rec: 2, def_safe: 2, def_blk_kick: 2, def_td: 6,
+    dst_pa0: 10, dst_pa1: 7, dst_pa7: 4, dst_pa14: 1, dst_pa28: -1, dst_pa35: -3, dst_pa46: -5,
+    fum_lost: -2,
   });
 
   // Import section state
@@ -106,8 +118,11 @@ export default function CreateLeague() {
     const p = data as LeaguePreview & { success: true };
     setPreview(p);
 
-    // Pre-fill name and roster settings from the imported league
+    // Pre-fill name, roster settings, and scoring rules from the imported league
     setName(p.displayName);
+    if (p.scoringRules && Object.keys(p.scoringRules).length > 0) {
+      setScoringRules(p.scoringRules);
+    }
     setSettings(prev => ({
       ...prev,
       roster_qb: p.rosterSettings.qb,
@@ -199,6 +214,14 @@ export default function CreateLeague() {
       return;
     }
 
+    // Save scoring rules
+    const scoringRows = Object.entries(scoringRules)
+      .filter(([, pts]) => pts !== 0)
+      .map(([stat_key, points]) => ({ league_id: leagueData.id, stat_key, points }));
+    if (scoringRows.length > 0) {
+      await supabase.from('league_scoring_rules').insert(scoringRows);
+    }
+
     // Save imported member names so they can be invited later
     if (preview && preview.teams.length > 0) {
       const rows = preview.teams
@@ -239,7 +262,7 @@ export default function CreateLeague() {
       <h1 style={{ color: '#f9fafb' }}>Create League</h1>
 
       {/* Import from existing league */}
-      <div style={{ maxWidth: '900px', marginBottom: '24px' }}>
+      <div style={{ maxWidth: '960px', marginBottom: '24px' }}>
         <button
           type="button"
           onClick={() => { setShowImport(v => !v); setImportError(''); }}
@@ -463,7 +486,7 @@ export default function CreateLeague() {
         )}
       </div>
 
-      <form onSubmit={handleSubmit} style={{ maxWidth: '900px', display: 'flex', flexDirection: 'column', gap: '30px' }}>
+      <form onSubmit={handleSubmit} style={{ maxWidth: '960px', display: 'flex', flexDirection: 'column', gap: '30px' }}>
         <div style={cardStyle}>
           <h2 style={{ margin: '0', fontSize: '20px', color: '#111827' }}>Basic Information</h2>
 
@@ -613,6 +636,15 @@ export default function CreateLeague() {
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Scoring Rules */}
+        <div style={cardStyle}>
+          <h2 style={{ margin: '0', fontSize: '20px', color: '#111827' }}>Scoring Rules</h2>
+          <p style={{ margin: '0', fontSize: '13px', color: '#6b7280' }}>
+            Customize how points are awarded. Importing a league above will pre-fill these from your platform.
+          </p>
+          <ScoringRulesPanel rules={scoringRules} onChange={setScoringRules} />
         </div>
 
         {error && (
