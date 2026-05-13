@@ -54,6 +54,8 @@ export default function CreateLeague() {
     bench: 6,
     allow_trades: true,
     allow_pick_trades: true,
+    allow_future_picks: false,
+    future_pick_years: 1,
   });
 
   // Import section state
@@ -187,6 +189,8 @@ export default function CreateLeague() {
       bench: settings.bench,
       allow_trades: settings.allow_trades,
       allow_pick_trades: settings.allow_pick_trades,
+      allow_future_picks: settings.allow_future_picks,
+      future_pick_years: settings.allow_future_picks ? settings.future_pick_years : 1,
     });
 
     if (settingsError) {
@@ -555,6 +559,27 @@ export default function CreateLeague() {
                 <input type="checkbox" checked={settings.allow_pick_trades} onChange={(e) => setSettings({ ...settings, allow_pick_trades: e.target.checked })} />
                 <span>Allow draft pick trades</span>
               </label>
+            </div>
+
+            <div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: '#374151' }}>
+                <input type="checkbox" checked={settings.allow_future_picks} onChange={(e) => setSettings({ ...settings, allow_future_picks: e.target.checked })} />
+                <span>Allow future draft pick trades</span>
+              </label>
+              {settings.allow_future_picks && (
+                <div style={{ marginTop: '8px', marginLeft: '24px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <label style={{ fontSize: '13px', color: '#6b7280', whiteSpace: 'nowrap' }}>Years into the future</label>
+                  <select
+                    value={settings.future_pick_years}
+                    onChange={(e) => setSettings({ ...settings, future_pick_years: parseInt(e.target.value, 10) })}
+                    style={{ padding: '5px 10px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '14px', background: '#fff', color: '#111827' }}
+                  >
+                    <option value={1}>1 year</option>
+                    <option value={2}>2 years</option>
+                    <option value={3}>3 years</option>
+                  </select>
+                </div>
+              )}
             </div>
           </div>
 
