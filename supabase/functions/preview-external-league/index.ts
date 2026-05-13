@@ -111,48 +111,74 @@ function sleeperScoringRules(scoringSettings: unknown): ScoringRules {
   return rules;
 }
 
-// ESPN statId → canonical stat_key map (matches SETTINGS_SCORING_FORMAT_MAP from espn-api)
+// ESPN statId → canonical stat_key. Source: cwendt94/espn-api SETTINGS_SCORING_FORMAT_MAP + PLAYER_STATS_MAP.
+// statId 3=passingYards, 4=passingTD, 19=2ptPassConv, 20=INT, etc.
+// statId 53 is "Each reception" (the one ESPN counts for PPR scoring).
 const ESPN_STAT_ID_MAP: Record<number, string> = {
-  3: 'pass_yd', 4: 'pass_td', 20: 'pass_int', 19: 'pass_2pt',
-  1: 'pass_cmp', 2: 'pass_inc', 64: 'pass_sack', 211: 'pass_fd',
-  17: 'pass_300_yds', 18: 'pass_400_yds',
-  24: 'rush_yd', 25: 'rush_td', 26: 'rush_2pt', 212: 'rush_fd',
-  37: 'rush_100_yds', 38: 'rush_200_yds',
-  53: 'rec', 42: 'rec_yd', 43: 'rec_td', 44: 'rec_2pt', 213: 'rec_fd',
-  56: 'rec_100_yds', 57: 'rec_200_yds', 58: 'rec_tgt',
-  72: 'fum_lost', 68: 'fum',
-  86: 'xpm', 88: 'xpmiss',
-  80: 'fg_0_19', 77: 'fg_40_49', 74: 'fg_50_59', 201: 'fg_60p',
-  85: 'fgmiss', 79: 'fgmiss_40_49', 76: 'fgmiss_50p',
-  101: 'def_kr_td', 102: 'def_pr_td', 103: 'def_st_td', 104: 'def_td',
-  95: 'def_int', 96: 'def_fum_rec', 99: 'def_sack', 98: 'def_safe',
-  97: 'def_blk_kick', 93: 'def_blk_kick_td', 106: 'def_ff',
+  // Passing
+  0: 'pass_att', 1: 'pass_cmp', 2: 'pass_inc',
+  3: 'pass_yd', 4: 'pass_td', 15: 'pass_td40', 16: 'pass_td50',
+  17: 'pass_300_yds', 18: 'pass_400_yds', 19: 'pass_2pt', 20: 'pass_int',
+  64: 'pass_sack', 211: 'pass_fd',
+  // Rushing
+  23: 'rush_att', 24: 'rush_yd', 25: 'rush_td', 26: 'rush_2pt',
+  35: 'rush_td40', 36: 'rush_td50',
+  37: 'rush_100_yds', 38: 'rush_200_yds', 212: 'rush_fd',
+  // Receiving
+  41: 'rec_legacy', 42: 'rec_yd', 43: 'rec_td', 44: 'rec_2pt',
+  45: 'rec_td40', 46: 'rec_td50',
+  53: 'rec', 56: 'rec_100_yds', 57: 'rec_200_yds', 58: 'rec_tgt',
+  213: 'rec_fd',
+  // Fumbles
+  63: 'fum_td', 68: 'fum', 72: 'fum_lost',
+  // Kicking
+  74: 'fg_50_59', 76: 'fgmiss_50p',       // 50-59 yd range (statId 74 = FG50)
+  77: 'fg_40_49', 79: 'fgmiss_40_49',
+  80: 'fg_0_39', 82: 'fgmiss_0_39',
+  83: 'fg_total', 84: 'fga_total', 85: 'fgmiss',
+  86: 'xpm', 87: 'xpa', 88: 'xpmiss',
+  198: 'fg_50_59', 199: 'fga_50_59', 200: 'fgmiss_50_59',  // ESPN also uses 198 for FG50
+  201: 'fg_60p', 202: 'fga_60p', 203: 'fgmiss_60p',
+  // Defensive / ST
   89: 'dst_pa0', 90: 'dst_pa1', 91: 'dst_pa7', 92: 'dst_pa14',
+  93: 'def_blk_kick_td', 94: 'def_td', 95: 'def_int', 96: 'def_fum_rec',
+  97: 'def_blk_kick', 98: 'def_safe', 99: 'def_sack',
+  101: 'def_kr_td', 102: 'def_pr_td', 103: 'def_int_td', 104: 'def_fum_td',
+  106: 'def_ff', 113: 'def_pd',
   121: 'dst_pa18', 122: 'dst_pa22', 123: 'dst_pa28', 124: 'dst_pa35', 125: 'dst_pa46',
   128: 'dst_ya100', 129: 'dst_ya199', 130: 'dst_ya299', 131: 'dst_ya349',
   132: 'dst_ya399', 133: 'dst_ya449', 134: 'dst_ya499', 135: 'dst_ya549', 136: 'dst_ya550',
-  205: 'two_pt_ret', 209: 'one_pt_sf',
+  205: 'two_pt_ret', 206: 'two_pt_ret',
+  209: 'one_pt_sf',
 };
 
 function espnScoringRules(scoringSettings: unknown): ScoringRules {
   const rules: ScoringRules = {};
   if (typeof scoringSettings !== 'object' || scoringSettings === null) return rules;
 
-  // scoringSettings may be { scoringItems: [...] } or a flat { "3": 0.04, ... }
   const s = scoringSettings as Record<string, unknown>;
   const items = Array.isArray(s.scoringItems) ? s.scoringItems as unknown[] : [];
 
-  if (items.length > 0) {
-    for (const item of items) {
-      if (typeof item !== 'object' || item === null) continue;
-      const si = item as Record<string, unknown>;
-      const statId = Number(si?.statId ?? si?.stat_id);
-      const pts = Number(si?.pointsPerUnit ?? si?.points_per_unit ?? 0);
-      if (!isNaN(statId) && !isNaN(pts) && pts !== 0) {
-        const key = ESPN_STAT_ID_MAP[statId];
-        if (key) rules[key] = pts;
-      }
-    }
+  for (const item of items) {
+    if (typeof item !== 'object' || item === null) continue;
+    const si = item as Record<string, unknown>;
+    const statId = Number(si.statId);
+    if (isNaN(statId)) continue;
+
+    // ESPN stores per-position overrides in pointsOverrides keyed by slot id (string).
+    // Slot "16" means "all positions" (the global override). Fall back to base `points`.
+    const overrides = typeof si.pointsOverrides === 'object' && si.pointsOverrides !== null
+      ? si.pointsOverrides as Record<string, unknown>
+      : {};
+    const overrideVal = overrides['16'];
+    const pts = overrideVal !== undefined
+      ? Number(overrideVal)
+      : Number(si.points ?? 0);
+
+    if (isNaN(pts) || pts === 0) continue;
+
+    const key = ESPN_STAT_ID_MAP[statId];
+    if (key) rules[key] = pts;
   }
   return rules;
 }
