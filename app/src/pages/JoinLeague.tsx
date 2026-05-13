@@ -9,6 +9,7 @@ interface ImportedTeam {
   teamName: string;
   externalOwnerName: string | null;
   provider: string;
+  pretiedMemberId: string | null;
 }
 
 export default function JoinLeague() {
@@ -24,6 +25,7 @@ export default function JoinLeague() {
   // Imported team selection
   const [importedTeams, setImportedTeams] = useState<ImportedTeam[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [teamSelectionLocked, setTeamSelectionLocked] = useState(false);
 
   useEffect(() => {
     if (inviteId) loadInvite();
@@ -63,12 +65,21 @@ export default function JoinLeague() {
       });
 
       if (teams && teams.length > 0) {
-        setImportedTeams(teams.map((t: { id: string; team_name: string; external_owner_name: string | null; provider: string }) => ({
+        const mapped = teams.map((t: { id: string; team_name: string; external_owner_name: string | null; provider: string; pretied_member_id: string | null }) => ({
           id: t.id,
           teamName: t.team_name,
           externalOwnerName: t.external_owner_name,
           provider: t.provider,
-        })));
+          pretiedMemberId: t.pretied_member_id ?? null,
+        }));
+        setImportedTeams(mapped);
+        // If invite is pre-tied to a specific team, auto-select and lock it
+        const pretied = mapped.find((t: ImportedTeam) => t.pretiedMemberId !== null);
+        if (pretied) {
+          setSelectedTeamId(pretied.id);
+          setTeamSelectionLocked(true);
+          setDisplayName(pretied.teamName);
+        }
       }
     }
 
@@ -169,35 +180,47 @@ export default function JoinLeague() {
             {importedTeams.length > 0 && (
               <div>
                 <label style={{ display: 'block', marginBottom: '6px', fontWeight: '500', color: '#374151' }}>
-                  Link to your imported team (optional)
+                  {teamSelectionLocked ? 'Your team in this league' : 'Link to your imported team (optional)'}
                 </label>
                 <p style={{ margin: '0 0 10px', fontSize: '13px', color: '#6b7280' }}>
-                  This league was imported from {importedTeams[0]?.provider?.toUpperCase()}. Select your team to connect your account.
+                  {teamSelectionLocked
+                    ? `This invite was sent specifically for the team below in ${importedTeams[0]?.provider?.toUpperCase()}.`
+                    : `This league was imported from ${importedTeams[0]?.provider?.toUpperCase()}. Select your team to connect your account.`}
                 </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {importedTeams.map(t => (
                     <button
                       key={t.id}
                       type="button"
+                      disabled={teamSelectionLocked}
                       onClick={() => {
+                        if (teamSelectionLocked) return;
                         const isSelected = selectedTeamId === t.id;
                         setSelectedTeamId(isSelected ? null : t.id);
                         if (!isSelected) setDisplayName(t.teamName);
                       }}
                       style={{
-                        padding: '10px 14px', borderRadius: '7px', cursor: 'pointer', textAlign: 'left',
+                        padding: '10px 14px', borderRadius: '7px', textAlign: 'left',
+                        cursor: teamSelectionLocked ? 'default' : 'pointer',
                         background: selectedTeamId === t.id ? '#eff6ff' : 'white',
                         border: `2px solid ${selectedTeamId === t.id ? '#2563eb' : '#e5e7eb'}`,
                         transition: 'all 0.12s',
                       }}
                     >
-                      <div style={{ fontWeight: '600', fontSize: '14px', color: '#111827' }}>{t.teamName}</div>
-                      {t.externalOwnerName && t.externalOwnerName !== t.teamName && (
-                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>{t.externalOwnerName}</div>
-                      )}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ fontWeight: '600', fontSize: '14px', color: '#111827' }}>{t.teamName}</div>
+                          {t.externalOwnerName && t.externalOwnerName !== t.teamName && (
+                            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>{t.externalOwnerName}</div>
+                          )}
+                        </div>
+                        {teamSelectionLocked && (
+                          <span style={{ fontSize: '11px', color: '#2563eb', fontWeight: '700', whiteSpace: 'nowrap', marginLeft: '10px' }}>YOUR TEAM</span>
+                        )}
+                      </div>
                     </button>
                   ))}
-                  {selectedTeamId && (
+                  {selectedTeamId && !teamSelectionLocked && (
                     <button
                       type="button"
                       onClick={() => setSelectedTeamId(null)}

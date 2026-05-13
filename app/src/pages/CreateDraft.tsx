@@ -8,7 +8,17 @@ import UserMenu from '../components/UserMenu';
 type League = Database['public']['Tables']['leagues']['Row'];
 type LeagueSettings = Database['public']['Tables']['league_settings']['Row'];
 
-type DraftType = 'snake' | 'linear' | 'rookie';
+type DraftType = 'snake' | 'linear';
+type PlayerPool = 'all' | 'rookies_only';
+
+interface RosterLimits {
+  max_qb: number | null;
+  max_rb: number | null;
+  max_wr: number | null;
+  max_te: number | null;
+  max_k: number | null;
+  max_dst: number | null;
+}
 
 export default function CreateDraft() {
   const { leagueId } = useParams<{ leagueId: string }>();
@@ -18,7 +28,12 @@ export default function CreateDraft() {
   const [leagueSettings, setLeagueSettings] = useState<LeagueSettings | null>(null);
   const [name, setName] = useState('');
   const [draftType, setDraftType] = useState<DraftType>('snake');
-  const [numRounds, setNumRounds] = useState(4);
+  const [playerPool, setPlayerPool] = useState<PlayerPool>('all');
+  const [numRounds, setNumRounds] = useState<number | null>(null);
+  const [useRosterLimits, setUseRosterLimits] = useState(false);
+  const [rosterLimits, setRosterLimits] = useState<RosterLimits>({
+    max_qb: null, max_rb: null, max_wr: null, max_te: null, max_k: null, max_dst: null,
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -27,13 +42,39 @@ export default function CreateDraft() {
   }, [leagueId]);
 
   async function loadLeagueData() {
-    const [leagueRes, settingsRes] = await Promise.all([
+    const [leagueRes, settingsRes, importedRes] = await Promise.all([
       supabase.from('leagues').select('*').eq('id', leagueId!).single(),
-      supabase.from('league_settings').select('*').eq('league_id', leagueId!).maybeSingle()
+      supabase.from('league_settings').select('*').eq('league_id', leagueId!).maybeSingle(),
+      supabase.from('league_imported_members').select('id').eq('league_id', leagueId!).limit(1),
     ]);
     if (leagueRes.data) setLeague(leagueRes.data);
-    if (settingsRes.data) setLeagueSettings(settingsRes.data);
+    if (settingsRes.data) {
+      setLeagueSettings(settingsRes.data);
+      // Auto-fill roster limits from league settings
+      const s = settingsRes.data;
+      setRosterLimits({
+        max_qb: s.roster_qb ?? null,
+        max_rb: s.roster_rb ? s.roster_rb + (s.roster_flex ?? 0) : null,
+        max_wr: s.roster_wr ? s.roster_wr + (s.roster_flex ?? 0) : null,
+        max_te: s.roster_te ? s.roster_te + (s.roster_flex ?? 0) : null,
+        max_k: s.roster_k ?? null,
+        max_dst: s.roster_dst ?? null,
+      });
+    }
+    // If league has imported data, default rounds to null (user sets it)
+    if (importedRes.data && importedRes.data.length > 0) {
+      setNumRounds(null);
+    }
   }
+
+  // Suggested total rounds based on roster size
+  const suggestedRounds = leagueSettings
+    ? (leagueSettings.roster_qb ?? 1) + (leagueSettings.roster_rb ?? 2) +
+      (leagueSettings.roster_wr ?? 2) + (leagueSettings.roster_te ?? 1) +
+      (leagueSettings.roster_flex ?? 1) + ((leagueSettings as Record<string, unknown>).roster_op as number ?? 0) +
+      (leagueSettings.roster_k ?? 1) + (leagueSettings.roster_dst ?? 1) +
+      (leagueSettings.bench ?? 6)
+    : null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -79,7 +120,8 @@ export default function CreateDraft() {
         created_by: user.id,
         draft_format: leagueSettings.draft_format,
         draft_type: draftType,
-        num_rounds: draftType === 'rookie' ? numRounds : null,
+        player_pool: playerPool,
+        num_rounds: numRounds,
         pick_timer_seconds: leagueSettings.pick_timer_seconds,
         allow_pauses: leagueSettings.allow_pauses,
         drafting_hours_enabled: leagueSettings.drafting_hours_enabled,
@@ -96,6 +138,14 @@ export default function CreateDraft() {
         bench: leagueSettings.bench,
         allow_trades: leagueSettings.allow_trades,
         allow_pick_trades: leagueSettings.allow_pick_trades,
+        ...(useRosterLimits ? {
+          max_qb: rosterLimits.max_qb,
+          max_rb: rosterLimits.max_rb,
+          max_wr: rosterLimits.max_wr,
+          max_te: rosterLimits.max_te,
+          max_k: rosterLimits.max_k,
+          max_dst: rosterLimits.max_dst,
+        } : {}),
       });
 
     setLoading(false);
@@ -107,11 +157,20 @@ export default function CreateDraft() {
     }
   }
 
-  if (!league) return <div style={{ padding: '40px' }}>Loading...</div>;
+  if (!league) return <div style={{ padding: '40px', color: '#f9fafb' }}>Loading...</div>;
 
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '10px', border: '1px solid #d1d5db',
     borderRadius: '6px', color: '#111827', background: 'white', boxSizing: 'border-box',
+  };
+  const darkInputStyle: React.CSSProperties = {
+    ...inputStyle, background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155',
+  };
+  const sectionStyle: React.CSSProperties = {
+    padding: '20px', background: '#0f172a', border: '1px solid #334155', borderRadius: '8px',
+  };
+  const labelStyle: React.CSSProperties = {
+    display: 'block', marginBottom: '8px', fontWeight: '600', fontSize: '14px', color: '#e2e8f0',
   };
 
   return (
@@ -135,15 +194,25 @@ export default function CreateDraft() {
 
       {leagueSettings && (
         <div style={{ padding: '15px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', marginBottom: '20px' }}>
-          <p style={{ margin: '0 0 10px 0', fontWeight: '500', color: '#166534' }}>League settings:</p>
-          <ul style={{ margin: '0', paddingLeft: '20px', color: '#166534' }}>
-            <li>Pick Timer: {leagueSettings.pick_timer_seconds === 0 ? 'Unlimited' : `${leagueSettings.pick_timer_seconds} seconds`}</li>
-            <li>Roster: {leagueSettings.roster_qb}QB, {leagueSettings.roster_rb}RB, {leagueSettings.roster_wr}WR, {leagueSettings.roster_te}TE, {leagueSettings.roster_flex}FLEX{((leagueSettings as Record<string, unknown>).roster_op as number) > 0 ? `, ${(leagueSettings as Record<string, unknown>).roster_op as number}OP/SF` : ''}, {leagueSettings.roster_k}K, {leagueSettings.roster_dst}DST, {leagueSettings.bench} Bench</li>
+          <p style={{ margin: '0 0 6px 0', fontWeight: '600', color: '#166534' }}>League settings:</p>
+          <ul style={{ margin: '0', paddingLeft: '20px', color: '#166534', fontSize: '14px', lineHeight: '1.6' }}>
+            <li>Pick Timer: {leagueSettings.pick_timer_seconds === 0 ? 'Unlimited' : `${leagueSettings.pick_timer_seconds}s`}</li>
+            <li>
+              Roster: {leagueSettings.roster_qb}QB, {leagueSettings.roster_rb}RB, {leagueSettings.roster_wr}WR,{' '}
+              {leagueSettings.roster_te}TE, {leagueSettings.roster_flex}FLEX
+              {((leagueSettings as Record<string, unknown>).roster_op as number) > 0
+                ? `, ${(leagueSettings as Record<string, unknown>).roster_op as number}OP/SF` : ''},
+              {' '}{leagueSettings.roster_k}K, {leagueSettings.roster_dst}DST, {leagueSettings.bench} Bench
+            </li>
+            {suggestedRounds !== null && (
+              <li>Suggested rounds: <strong>{suggestedRounds}</strong> (full roster fill)</li>
+            )}
           </ul>
         </div>
       )}
 
-      <form onSubmit={handleSubmit} style={{ maxWidth: '500px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <form onSubmit={handleSubmit} style={{ maxWidth: '560px', display: 'flex', flexDirection: 'column', gap: '22px' }}>
+
         {/* Draft name */}
         <div>
           <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500', color: '#f9fafb' }}>
@@ -154,7 +223,7 @@ export default function CreateDraft() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
-            placeholder="e.g., 2026 Rookie Draft"
+            placeholder="e.g., 2026 Fantasy Draft"
             style={inputStyle}
           />
         </div>
@@ -164,19 +233,17 @@ export default function CreateDraft() {
           <label style={{ display: 'block', marginBottom: '10px', fontWeight: '500', color: '#f9fafb' }}>
             Draft Type
           </label>
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '10px' }}>
             {([
               { value: 'snake' as DraftType, label: 'Snake', desc: 'Order reverses each round' },
               { value: 'linear' as DraftType, label: 'Linear', desc: 'Same order every round' },
-              { value: 'rookie' as DraftType, label: 'Rookie', desc: 'Rookies only, 1–4 rounds' },
-            ]).map(opt => (
+            ] as { value: DraftType; label: string; desc: string }[]).map(opt => (
               <button
                 key={opt.value}
                 type="button"
                 onClick={() => setDraftType(opt.value)}
                 style={{
-                  flex: 1, minWidth: '120px', padding: '12px 14px',
-                  borderRadius: '8px', cursor: 'pointer', textAlign: 'left',
+                  flex: 1, padding: '12px 14px', borderRadius: '8px', cursor: 'pointer', textAlign: 'left',
                   background: draftType === opt.value ? '#1d4ed8' : 'white',
                   color: draftType === opt.value ? '#fff' : '#111827',
                   border: `2px solid ${draftType === opt.value ? '#1d4ed8' : '#d1d5db'}`,
@@ -190,39 +257,120 @@ export default function CreateDraft() {
           </div>
         </div>
 
-        {/* Rookie rounds selector */}
-        {draftType === 'rookie' && (
-          <div style={{ padding: '16px', background: '#0f172a', border: '1px solid #334155', borderRadius: '8px' }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', fontSize: '14px', color: '#e2e8f0' }}>
-              Number of Rounds (max 4)
+        {/* Number of rounds */}
+        <div style={sectionStyle}>
+          <label style={labelStyle}>Number of Rounds</label>
+          <p style={{ margin: '0 0 12px', fontSize: '13px', color: '#64748b', lineHeight: '1.5' }}>
+            {suggestedRounds !== null
+              ? `Suggested: ${suggestedRounds} rounds to fill all roster spots. Adjust as needed.`
+              : 'Set how many rounds this draft will run.'}
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <input
+              type="number"
+              min={1}
+              max={30}
+              value={numRounds ?? suggestedRounds ?? ''}
+              onChange={e => setNumRounds(parseInt(e.target.value, 10) || null)}
+              placeholder={suggestedRounds ? String(suggestedRounds) : 'e.g. 15'}
+              style={{ ...darkInputStyle, maxWidth: '100px' }}
+            />
+            {suggestedRounds && numRounds !== suggestedRounds && (
+              <button
+                type="button"
+                onClick={() => setNumRounds(suggestedRounds)}
+                style={{ fontSize: '12px', color: '#60a5fa', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+              >
+                Use suggested ({suggestedRounds})
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Player Pool */}
+        <div style={sectionStyle}>
+          <label style={labelStyle}>Player Pool</label>
+          <p style={{ margin: '0 0 12px', fontSize: '13px', color: '#64748b', lineHeight: '1.5' }}>
+            Choose which players are available to draft.
+          </p>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            {([
+              { value: 'all' as PlayerPool, label: 'All Players', desc: 'Standard draft — all eligible players' },
+              { value: 'rookies_only' as PlayerPool, label: 'Rookie Draft', desc: 'First-year players only' },
+            ] as { value: PlayerPool; label: string; desc: string }[]).map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setPlayerPool(opt.value)}
+                style={{
+                  flex: 1, padding: '12px 14px', borderRadius: '8px', cursor: 'pointer', textAlign: 'left',
+                  background: playerPool === opt.value ? '#1e3a5f' : 'transparent',
+                  color: playerPool === opt.value ? '#e2e8f0' : '#94a3b8',
+                  border: `2px solid ${playerPool === opt.value ? '#3b82f6' : '#334155'}`,
+                  transition: 'all 0.12s',
+                }}
+              >
+                <div style={{ fontWeight: '700', fontSize: '14px', marginBottom: '2px' }}>{opt.label}</div>
+                <div style={{ fontSize: '12px', opacity: 0.75 }}>{opt.desc}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Roster Limits */}
+        <div style={sectionStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <label style={{ ...labelStyle, marginBottom: 0 }}>Roster Limits</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '7px', cursor: 'pointer', fontSize: '13px', color: '#94a3b8' }}>
+              <input
+                type="checkbox"
+                checked={useRosterLimits}
+                onChange={e => setUseRosterLimits(e.target.checked)}
+                style={{ accentColor: '#3b82f6' }}
+              />
+              Enable
             </label>
-            <p style={{ margin: '0 0 12px', fontSize: '13px', color: '#64748b' }}>
-              Rookie drafts use a separate pool of first-year players only. Each team picks once per round.
-            </p>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {[1, 2, 3, 4].map(n => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setNumRounds(n)}
-                  style={{
-                    width: '48px', height: '48px', borderRadius: '8px',
-                    fontWeight: '700', fontSize: '18px', cursor: 'pointer',
-                    background: numRounds === n ? '#2563eb' : 'transparent',
-                    color: numRounds === n ? '#fff' : '#94a3b8',
-                    border: `2px solid ${numRounds === n ? '#2563eb' : '#334155'}`,
-                    transition: 'all 0.12s',
-                  }}
-                >
-                  {n}
-                </button>
+          </div>
+          <p style={{ margin: '0 0 12px', fontSize: '13px', color: '#64748b', lineHeight: '1.5' }}>
+            Optionally set the maximum number of each position a team can draft.
+            {leagueSettings && !useRosterLimits && ' Values are pre-filled from your league settings.'}
+          </p>
+          {useRosterLimits && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+              {([
+                { key: 'max_qb', label: 'Max QB' },
+                { key: 'max_rb', label: 'Max RB' },
+                { key: 'max_wr', label: 'Max WR' },
+                { key: 'max_te', label: 'Max TE' },
+                { key: 'max_k', label: 'Max K' },
+                { key: 'max_dst', label: 'Max DST' },
+              ] as { key: keyof RosterLimits; label: string }[]).map(({ key, label }) => (
+                <div key={key}>
+                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', color: '#94a3b8', fontWeight: '600' }}>
+                    {label}
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={20}
+                    value={rosterLimits[key] ?? ''}
+                    onChange={e => setRosterLimits(prev => ({
+                      ...prev,
+                      [key]: e.target.value === '' ? null : parseInt(e.target.value, 10),
+                    }))}
+                    placeholder="No limit"
+                    style={{ ...darkInputStyle, padding: '7px 10px', fontSize: '14px' }}
+                  />
+                </div>
               ))}
             </div>
-            <p style={{ margin: '10px 0 0', fontSize: '12px', color: '#475569' }}>
-              {numRounds} round{numRounds !== 1 ? 's' : ''} — player pool filtered to rookies (0 years experience).
+          )}
+          {!useRosterLimits && (
+            <p style={{ margin: 0, fontSize: '12px', color: '#475569', fontStyle: 'italic' }}>
+              No per-position maximums. Teams can draft any number of a given position.
             </p>
-          </div>
-        )}
+          )}
+        </div>
 
         {error && (
           <div style={{ padding: '12px', background: '#fee2e2', border: '1px solid #ef4444', borderRadius: '6px', color: '#dc2626' }}>
@@ -238,7 +386,7 @@ export default function CreateDraft() {
             background: (loading || !leagueSettings) ? '#9ca3af' : '#059669',
             color: 'white', border: 'none', borderRadius: '6px',
             cursor: (loading || !leagueSettings) ? 'not-allowed' : 'pointer',
-            fontWeight: '500', fontSize: '16px',
+            fontWeight: '600', fontSize: '16px',
           }}
         >
           {loading ? 'Creating Draft...' : 'Create Draft'}

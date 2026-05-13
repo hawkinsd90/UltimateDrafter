@@ -23,27 +23,52 @@ interface ImportedMember {
 }
 
 function ImportedLeaguematesPanel({
-  importedMembers, leagueId, userId, onInviteSent, onError,
+  importedMembers, leagueMembers, leagueId, userId, onInviteSent, onError,
 }: {
   importedMembers: ImportedMember[];
+  leagueMembers: LeagueMember[];
   leagueId: string;
   userId: string;
   onInviteSent: () => void;
   onError: (msg: string) => void;
 }) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [contactInputs, setContactInputs] = useState<Record<string, string>>({});
+  // reassignment: memberId -> importedMemberId
+  const [reassigning, setReassigning] = useState<string | null>(null); // importedMemberId being reassigned
+  const [reassignLoading, setReassignLoading] = useState(false);
+
+  function setContact(memberId: string, val: string) {
+    setContactInputs(prev => ({ ...prev, [memberId]: val }));
+  }
 
   async function sendInvite(member: ImportedMember) {
+    const contact = contactInputs[member.id]?.trim() ?? '';
+    const isEmail = contact.includes('@');
+    const isPhone = /^\+[1-9]\d{1,14}$/.test(contact);
+
+    if (contact && !isEmail && !isPhone) {
+      onError(`"${contact}" is not a valid email or E.164 phone (+12125551234).`);
+      return;
+    }
+
+    const insertPayload: Record<string, unknown> = {
+      league_id: leagueId,
+      invited_by: userId,
+      imported_member_id: member.id,
+    };
+    if (isEmail) insertPayload.email = contact;
+    if (isPhone) insertPayload.phone_e164 = contact;
+
     const { data: invite, error } = await supabase
       .from('league_invites')
-      .insert({ league_id: leagueId, invited_by: userId })
+      .insert(insertPayload)
       .select()
       .single();
     if (error || !invite) {
       onError('Failed to create invite: ' + (error?.message ?? 'unknown'));
       return;
     }
-    // Link the invite back to this imported member record
     await supabase.from('league_imported_members').update({ invite_id: invite.id }).eq('id', member.id);
     const inviteUrl = `${window.location.origin}/leagues/join/${invite.id}`;
     await navigator.clipboard.writeText(inviteUrl).catch(() => {});
@@ -52,58 +77,140 @@ function ImportedLeaguematesPanel({
     onInviteSent();
   }
 
+  async function handleReassign(importedMemberId: string, newMemberId: string | null) {
+    setReassignLoading(true);
+    const { error } = await supabase
+      .from('league_imported_members')
+      .update({ invited_user_id: newMemberId })
+      .eq('id', importedMemberId);
+    if (error) {
+      onError('Failed to reassign: ' + error.message);
+    } else {
+      setReassigning(null);
+      onInviteSent();
+    }
+    setReassignLoading(false);
+  }
+
   const uninvited = importedMembers.filter(m => !m.inviteId && !m.invitedUserId);
   const invited = importedMembers.filter(m => m.inviteId && !m.invitedUserId);
   const joined = importedMembers.filter(m => m.invitedUserId);
 
   if (uninvited.length === 0 && invited.length === 0 && joined.length === 0) return null;
 
+  const rowStyle: React.CSSProperties = {
+    display: 'flex', flexDirection: 'column', gap: '8px',
+    padding: '12px 14px', background: 'white', border: '1px solid #e0f2fe',
+    borderRadius: '6px',
+  };
+
   return (
     <div style={{ marginBottom: '24px', padding: '20px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px' }}>
       <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#0c4a6e' }}>Leaguemates from Import</h3>
       <p style={{ margin: '0 0 14px 0', fontSize: '13px', color: '#0369a1' }}>
-        These members were imported from your {importedMembers[0]?.provider?.toUpperCase()} league. Generate invite links to send them.
-        Note: emails are not available from {importedMembers[0]?.provider === 'sleeper' ? 'Sleeper' : 'ESPN'} — share links manually.
+        These members were imported from your {importedMembers[0]?.provider?.toUpperCase()} league.
+        Enter an email or phone number to address the invite, then copy the link to share it.
+        The link will automatically assign that person to this team when they join.
       </p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {uninvited.map(m => (
-          <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'white', border: '1px solid #e0f2fe', borderRadius: '6px', gap: '12px', flexWrap: 'wrap' }}>
-            <div style={{ minWidth: 0 }}>
-              <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
-              {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
-                <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
-              )}
+          <div key={m.id} style={rowStyle}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
+                {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
+                  <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
+                )}
+              </div>
+              <button
+                onClick={() => sendInvite(m)}
+                style={{ padding: '6px 14px', background: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+              >
+                {copiedId === m.id ? 'Link Copied!' : 'Copy Invite Link'}
+              </button>
             </div>
-            <button
-              onClick={() => sendInvite(m)}
-              style={{ padding: '6px 14px', background: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
-            >
-              {copiedId === m.id ? 'Link Copied!' : 'Copy Invite Link'}
-            </button>
+            <input
+              type="text"
+              value={contactInputs[m.id] ?? ''}
+              onChange={e => setContact(m.id, e.target.value)}
+              placeholder="Email or phone (+12125551234) — optional"
+              style={{ width: '100%', padding: '7px 10px', border: '1px solid #bae6fd', borderRadius: '5px', fontSize: '13px', color: '#0c4a6e', background: '#f0f9ff', boxSizing: 'border-box' }}
+            />
           </div>
         ))}
+
         {invited.map(m => (
-          <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'white', border: '1px solid #e0f2fe', borderRadius: '6px', gap: '12px', flexWrap: 'wrap', opacity: 0.7 }}>
-            <div style={{ minWidth: 0 }}>
-              <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
-              {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
-                <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
-              )}
+          <div key={m.id} style={{ ...rowStyle, opacity: 0.8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
+                {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
+                  <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
+                )}
+              </div>
+              <span style={{ fontSize: '12px', color: '#d97706', fontWeight: '600', whiteSpace: 'nowrap' }}>Invite Sent</span>
             </div>
-            <span style={{ fontSize: '12px', color: '#d97706', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Invited</span>
           </div>
         ))}
-        {joined.map(m => (
-          <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', gap: '12px', flexWrap: 'wrap' }}>
-            <div style={{ minWidth: 0 }}>
-              <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
-              {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
-                <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
+
+        {joined.map(m => {
+          const claimedMember = leagueMembers.find(lm => lm.user_id === m.invitedUserId);
+          return (
+            <div key={m.id} style={{ ...rowStyle, background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 0 }}>
+                  <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
+                  {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
+                    <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {claimedMember && (
+                    <span style={{ fontSize: '12px', color: '#15803d' }}>{claimedMember.display_name ?? claimedMember.phone_e164 ?? 'Member'}</span>
+                  )}
+                  <span style={{ fontSize: '12px', color: '#16a34a', fontWeight: '600', whiteSpace: 'nowrap' }}>Joined</span>
+                  <button
+                    onClick={() => setReassigning(reassigning === m.id ? null : m.id)}
+                    style={{ fontSize: '11px', padding: '3px 8px', background: 'none', border: '1px solid #86efac', color: '#166534', borderRadius: '4px', cursor: 'pointer' }}
+                  >
+                    Reassign
+                  </button>
+                </div>
+              </div>
+              {reassigning === m.id && (
+                <div style={{ marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <p style={{ margin: '0 0 6px', fontSize: '12px', color: '#166534' }}>
+                    Assign this imported team to a different league member:
+                  </p>
+                  {leagueMembers.map(lm => (
+                    <button
+                      key={lm.id}
+                      disabled={reassignLoading}
+                      onClick={() => handleReassign(m.id, lm.user_id)}
+                      style={{
+                        padding: '6px 12px', borderRadius: '5px', cursor: 'pointer', textAlign: 'left', fontSize: '13px',
+                        background: lm.user_id === m.invitedUserId ? '#dcfce7' : 'white',
+                        border: `1px solid ${lm.user_id === m.invitedUserId ? '#86efac' : '#d1d5db'}`,
+                        color: '#111827',
+                      }}
+                    >
+                      {lm.display_name ?? lm.phone_e164 ?? 'Member'}
+                      {lm.role === 'owner' ? ' (owner)' : ''}
+                      {lm.user_id === m.invitedUserId ? ' ✓' : ''}
+                    </button>
+                  ))}
+                  <button
+                    disabled={reassignLoading}
+                    onClick={() => handleReassign(m.id, null)}
+                    style={{ padding: '6px 12px', borderRadius: '5px', cursor: 'pointer', textAlign: 'left', fontSize: '13px', background: 'none', border: '1px solid #d1d5db', color: '#6b7280' }}
+                  >
+                    Unclaim (no one)
+                  </button>
+                </div>
               )}
             </div>
-            <span style={{ fontSize: '12px', color: '#16a34a', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0 }}>Joined / Claimed</span>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -277,15 +384,16 @@ export default function LeagueDetail() {
     setMemberError('');
     setMemberSuccess('');
 
-    const phones = phoneInputs.map(p => p.trim()).filter(Boolean);
-    const invalid = phones.filter(p => !p.match(/^\+[1-9]\d{1,14}$/));
-    if (invalid.length > 0) {
-      setMemberError(`Invalid number(s): ${invalid.join(', ')} — use E.164 format, e.g. +12125551234`);
+    const entries = phoneInputs.map(p => p.trim()).filter(Boolean);
+    if (entries.length === 0) {
+      setMemberError('Enter at least one email or phone number.');
       setAddingPhone(false);
       return;
     }
-    if (phones.length === 0) {
-      setMemberError('Enter at least one phone number.');
+
+    const invalid = entries.filter(e => !e.includes('@') && !e.match(/^\+[1-9]\d{1,14}$/));
+    if (invalid.length > 0) {
+      setMemberError(`Invalid entries: ${invalid.join(', ')} — use email or E.164 phone (+12125551234)`);
       setAddingPhone(false);
       return;
     }
@@ -293,31 +401,39 @@ export default function LeagueDetail() {
     const inviteLinks: string[] = [];
     const errors: string[] = [];
 
-    for (const phone of phones) {
+    for (const entry of entries) {
+      const isEmail = entry.includes('@');
+      const invitePayload: Record<string, unknown> = { league_id: leagueId, invited_by: user.id };
+      const memberPayload: Record<string, unknown> = { league_id: leagueId, display_name: entry };
+      if (isEmail) {
+        invitePayload.email = entry;
+        memberPayload.display_name = entry.split('@')[0];
+      } else {
+        invitePayload.phone_e164 = entry;
+        memberPayload.phone_e164 = entry;
+      }
+
       const { data: invite, error: inviteError } = await supabase
         .from('league_invites')
-        .insert({ league_id: leagueId, invited_by: user.id, phone_e164: phone })
+        .insert(invitePayload)
         .select()
         .single();
 
       if (inviteError || !invite) {
-        errors.push(`${phone}: ${inviteError?.message ?? 'unknown'}`);
+        errors.push(`${entry}: ${inviteError?.message ?? 'unknown'}`);
         continue;
       }
 
-      const { error: mErr } = await supabase
-        .from('league_members')
-        .insert({ league_id: leagueId, phone_e164: phone, display_name: phone });
-
+      const { error: mErr } = await supabase.from('league_members').insert(memberPayload);
       if (mErr) {
-        errors.push(`${phone}: ${mErr.message}`);
+        errors.push(`${entry}: ${mErr.message}`);
       } else {
         inviteLinks.push(`${window.location.origin}/leagues/join/${invite.id}`);
       }
     }
 
     if (errors.length > 0) {
-      setMemberError('Some numbers failed: ' + errors.join('; '));
+      setMemberError('Some entries failed: ' + errors.join('; '));
     }
     if (inviteLinks.length > 0) {
       setMemberSuccess(`Added ${inviteLinks.length} member(s). Invite links:\n${inviteLinks.join('\n')}`);
@@ -652,6 +768,7 @@ export default function LeagueDetail() {
           {isOwner && importedMembers.length > 0 && (
             <ImportedLeaguematesPanel
               importedMembers={importedMembers}
+              leagueMembers={members}
               leagueId={leagueId!}
               userId={user!.id}
               onInviteSent={loadLeagueData}
@@ -661,23 +778,23 @@ export default function LeagueDetail() {
 
           {isOwner && (
             <div style={{ marginBottom: '24px', padding: '20px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
-              <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', color: '#374151' }}>Add by Phone Number</h3>
+              <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', color: '#374151' }}>Add by Phone or Email</h3>
               <p style={{ margin: '0 0 14px 0', fontSize: '14px', color: '#6b7280' }}>
-                Enter numbers in E.164 format (e.g. +12125551234). Add multiple rows to invite several people at once.
+                Enter an email address or phone number (E.164 format, e.g. +12125551234). Add multiple rows to invite several people at once.
               </p>
               <form onSubmit={addMemberByPhone}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
                   {phoneInputs.map((val, idx) => (
                     <div key={idx} style={{ display: 'flex', gap: '8px' }}>
                       <input
-                        type="tel"
+                        type="text"
                         value={val}
                         onChange={(e) => {
                           const next = [...phoneInputs];
                           next[idx] = e.target.value;
                           setPhoneInputs(next);
                         }}
-                        placeholder="+12125551234"
+                        placeholder="email@example.com or +12125551234"
                         style={{ flex: 1, padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px', color: '#111827', background: 'white' }}
                       />
                       {phoneInputs.length > 1 && (
