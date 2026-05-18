@@ -513,15 +513,51 @@ export default function LeagueDetail() {
       return;
     }
 
-    const bareNumbers = entries.filter(en => !en.includes('@') && /^\d[\d\s\-().]{6,}$/.test(en));
-    if (bareNumbers.length > 0) {
-      setAddFormError(`Phone numbers need a country code — e.g. +1${bareNumbers[0].replace(/\D/g, '')} (include the + and country code)`);
+    // Normalize entries: bare 10-digit or 11-digit US numbers get +1 prefix
+    const normalized = entries.map(en => {
+      if (en.includes('@')) return en;
+      return normalizePhone(en);
+    });
+
+    const invalid = normalized.filter(en => !en.includes('@') && !en.match(/^\+[1-9]\d{1,14}$/));
+    if (invalid.length > 0) {
+      setAddFormError(`Invalid: "${invalid.join(', ')}" — use an email address or a 10-digit US phone number`);
       setAddingPhone(false);
       return;
     }
-    const invalid = entries.filter(en => !en.includes('@') && !en.match(/^\+[1-9]\d{1,14}$/));
-    if (invalid.length > 0) {
-      setAddFormError(`Invalid: "${invalid.join(', ')}" — use an email address or E.164 phone (+12125551234)`);
+
+    // Block inviting people already in the league.
+    // Check by phone (league_members.phone_e164) and by email (from existing invites that were accepted).
+    const memberPhones = new Set(members.map(m => m.phone_e164).filter(Boolean) as string[]);
+    // Also fetch auth emails for members who signed up
+    const memberUserIds = members.map(m => m.user_id).filter(Boolean) as string[];
+    let memberEmails = new Set<string>();
+    if (memberUserIds.length > 0) {
+      // We can't query auth.users directly from client — check against accepted invites' emails
+      const { data: acceptedInvites } = await supabase
+        .from('league_invites')
+        .select('email, phone_e164')
+        .eq('league_id', leagueId)
+        .not('accepted_at', 'is', null);
+      if (acceptedInvites) {
+        acceptedInvites.forEach(inv => {
+          if (inv.email) memberEmails.add(inv.email.toLowerCase());
+          if (inv.phone_e164) memberPhones.add(inv.phone_e164);
+        });
+      }
+    }
+    // Also check the league owner's email against what was invited
+    const ownerEmail = user.email?.toLowerCase();
+    if (ownerEmail) memberEmails.add(ownerEmail);
+    const ownerPhone = members.find(m => m.user_id === user.id)?.phone_e164;
+    if (ownerPhone) memberPhones.add(ownerPhone);
+
+    const alreadyMembers = normalized.filter(en => {
+      if (en.includes('@')) return memberEmails.has(en.toLowerCase());
+      return memberPhones.has(en);
+    });
+    if (alreadyMembers.length > 0) {
+      setAddFormError(`Already in this league: ${alreadyMembers.join(', ')}`);
       setAddingPhone(false);
       return;
     }
@@ -534,9 +570,8 @@ export default function LeagueDetail() {
     const errors: string[] = [];
     const notifErrors: string[] = [];
 
-    for (const entry of entries) {
+    for (const entry of normalized) {
       const isEmail = entry.includes('@');
-      // Create invite — no imported_member_id so no team auto-assignment
       const invitePayload: Record<string, unknown> = { league_id: leagueId, invited_by: user.id };
       if (isEmail) invitePayload.email = entry;
       else invitePayload.phone_e164 = entry;
@@ -555,7 +590,6 @@ export default function LeagueDetail() {
       const inviteUrl = `${window.location.origin}/leagues/join/${invite.id}`;
       inviteLinks.push(inviteUrl);
 
-      // Send notification via edge function
       if (token) {
         const fnSlug = isEmail ? 'send-invite-email' : 'send-invite-sms';
         const body = isEmail
@@ -616,6 +650,44 @@ export default function LeagueDetail() {
   async function revokeInvite(inviteId: string) {
     const { error } = await supabase.from('league_invites').delete().eq('id', inviteId);
     if (!error) await loadLeagueData();
+  }
+
+  // Normalizes US phone input: "7343588854" or "17343588854" → "+17343588854"
+  function normalizePhone(raw: string): string {
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length === 10) return `+1${digits}`;
+    if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+    if (raw.startsWith('+')) return raw; // already E.164
+    return raw; // pass through for validation to catch
+  }
+
+  const [resendingInviteId, setResendingInviteId] = useState<string | null>(null);
+  const [resentInviteId, setResentInviteId] = useState<string | null>(null);
+
+  async function resendInvite(inv: LeagueInvite) {
+    if (!league) return;
+    setResendingInviteId(inv.id);
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+    const inviteUrl = `${window.location.origin}/leagues/join/${inv.id}`;
+
+    if (inv.email && token) {
+      await fetch(`${supabaseUrl}/functions/v1/send-invite-email`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: inv.email, inviteUrl, leagueName: league.name }),
+      });
+    } else if (inv.phone_e164 && token) {
+      await fetch(`${supabaseUrl}/functions/v1/send-invite-sms`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: inv.phone_e164, inviteUrl, leagueName: league.name }),
+      });
+    }
+    setResendingInviteId(null);
+    setResentInviteId(inv.id);
+    setTimeout(() => setResentInviteId(null), 3000);
   }
 
   async function handleSaveSettings(e: React.FormEvent) {
@@ -926,7 +998,7 @@ export default function LeagueDetail() {
             <div style={{ marginBottom: '24px', padding: '20px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
               <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', color: '#374151' }}>Add by Phone or Email</h3>
               <p style={{ margin: '0 0 14px 0', fontSize: '14px', color: '#6b7280' }}>
-                Enter an email address or phone number in E.164 format (e.g. <strong>+12125551234</strong>). Add multiple rows to invite several people at once.
+                Enter an email address or a US phone number (e.g. <strong>7343588854</strong>). Add multiple rows to invite several people at once.
               </p>
               {addFormError && (
                 <div style={{ padding: '10px 14px', background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '6px', color: '#dc2626', fontSize: '13px', marginBottom: '12px', lineHeight: '1.5' }}>
@@ -942,7 +1014,8 @@ export default function LeagueDetail() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
                   {phoneInputs.map((val, idx) => {
                     const trimmed = val.trim();
-                    const isBare = trimmed && !trimmed.includes('@') && /^\d[\d\s\-().]{6,}$/.test(trimmed);
+                    const looksLikePhone = trimmed && !trimmed.includes('@') && /^\d[\d\s\-().]{6,}$/.test(trimmed);
+                    const normalized = looksLikePhone ? normalizePhone(trimmed) : null;
                     return (
                       <div key={idx}>
                         <div style={{ display: 'flex', gap: '8px' }}>
@@ -956,10 +1029,10 @@ export default function LeagueDetail() {
                               setAddFormError('');
                               setAddFormSuccess('');
                             }}
-                            placeholder="email@example.com or +12125551234"
+                            placeholder="email@example.com or 7343588854"
                             style={{
                               flex: 1, padding: '10px',
-                              border: `1px solid ${isBare ? '#f87171' : '#d1d5db'}`,
+                              border: `1px solid #d1d5db`,
                               borderRadius: '6px', color: '#111827', background: 'white',
                             }}
                           />
@@ -974,9 +1047,9 @@ export default function LeagueDetail() {
                             </button>
                           )}
                         </div>
-                        {isBare && (
-                          <p style={{ margin: '3px 0 0 2px', fontSize: '12px', color: '#dc2626' }}>
-                            Add country code: +1{trimmed.replace(/\D/g, '')}
+                        {normalized && (
+                          <p style={{ margin: '3px 0 0 2px', fontSize: '12px', color: '#059669' }}>
+                            Will send SMS to {normalized}
                           </p>
                         )}
                       </div>
@@ -1067,6 +1140,12 @@ export default function LeagueDetail() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {invites.filter(i => !i.accepted_at).map(inv => {
                   const inviteUrl = `${window.location.origin}/leagues/join/${inv.id}`;
+                  const contactLabel = inv.email
+                    ? inv.email
+                    : inv.phone_e164
+                    ? inv.phone_e164
+                    : 'General invite';
+                  const canResend = !!(inv.email || inv.phone_e164);
                   return (
                     <div key={inv.id} style={{
                       padding: '12px 16px',
@@ -1075,17 +1154,34 @@ export default function LeagueDetail() {
                       display: 'flex',
                       justifyContent: 'space-between',
                       alignItems: 'center',
+                      gap: '8px',
+                      flexWrap: 'wrap',
                       background: '#fafafa',
                     }}>
-                      <div>
-                        <span style={{ fontSize: '13px', color: '#374151' }}>
-                          {inv.phone_e164 ? `Phone: ${inv.phone_e164}` : 'General invite'}
+                      <div style={{ minWidth: 0 }}>
+                        <span style={{ fontSize: '13px', color: '#111827', fontWeight: canResend ? '500' : '400' }}>
+                          {contactLabel}
                         </span>
                         <span style={{ marginLeft: '10px', fontSize: '12px', color: '#9ca3af' }}>
                           Expires {new Date(inv.expires_at).toLocaleDateString()}
                         </span>
                       </div>
-                      <div style={{ display: 'flex', gap: '8px' }}>
+                      <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                        {canResend && (
+                          <button
+                            onClick={() => resendInvite(inv)}
+                            disabled={resendingInviteId === inv.id}
+                            style={{
+                              padding: '6px 12px',
+                              background: resentInviteId === inv.id ? '#059669' : 'none',
+                              border: `1px solid ${resentInviteId === inv.id ? '#059669' : '#0284c7'}`,
+                              color: resentInviteId === inv.id ? '#fff' : '#0284c7',
+                              borderRadius: '6px', cursor: 'pointer', fontSize: '13px', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {resendingInviteId === inv.id ? 'Sending…' : resentInviteId === inv.id ? 'Sent!' : `Resend ${inv.email ? 'Email' : 'SMS'}`}
+                          </button>
+                        )}
                         <button
                           onClick={() => { navigator.clipboard.writeText(inviteUrl); setCopiedInviteId(inv.id); setTimeout(() => setCopiedInviteId(null), 3000); }}
                           style={{ padding: '6px 12px', background: '#f3f4f6', border: '1px solid #d1d5db', color: '#374151', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}

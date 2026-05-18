@@ -487,6 +487,8 @@ export interface Database {
           league_id: string
           invited_by: string
           phone_e164: string | null
+          email: string | null
+          imported_member_id: string | null
           accepted_at: string | null
           expires_at: string
           created_at: string
@@ -496,6 +498,8 @@ export interface Database {
           league_id: string
           invited_by: string
           phone_e164?: string | null
+          email?: string | null
+          imported_member_id?: string | null
           accepted_at?: string | null
           expires_at?: string
           created_at?: string
@@ -505,6 +509,8 @@ export interface Database {
           league_id?: string
           invited_by?: string
           phone_e164?: string | null
+          email?: string | null
+          imported_member_id?: string | null
           accepted_at?: string | null
           expires_at?: string
           created_at?: string
