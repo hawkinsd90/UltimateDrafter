@@ -9,9 +9,9 @@ const corsHeaders = {
 
 interface RequestBody {
   phone: string;       // E.164 phone number
-  inviteUrl: string;   // Full invite URL
+  inviteUrl: string;
   leagueName: string;
-  teamName?: string;   // Optional: pre-tied imported team name
+  teamName?: string;
 }
 
 Deno.serve(async (req: Request) => {
@@ -28,18 +28,15 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const token = authHeader.slice(7); // strip "Bearer "
+
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Verify caller is authenticated
-    const supabaseClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
+    // Verify caller via service-role client using the raw token
+    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
     if (authError || !user) {
       return new Response(
         JSON.stringify({ success: false, error: "Unauthorized" }),
@@ -59,41 +56,47 @@ Deno.serve(async (req: Request) => {
 
     if (!/^\+[1-9]\d{1,14}$/.test(phone)) {
       return new Response(
-        JSON.stringify({ success: false, error: "Invalid phone number — must be E.164 format (e.g. +12125551234)" }),
+        JSON.stringify({ success: false, error: "Invalid phone — must be E.164 format e.g. +12125551234" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const telnyxApiKey = Deno.env.get("TELNYX_API_KEY");
-    const telnyxFromNumber = Deno.env.get("TELNYX_FROM_NUMBER");
+    const accountSid = Deno.env.get("TWILIO_ACCOUNT_SID");
+    const authToken = Deno.env.get("TWILIO_AUTH_TOKEN");
+    const fromNumber = Deno.env.get("TWILIO_FROM_NUMBER");
 
-    if (!telnyxApiKey || !telnyxFromNumber) {
+    if (!accountSid || !authToken || !fromNumber) {
       return new Response(
-        JSON.stringify({ success: false, error: "SMS service not configured (TELNYX_API_KEY missing)" }),
+        JSON.stringify({ success: false, error: "SMS service not configured (Twilio credentials missing)" }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     const teamLine = teamName ? `\nYour team: ${teamName}` : "";
-    const messageText =
-      `You've been invited to join ${leagueName} on Offline4Ever!${teamLine}\n\nJoin here: ${inviteUrl}`;
+    const messageText = `You've been invited to join ${leagueName} on Offline4Ever!${teamLine}\n\nJoin here: ${inviteUrl}`;
 
-    const response = await fetch("https://api.telnyx.com/v2/messages", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${telnyxApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: telnyxFromNumber,
-        to: phone,
-        text: messageText,
-      }),
+    const body64 = btoa(`${accountSid}:${authToken}`);
+    const params = new URLSearchParams({
+      From: fromNumber,
+      To: phone,
+      Body: messageText,
     });
+
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Basic ${body64}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: params.toString(),
+      }
+    );
 
     if (!response.ok) {
       const errorBody = await response.text();
-      console.error(`Telnyx error ${response.status}: ${errorBody}`);
+      console.error(`Twilio error ${response.status}: ${errorBody}`);
       return new Response(
         JSON.stringify({ success: false, error: `SMS provider error: ${response.status}` }),
         { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -101,9 +104,8 @@ Deno.serve(async (req: Request) => {
     }
 
     const result = await response.json();
-    const messageId = result.data?.id ?? `telnyx-${Date.now()}`;
+    const messageId = result.sid ?? `twilio-${Date.now()}`;
 
-    // Log to outbox for audit trail
     await supabaseAdmin.from("notifications_outbox").insert({
       channel: "sms",
       destination: phone,
@@ -111,7 +113,7 @@ Deno.serve(async (req: Request) => {
       status: "sent",
       sent_at: new Date().toISOString(),
       payload: { invite_url: inviteUrl, league_name: leagueName, team_name: teamName ?? null, message_id: messageId, requested_by: user.id },
-    });
+    }).maybeSingle();
 
     return new Response(
       JSON.stringify({ success: true, messageId }),

@@ -44,15 +44,17 @@ function ImportedLeaguematesPanel({
     setContactInputs(prev => ({ ...prev, [memberId]: val }));
   }
 
-  function detectContactType(contact: string): 'email' | 'phone' | 'invalid' | 'empty' {
+  function detectContactType(contact: string): 'email' | 'phone' | 'bare_number' | 'invalid' | 'empty' {
     if (!contact) return 'empty';
     if (contact.includes('@')) return 'email';
     if (/^\+[1-9]\d{1,14}$/.test(contact)) return 'phone';
+    // Looks like a phone number but missing the + country code prefix
+    if (/^\d[\d\s\-().]{6,}$/.test(contact)) return 'bare_number';
     return 'invalid';
   }
 
   // Creates the invite record and returns { invite, inviteUrl } or null on error
-  async function createInviteRecord(member: ImportedMember, contact: string, contactType: 'email' | 'phone' | 'empty') {
+  async function createInviteRecord(member: ImportedMember, contact: string, contactType: 'email' | 'phone' | 'bare_number' | 'empty') {
     const insertPayload: Record<string, unknown> = {
       league_id: leagueId,
       invited_by: userId,
@@ -78,6 +80,10 @@ function ImportedLeaguematesPanel({
   async function handleCopyLink(member: ImportedMember) {
     const contact = contactInputs[member.id]?.trim() ?? '';
     const contactType = detectContactType(contact);
+    if (contactType === 'bare_number') {
+      onError(`Phone numbers must include the country code, e.g. +1${contact.replace(/\D/g, '')}`);
+      return;
+    }
     if (contactType === 'invalid') {
       onError(`"${contact}" is not a valid email or E.164 phone (+12125551234).`);
       return;
@@ -96,6 +102,10 @@ function ImportedLeaguematesPanel({
 
     if (contactType === 'empty') {
       onError('Enter an email or phone number before sending.');
+      return;
+    }
+    if (contactType === 'bare_number') {
+      onError(`Phone numbers must include the country code, e.g. +1${contact.replace(/\D/g, '')}`);
       return;
     }
     if (contactType === 'invalid') {
@@ -174,6 +184,7 @@ function ImportedLeaguematesPanel({
           const contactType = detectContactType(contact);
           const isSending = sendingId === m.id;
           const wasSent = sentId === m.id;
+          const canSend = contactType === 'email' || contactType === 'phone';
           const sendLabel = isSending ? 'Sending…'
             : wasSent ? 'Sent!'
             : contactType === 'email' ? 'Send Email'
@@ -197,36 +208,43 @@ function ImportedLeaguematesPanel({
                 </button>
               </div>
               {/* Contact input + Send button */}
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                <div style={{ flex: 1, position: 'relative' }}>
-                  <input
-                    type="text"
-                    value={contactInputs[m.id] ?? ''}
-                    onChange={e => setContact(m.id, e.target.value)}
-                    placeholder="Email or phone (+12125551234)"
-                    style={{
-                      width: '100%', padding: '7px 36px 7px 10px',
-                      border: `1px solid ${contactType === 'invalid' ? '#f87171' : '#bae6fd'}`,
-                      borderRadius: '5px', fontSize: '13px', color: '#0c4a6e',
-                      background: '#f0f9ff', boxSizing: 'border-box',
-                    }}
-                  />
-                  {/* Type indicator badge */}
-                  {contactType === 'email' && (
-                    <span style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '10px', color: '#0284c7', fontWeight: '700', pointerEvents: 'none' }}>EMAIL</span>
-                  )}
-                  {contactType === 'phone' && (
-                    <span style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '10px', color: '#059669', fontWeight: '700', pointerEvents: 'none' }}>SMS</span>
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="text"
+                      value={contactInputs[m.id] ?? ''}
+                      onChange={e => setContact(m.id, e.target.value)}
+                      placeholder="Email or phone (+12125551234)"
+                      style={{
+                        width: '100%', padding: '7px 46px 7px 10px',
+                        border: `1px solid ${contactType === 'invalid' || contactType === 'bare_number' ? '#f87171' : '#bae6fd'}`,
+                        borderRadius: '5px', fontSize: '13px', color: '#0c4a6e',
+                        background: '#f0f9ff', boxSizing: 'border-box',
+                      }}
+                    />
+                    {contactType === 'email' && (
+                      <span style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '10px', color: '#0284c7', fontWeight: '700', pointerEvents: 'none' }}>EMAIL</span>
+                    )}
+                    {contactType === 'phone' && (
+                      <span style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '10px', color: '#059669', fontWeight: '700', pointerEvents: 'none' }}>SMS</span>
+                    )}
+                  </div>
+                  {contactType === 'bare_number' && (
+                    <p style={{ margin: '3px 0 0', fontSize: '11px', color: '#dc2626' }}>
+                      Add country code: +1{contact.replace(/\D/g, '')}
+                    </p>
                   )}
                 </div>
                 <button
                   onClick={() => handleSendNotification(m)}
-                  disabled={isSending || wasSent || contactType === 'empty' || contactType === 'invalid'}
+                  disabled={isSending || wasSent || !canSend}
                   style={{
                     padding: '7px 14px', borderRadius: '5px', fontSize: '13px', fontWeight: '600',
-                    whiteSpace: 'nowrap', flexShrink: 0, cursor: (isSending || wasSent || contactType === 'empty' || contactType === 'invalid') ? 'not-allowed' : 'pointer',
-                    background: wasSent ? '#059669' : contactType === 'empty' || contactType === 'invalid' ? '#e0f2fe' : '#0284c7',
-                    color: wasSent ? '#fff' : contactType === 'empty' || contactType === 'invalid' ? '#94a3b8' : '#fff',
+                    whiteSpace: 'nowrap', flexShrink: 0, marginTop: '1px',
+                    cursor: (isSending || wasSent || !canSend) ? 'not-allowed' : 'pointer',
+                    background: wasSent ? '#059669' : !canSend ? '#e0f2fe' : '#0284c7',
+                    color: wasSent ? '#fff' : !canSend ? '#94a3b8' : '#fff',
                     border: 'none',
                     transition: 'background 0.15s',
                   }}
@@ -490,6 +508,12 @@ export default function LeagueDetail() {
       return;
     }
 
+    const bareNumbers = entries.filter(en => !en.includes('@') && /^\d[\d\s\-().]{6,}$/.test(en));
+    if (bareNumbers.length > 0) {
+      setMemberError(`Phone numbers need a country code prefix, e.g. +1${bareNumbers[0].replace(/\D/g, '')} — use E.164 format`);
+      setAddingPhone(false);
+      return;
+    }
     const invalid = entries.filter(en => !en.includes('@') && !en.match(/^\+[1-9]\d{1,14}$/));
     if (invalid.length > 0) {
       setMemberError(`Invalid entries: ${invalid.join(', ')} — use email or E.164 phone (+12125551234)`);
