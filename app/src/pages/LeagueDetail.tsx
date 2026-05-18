@@ -23,42 +23,43 @@ interface ImportedMember {
 }
 
 function ImportedLeaguematesPanel({
-  importedMembers, leagueMembers, leagueId, userId, onInviteSent, onError,
+  importedMembers, leagueMembers, leagueId, userId, leagueName, onInviteSent, onError,
 }: {
   importedMembers: ImportedMember[];
   leagueMembers: LeagueMember[];
   leagueId: string;
   userId: string;
+  leagueName: string;
   onInviteSent: () => void;
   onError: (msg: string) => void;
 }) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [sentId, setSentId] = useState<string | null>(null);
   const [contactInputs, setContactInputs] = useState<Record<string, string>>({});
-  // reassignment: memberId -> importedMemberId
-  const [reassigning, setReassigning] = useState<string | null>(null); // importedMemberId being reassigned
+  const [reassigning, setReassigning] = useState<string | null>(null);
   const [reassignLoading, setReassignLoading] = useState(false);
 
   function setContact(memberId: string, val: string) {
     setContactInputs(prev => ({ ...prev, [memberId]: val }));
   }
 
-  async function sendInvite(member: ImportedMember) {
-    const contact = contactInputs[member.id]?.trim() ?? '';
-    const isEmail = contact.includes('@');
-    const isPhone = /^\+[1-9]\d{1,14}$/.test(contact);
+  function detectContactType(contact: string): 'email' | 'phone' | 'invalid' | 'empty' {
+    if (!contact) return 'empty';
+    if (contact.includes('@')) return 'email';
+    if (/^\+[1-9]\d{1,14}$/.test(contact)) return 'phone';
+    return 'invalid';
+  }
 
-    if (contact && !isEmail && !isPhone) {
-      onError(`"${contact}" is not a valid email or E.164 phone (+12125551234).`);
-      return;
-    }
-
+  // Creates the invite record and returns { invite, inviteUrl } or null on error
+  async function createInviteRecord(member: ImportedMember, contact: string, contactType: 'email' | 'phone' | 'empty') {
     const insertPayload: Record<string, unknown> = {
       league_id: leagueId,
       invited_by: userId,
       imported_member_id: member.id,
     };
-    if (isEmail) insertPayload.email = contact;
-    if (isPhone) insertPayload.phone_e164 = contact;
+    if (contactType === 'email') insertPayload.email = contact;
+    if (contactType === 'phone') insertPayload.phone_e164 = contact;
 
     const { data: invite, error } = await supabase
       .from('league_invites')
@@ -67,14 +68,70 @@ function ImportedLeaguematesPanel({
       .single();
     if (error || !invite) {
       onError('Failed to create invite: ' + (error?.message ?? 'unknown'));
-      return;
+      return null;
     }
     await supabase.from('league_imported_members').update({ invite_id: invite.id }).eq('id', member.id);
     const inviteUrl = `${window.location.origin}/leagues/join/${invite.id}`;
-    await navigator.clipboard.writeText(inviteUrl).catch(() => {});
+    return { invite, inviteUrl };
+  }
+
+  async function handleCopyLink(member: ImportedMember) {
+    const contact = contactInputs[member.id]?.trim() ?? '';
+    const contactType = detectContactType(contact);
+    if (contactType === 'invalid') {
+      onError(`"${contact}" is not a valid email or E.164 phone (+12125551234).`);
+      return;
+    }
+    const result = await createInviteRecord(member, contact, contactType);
+    if (!result) return;
+    await navigator.clipboard.writeText(result.inviteUrl).catch(() => {});
     setCopiedId(member.id);
     setTimeout(() => setCopiedId(null), 3000);
     onInviteSent();
+  }
+
+  async function handleSendNotification(member: ImportedMember) {
+    const contact = contactInputs[member.id]?.trim() ?? '';
+    const contactType = detectContactType(contact);
+
+    if (contactType === 'empty') {
+      onError('Enter an email or phone number before sending.');
+      return;
+    }
+    if (contactType === 'invalid') {
+      onError(`"${contact}" is not a valid email or E.164 phone (+12125551234).`);
+      return;
+    }
+
+    setSendingId(member.id);
+    const result = await createInviteRecord(member, contact, contactType);
+    if (!result) { setSendingId(null); return; }
+
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) { onError('Not authenticated'); setSendingId(null); return; }
+
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+    const fnSlug = contactType === 'email' ? 'send-invite-email' : 'send-invite-sms';
+    const body = contactType === 'email'
+      ? { email: contact, inviteUrl: result.inviteUrl, leagueName, teamName: member.teamName }
+      : { phone: contact, inviteUrl: result.inviteUrl, leagueName, teamName: member.teamName };
+
+    const resp = await fetch(`${supabaseUrl}/functions/v1/${fnSlug}`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+
+    setSendingId(null);
+    if (!data.success) {
+      onError(`Failed to send ${contactType === 'email' ? 'email' : 'SMS'}: ${data.error}`);
+    } else {
+      setSentId(member.id);
+      setTimeout(() => setSentId(null), 4000);
+      onInviteSent();
+    }
   }
 
   async function handleReassign(importedMemberId: string, newMemberId: string | null) {
@@ -109,35 +166,77 @@ function ImportedLeaguematesPanel({
       <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: '#0c4a6e' }}>Leaguemates from Import</h3>
       <p style={{ margin: '0 0 14px 0', fontSize: '13px', color: '#0369a1' }}>
         These members were imported from your {importedMembers[0]?.provider?.toUpperCase()} league.
-        Enter an email or phone number to address the invite, then copy the link to share it.
-        The link will automatically assign that person to this team when they join.
+        Enter an email or phone to send a direct invite, or just copy the link. The invite is pre-tied to that team.
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {uninvited.map(m => (
-          <div key={m.id} style={rowStyle}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
-              <div style={{ minWidth: 0 }}>
-                <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
-                {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
-                  <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
-                )}
+        {uninvited.map(m => {
+          const contact = contactInputs[m.id]?.trim() ?? '';
+          const contactType = detectContactType(contact);
+          const isSending = sendingId === m.id;
+          const wasSent = sentId === m.id;
+          const sendLabel = isSending ? 'Sending…'
+            : wasSent ? 'Sent!'
+            : contactType === 'email' ? 'Send Email'
+            : contactType === 'phone' ? 'Send SMS'
+            : 'Send';
+
+          return (
+            <div key={m.id} style={rowStyle}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 0 }}>
+                  <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
+                  {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
+                    <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
+                  )}
+                </div>
+                <button
+                  onClick={() => handleCopyLink(m)}
+                  style={{ padding: '5px 12px', background: 'none', color: '#0284c7', border: '1px solid #0284c7', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                >
+                  {copiedId === m.id ? 'Copied!' : 'Copy Link'}
+                </button>
               </div>
-              <button
-                onClick={() => sendInvite(m)}
-                style={{ padding: '6px 14px', background: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
-              >
-                {copiedId === m.id ? 'Link Copied!' : 'Copy Invite Link'}
-              </button>
+              {/* Contact input + Send button */}
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <div style={{ flex: 1, position: 'relative' }}>
+                  <input
+                    type="text"
+                    value={contactInputs[m.id] ?? ''}
+                    onChange={e => setContact(m.id, e.target.value)}
+                    placeholder="Email or phone (+12125551234)"
+                    style={{
+                      width: '100%', padding: '7px 36px 7px 10px',
+                      border: `1px solid ${contactType === 'invalid' ? '#f87171' : '#bae6fd'}`,
+                      borderRadius: '5px', fontSize: '13px', color: '#0c4a6e',
+                      background: '#f0f9ff', boxSizing: 'border-box',
+                    }}
+                  />
+                  {/* Type indicator badge */}
+                  {contactType === 'email' && (
+                    <span style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '10px', color: '#0284c7', fontWeight: '700', pointerEvents: 'none' }}>EMAIL</span>
+                  )}
+                  {contactType === 'phone' && (
+                    <span style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '10px', color: '#059669', fontWeight: '700', pointerEvents: 'none' }}>SMS</span>
+                  )}
+                </div>
+                <button
+                  onClick={() => handleSendNotification(m)}
+                  disabled={isSending || wasSent || contactType === 'empty' || contactType === 'invalid'}
+                  style={{
+                    padding: '7px 14px', borderRadius: '5px', fontSize: '13px', fontWeight: '600',
+                    whiteSpace: 'nowrap', flexShrink: 0, cursor: (isSending || wasSent || contactType === 'empty' || contactType === 'invalid') ? 'not-allowed' : 'pointer',
+                    background: wasSent ? '#059669' : contactType === 'empty' || contactType === 'invalid' ? '#e0f2fe' : '#0284c7',
+                    color: wasSent ? '#fff' : contactType === 'empty' || contactType === 'invalid' ? '#94a3b8' : '#fff',
+                    border: 'none',
+                    transition: 'background 0.15s',
+                  }}
+                >
+                  {sendLabel}
+                </button>
+              </div>
             </div>
-            <input
-              type="text"
-              value={contactInputs[m.id] ?? ''}
-              onChange={e => setContact(m.id, e.target.value)}
-              placeholder="Email or phone (+12125551234) — optional"
-              style={{ width: '100%', padding: '7px 10px', border: '1px solid #bae6fd', borderRadius: '5px', fontSize: '13px', color: '#0c4a6e', background: '#f0f9ff', boxSizing: 'border-box' }}
-            />
-          </div>
-        ))}
+          );
+        })}
 
         {invited.map(m => (
           <div key={m.id} style={{ ...rowStyle, opacity: 0.8 }}>
@@ -379,7 +478,7 @@ export default function LeagueDetail() {
 
   async function addMemberByPhone(e: React.FormEvent) {
     e.preventDefault();
-    if (!leagueId || !user) return;
+    if (!leagueId || !user || !league) return;
     setAddingPhone(true);
     setMemberError('');
     setMemberSuccess('');
@@ -391,27 +490,27 @@ export default function LeagueDetail() {
       return;
     }
 
-    const invalid = entries.filter(e => !e.includes('@') && !e.match(/^\+[1-9]\d{1,14}$/));
+    const invalid = entries.filter(en => !en.includes('@') && !en.match(/^\+[1-9]\d{1,14}$/));
     if (invalid.length > 0) {
       setMemberError(`Invalid entries: ${invalid.join(', ')} — use email or E.164 phone (+12125551234)`);
       setAddingPhone(false);
       return;
     }
 
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+
     const inviteLinks: string[] = [];
     const errors: string[] = [];
+    const notifErrors: string[] = [];
 
     for (const entry of entries) {
       const isEmail = entry.includes('@');
+      // Create invite — no imported_member_id so no team auto-assignment
       const invitePayload: Record<string, unknown> = { league_id: leagueId, invited_by: user.id };
-      const memberPayload: Record<string, unknown> = { league_id: leagueId, display_name: entry };
-      if (isEmail) {
-        invitePayload.email = entry;
-        memberPayload.display_name = entry.split('@')[0];
-      } else {
-        invitePayload.phone_e164 = entry;
-        memberPayload.phone_e164 = entry;
-      }
+      if (isEmail) invitePayload.email = entry;
+      else invitePayload.phone_e164 = entry;
 
       const { data: invite, error: inviteError } = await supabase
         .from('league_invites')
@@ -424,11 +523,25 @@ export default function LeagueDetail() {
         continue;
       }
 
-      const { error: mErr } = await supabase.from('league_members').insert(memberPayload);
-      if (mErr) {
-        errors.push(`${entry}: ${mErr.message}`);
-      } else {
-        inviteLinks.push(`${window.location.origin}/leagues/join/${invite.id}`);
+      const inviteUrl = `${window.location.origin}/leagues/join/${invite.id}`;
+      inviteLinks.push(inviteUrl);
+
+      // Send notification via edge function
+      if (token) {
+        const fnSlug = isEmail ? 'send-invite-email' : 'send-invite-sms';
+        const body = isEmail
+          ? { email: entry, inviteUrl, leagueName: league.name }
+          : { phone: entry, inviteUrl, leagueName: league.name };
+
+        const resp = await fetch(`${supabaseUrl}/functions/v1/${fnSlug}`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (!data.success) {
+          notifErrors.push(`${entry}: ${data.error}`);
+        }
       }
     }
 
@@ -436,7 +549,8 @@ export default function LeagueDetail() {
       setMemberError('Some entries failed: ' + errors.join('; '));
     }
     if (inviteLinks.length > 0) {
-      setMemberSuccess(`Added ${inviteLinks.length} member(s). Invite links:\n${inviteLinks.join('\n')}`);
+      const notifNote = notifErrors.length > 0 ? ` (notification issues: ${notifErrors.join('; ')})` : ' — notification sent.';
+      setMemberSuccess(`Invited ${inviteLinks.length} person(s)${notifNote}\n\nLinks:\n${inviteLinks.join('\n')}`);
       setPhoneInputs(['']);
       await loadLeagueData();
     }
@@ -771,6 +885,7 @@ export default function LeagueDetail() {
               leagueMembers={members}
               leagueId={leagueId!}
               userId={user!.id}
+              leagueName={league.name}
               onInviteSent={loadLeagueData}
               onError={setMemberError}
             />
