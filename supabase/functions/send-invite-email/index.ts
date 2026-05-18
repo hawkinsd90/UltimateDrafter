@@ -77,7 +77,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const from = inviterName ? `${inviterName} via Offline4Ever <invites@offline4ever.com>` : "Offline4Ever <invites@offline4ever.com>";
+    const from = "Offline4Ever <onboarding@resend.dev>";
     const subject = `You're invited to join ${leagueName}!`;
 
     const teamSection = teamName

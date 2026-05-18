@@ -354,6 +354,9 @@ export default function LeagueDetail() {
   const [memberError, setMemberError] = useState('');
   const [memberSuccess, setMemberSuccess] = useState('');
   const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
+  // inline error/success for the Add by Phone/Email form (visible without scrolling)
+  const [addFormError, setAddFormError] = useState('');
+  const [addFormSuccess, setAddFormSuccess] = useState('');
 
   // imported members from external league (Sleeper/ESPN)
   const [importedMembers, setImportedMembers] = useState<{
@@ -498,25 +501,27 @@ export default function LeagueDetail() {
     e.preventDefault();
     if (!leagueId || !user || !league) return;
     setAddingPhone(true);
+    setAddFormError('');
+    setAddFormSuccess('');
     setMemberError('');
     setMemberSuccess('');
 
     const entries = phoneInputs.map(p => p.trim()).filter(Boolean);
     if (entries.length === 0) {
-      setMemberError('Enter at least one email or phone number.');
+      setAddFormError('Enter at least one email or phone number.');
       setAddingPhone(false);
       return;
     }
 
     const bareNumbers = entries.filter(en => !en.includes('@') && /^\d[\d\s\-().]{6,}$/.test(en));
     if (bareNumbers.length > 0) {
-      setMemberError(`Phone numbers need a country code prefix, e.g. +1${bareNumbers[0].replace(/\D/g, '')} — use E.164 format`);
+      setAddFormError(`Phone numbers need a country code — e.g. +1${bareNumbers[0].replace(/\D/g, '')} (include the + and country code)`);
       setAddingPhone(false);
       return;
     }
     const invalid = entries.filter(en => !en.includes('@') && !en.match(/^\+[1-9]\d{1,14}$/));
     if (invalid.length > 0) {
-      setMemberError(`Invalid entries: ${invalid.join(', ')} — use email or E.164 phone (+12125551234)`);
+      setAddFormError(`Invalid: "${invalid.join(', ')}" — use an email address or E.164 phone (+12125551234)`);
       setAddingPhone(false);
       return;
     }
@@ -570,11 +575,13 @@ export default function LeagueDetail() {
     }
 
     if (errors.length > 0) {
-      setMemberError('Some entries failed: ' + errors.join('; '));
+      setAddFormError('Some entries failed: ' + errors.join('; '));
     }
     if (inviteLinks.length > 0) {
-      const notifNote = notifErrors.length > 0 ? ` (notification issues: ${notifErrors.join('; ')})` : ' — notification sent.';
-      setMemberSuccess(`Invited ${inviteLinks.length} person(s)${notifNote}\n\nLinks:\n${inviteLinks.join('\n')}`);
+      const notifNote = notifErrors.length > 0
+        ? ` Note: notification delivery issue — ${notifErrors.join('; ')}`
+        : ' Invite notification sent.';
+      setAddFormSuccess(`Invited ${inviteLinks.length} person(s).${notifNote}`);
       setPhoneInputs(['']);
       await loadLeagueData();
     }
@@ -919,35 +926,62 @@ export default function LeagueDetail() {
             <div style={{ marginBottom: '24px', padding: '20px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
               <h3 style={{ margin: '0 0 8px 0', fontSize: '16px', color: '#374151' }}>Add by Phone or Email</h3>
               <p style={{ margin: '0 0 14px 0', fontSize: '14px', color: '#6b7280' }}>
-                Enter an email address or phone number (E.164 format, e.g. +12125551234). Add multiple rows to invite several people at once.
+                Enter an email address or phone number in E.164 format (e.g. <strong>+12125551234</strong>). Add multiple rows to invite several people at once.
               </p>
+              {addFormError && (
+                <div style={{ padding: '10px 14px', background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '6px', color: '#dc2626', fontSize: '13px', marginBottom: '12px', lineHeight: '1.5' }}>
+                  {addFormError}
+                </div>
+              )}
+              {addFormSuccess && (
+                <div style={{ padding: '10px 14px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', color: '#166534', fontSize: '13px', marginBottom: '12px', lineHeight: '1.5', wordBreak: 'break-all' }}>
+                  {addFormSuccess}
+                </div>
+              )}
               <form onSubmit={addMemberByPhone}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
-                  {phoneInputs.map((val, idx) => (
-                    <div key={idx} style={{ display: 'flex', gap: '8px' }}>
-                      <input
-                        type="text"
-                        value={val}
-                        onChange={(e) => {
-                          const next = [...phoneInputs];
-                          next[idx] = e.target.value;
-                          setPhoneInputs(next);
-                        }}
-                        placeholder="email@example.com or +12125551234"
-                        style={{ flex: 1, padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px', color: '#111827', background: 'white' }}
-                      />
-                      {phoneInputs.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => setPhoneInputs(phoneInputs.filter((_, i) => i !== idx))}
-                          style={{ padding: '10px 12px', background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', color: '#6b7280', cursor: 'pointer', fontSize: '16px', lineHeight: 1 }}
-                          title="Remove"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                  {phoneInputs.map((val, idx) => {
+                    const trimmed = val.trim();
+                    const isBare = trimmed && !trimmed.includes('@') && /^\d[\d\s\-().]{6,}$/.test(trimmed);
+                    return (
+                      <div key={idx}>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <input
+                            type="text"
+                            value={val}
+                            onChange={(e) => {
+                              const next = [...phoneInputs];
+                              next[idx] = e.target.value;
+                              setPhoneInputs(next);
+                              setAddFormError('');
+                              setAddFormSuccess('');
+                            }}
+                            placeholder="email@example.com or +12125551234"
+                            style={{
+                              flex: 1, padding: '10px',
+                              border: `1px solid ${isBare ? '#f87171' : '#d1d5db'}`,
+                              borderRadius: '6px', color: '#111827', background: 'white',
+                            }}
+                          />
+                          {phoneInputs.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setPhoneInputs(phoneInputs.filter((_, i) => i !== idx))}
+                              style={{ padding: '10px 12px', background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', color: '#6b7280', cursor: 'pointer', fontSize: '16px', lineHeight: 1 }}
+                              title="Remove"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
+                        {isBare && (
+                          <p style={{ margin: '3px 0 0 2px', fontSize: '12px', color: '#dc2626' }}>
+                            Add country code: +1{trimmed.replace(/\D/g, '')}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <button
@@ -971,7 +1005,7 @@ export default function LeagueDetail() {
                       fontSize: '14px',
                     }}
                   >
-                    {addingPhone ? 'Adding...' : `Invite ${phoneInputs.filter(p => p.trim()).length > 1 ? `${phoneInputs.filter(p => p.trim()).length} People` : 'Person'}`}
+                    {addingPhone ? 'Sending invite...' : `Invite ${phoneInputs.filter(p => p.trim()).length > 1 ? `${phoneInputs.filter(p => p.trim()).length} People` : 'Person'}`}
                   </button>
                 </div>
               </form>
