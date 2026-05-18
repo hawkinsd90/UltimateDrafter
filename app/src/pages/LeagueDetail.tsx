@@ -1100,7 +1100,9 @@ export default function LeagueDetail() {
 
           {members.length === 0 ? (
             <div style={{ padding: '40px', background: '#f9fafb', border: '2px dashed #d1d5db', borderRadius: '8px', textAlign: 'center' }}>
-              <p style={{ margin: '0', color: '#6b7280' }}>No members yet. Use the invite link or add by phone number above.</p>
+              <p style={{ margin: '0', color: '#6b7280' }}>
+                {isOwner ? 'No members yet. Use the invite link or add by phone number above.' : 'No members yet.'}
+              </p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px' }}>
