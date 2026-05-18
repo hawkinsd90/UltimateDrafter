@@ -394,6 +394,23 @@ export default function LeagueDetail() {
   }, [leagueId]);
 
   useEffect(() => {
+    if (!leagueId) return;
+    const channel = supabase
+      .channel(`league-${leagueId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_members', filter: `league_id=eq.${leagueId}` }, () => {
+        loadLeagueData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_invites', filter: `league_id=eq.${leagueId}` }, () => {
+        loadLeagueData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_imported_members', filter: `league_id=eq.${leagueId}` }, () => {
+        loadLeagueData();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [leagueId]);
+
+  useEffect(() => {
     if (leagueSettings) {
       setFormData({
         draft_format: leagueSettings.draft_format,
@@ -527,30 +544,16 @@ export default function LeagueDetail() {
     }
 
     // Block inviting people already in the league.
-    // Check by phone (league_members.phone_e164) and by email (from existing invites that were accepted).
-    const memberPhones = new Set(members.map(m => m.phone_e164).filter(Boolean) as string[]);
-    // Also fetch auth emails for members who signed up
-    const memberUserIds = members.map(m => m.user_id).filter(Boolean) as string[];
-    let memberEmails = new Set<string>();
-    if (memberUserIds.length > 0) {
-      // We can't query auth.users directly from client — check against accepted invites' emails
-      const { data: acceptedInvites } = await supabase
-        .from('league_invites')
-        .select('email, phone_e164')
-        .eq('league_id', leagueId)
-        .not('accepted_at', 'is', null);
-      if (acceptedInvites) {
-        acceptedInvites.forEach(inv => {
-          if (inv.email) memberEmails.add(inv.email.toLowerCase());
-          if (inv.phone_e164) memberPhones.add(inv.phone_e164);
-        });
-      }
-    }
-    // Also check the league owner's email against what was invited
-    const ownerEmail = user.email?.toLowerCase();
-    if (ownerEmail) memberEmails.add(ownerEmail);
-    const ownerPhone = members.find(m => m.user_id === user.id)?.phone_e164;
-    if (ownerPhone) memberPhones.add(ownerPhone);
+    // Use the server-side RPC which joins auth.users to get actual emails + verified phones.
+    const { data: memberContacts } = await supabase.rpc('get_league_member_contacts', { p_league_id: leagueId });
+    const memberEmails = new Set<string>();
+    const memberPhones = new Set<string>();
+    (memberContacts ?? []).forEach((row: { email: string | null; phone_e164: string | null }) => {
+      if (row.email) memberEmails.add(row.email.toLowerCase());
+      if (row.phone_e164) memberPhones.add(row.phone_e164);
+    });
+    // Also add the owner's own email/phone (they are always a member even if no league_members row)
+    if (user.email) memberEmails.add(user.email.toLowerCase());
 
     const alreadyMembers = normalized.filter(en => {
       if (en.includes('@')) return memberEmails.has(en.toLowerCase());
@@ -623,12 +626,22 @@ export default function LeagueDetail() {
   }
 
   async function removeMember(memberId: string) {
+    // Find the user_id before deleting so we can unclaim imported teams
+    const memberToRemove = members.find(m => m.id === memberId);
     const { error } = await supabase.from('league_members').delete().eq('id', memberId);
     if (error) {
       setMemberError('Failed to remove member: ' + error.message);
-    } else {
-      await loadLeagueData();
+      return;
     }
+    // Clear invited_user_id on any imported team that was claimed by this user
+    if (memberToRemove?.user_id) {
+      await supabase
+        .from('league_imported_members')
+        .update({ invited_user_id: null, invite_id: null })
+        .eq('league_id', leagueId!)
+        .eq('invited_user_id', memberToRemove.user_id);
+    }
+    await loadLeagueData();
   }
 
   async function pauseDraft(draftId: string) {
