@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import UserMenu from '../components/UserMenu';
 import { useAuth } from '../contexts/AuthContext';
@@ -23,13 +23,14 @@ interface ImportedMember {
 }
 
 function ImportedLeaguematesPanel({
-  importedMembers, leagueMembers, leagueId, userId, leagueName, onInviteSent, onError,
+  importedMembers, leagueMembers, leagueId, userId, leagueName, invites, onInviteSent, onError,
 }: {
   importedMembers: ImportedMember[];
   leagueMembers: LeagueMember[];
   leagueId: string;
   userId: string;
   leagueName: string;
+  invites: LeagueInvite[];
   onInviteSent: () => void;
   onError: (msg: string) => void;
 }) {
@@ -39,18 +40,10 @@ function ImportedLeaguematesPanel({
   const [contactInputs, setContactInputs] = useState<Record<string, string>>({});
   const [reassigning, setReassigning] = useState<string | null>(null);
   const [reassignLoading, setReassignLoading] = useState(false);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
 
   function setContact(memberId: string, val: string) {
     setContactInputs(prev => ({ ...prev, [memberId]: val }));
-  }
-
-  function detectContactType(contact: string): 'email' | 'phone' | 'bare_number' | 'invalid' | 'empty' {
-    if (!contact) return 'empty';
-    if (contact.includes('@')) return 'email';
-    if (/^\+[1-9]\d{1,14}$/.test(contact)) return 'phone';
-    // Looks like a phone number but missing the + country code prefix
-    if (/^\d[\d\s\-().]{6,}$/.test(contact)) return 'bare_number';
-    return 'invalid';
   }
 
   // Creates the invite record and returns { invite, inviteUrl } or null on error
@@ -77,18 +70,26 @@ function ImportedLeaguematesPanel({
     return { invite, inviteUrl };
   }
 
+  function normalizeContact(raw: string): { normalized: string; type: 'email' | 'phone' | 'invalid' | 'empty' } {
+    const contact = raw.trim();
+    if (!contact) return { normalized: '', type: 'empty' };
+    if (contact.includes('@')) return { normalized: contact, type: 'email' };
+    if (/^\+[1-9]\d{1,14}$/.test(contact)) return { normalized: contact, type: 'phone' };
+    // Auto-add +1 for 10-digit US numbers (bare or with leading 1)
+    const digits = contact.replace(/\D/g, '');
+    if (digits.length === 10) return { normalized: `+1${digits}`, type: 'phone' };
+    if (digits.length === 11 && digits[0] === '1') return { normalized: `+${digits}`, type: 'phone' };
+    return { normalized: contact, type: 'invalid' };
+  }
+
   async function handleCopyLink(member: ImportedMember) {
-    const contact = contactInputs[member.id]?.trim() ?? '';
-    const contactType = detectContactType(contact);
-    if (contactType === 'bare_number') {
-      onError(`Phone numbers must include the country code, e.g. +1${contact.replace(/\D/g, '')}`);
+    const raw = contactInputs[member.id]?.trim() ?? '';
+    const { normalized, type } = normalizeContact(raw);
+    if (type === 'invalid') {
+      onError(`"${raw}" is not a valid email or phone number.`);
       return;
     }
-    if (contactType === 'invalid') {
-      onError(`"${contact}" is not a valid email or E.164 phone (+12125551234).`);
-      return;
-    }
-    const result = await createInviteRecord(member, contact, contactType);
+    const result = await createInviteRecord(member, normalized, type === 'empty' ? 'empty' : type);
     if (!result) return;
     await navigator.clipboard.writeText(result.inviteUrl).catch(() => {});
     setCopiedId(member.id);
@@ -97,24 +98,20 @@ function ImportedLeaguematesPanel({
   }
 
   async function handleSendNotification(member: ImportedMember) {
-    const contact = contactInputs[member.id]?.trim() ?? '';
-    const contactType = detectContactType(contact);
+    const raw = contactInputs[member.id]?.trim() ?? '';
+    const { normalized, type } = normalizeContact(raw);
 
-    if (contactType === 'empty') {
+    if (type === 'empty') {
       onError('Enter an email or phone number before sending.');
       return;
     }
-    if (contactType === 'bare_number') {
-      onError(`Phone numbers must include the country code, e.g. +1${contact.replace(/\D/g, '')}`);
-      return;
-    }
-    if (contactType === 'invalid') {
-      onError(`"${contact}" is not a valid email or E.164 phone (+12125551234).`);
+    if (type === 'invalid') {
+      onError(`"${raw}" is not a valid email or phone number.`);
       return;
     }
 
     setSendingId(member.id);
-    const result = await createInviteRecord(member, contact, contactType);
+    const result = await createInviteRecord(member, normalized, type);
     if (!result) { setSendingId(null); return; }
 
     const { data: { session } } = await supabase.auth.getSession();
@@ -122,10 +119,10 @@ function ImportedLeaguematesPanel({
     if (!token) { onError('Not authenticated'); setSendingId(null); return; }
 
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-    const fnSlug = contactType === 'email' ? 'send-invite-email' : 'send-invite-sms';
-    const body = contactType === 'email'
-      ? { email: contact, inviteUrl: result.inviteUrl, leagueName, teamName: member.teamName }
-      : { phone: contact, inviteUrl: result.inviteUrl, leagueName, teamName: member.teamName };
+    const fnSlug = type === 'email' ? 'send-invite-email' : 'send-invite-sms';
+    const body = type === 'email'
+      ? { email: normalized, inviteUrl: result.inviteUrl, leagueName, teamName: member.teamName }
+      : { phone: normalized, inviteUrl: result.inviteUrl, leagueName, teamName: member.teamName };
 
     const resp = await fetch(`${supabaseUrl}/functions/v1/${fnSlug}`, {
       method: 'POST',
@@ -136,7 +133,7 @@ function ImportedLeaguematesPanel({
 
     setSendingId(null);
     if (!data.success) {
-      onError(`Failed to send ${contactType === 'email' ? 'email' : 'SMS'}: ${data.error}`);
+      onError(`Failed to send ${type === 'email' ? 'email' : 'SMS'}: ${data.error}`);
     } else {
       setSentId(member.id);
       setTimeout(() => setSentId(null), 4000);
@@ -157,6 +154,51 @@ function ImportedLeaguematesPanel({
       onInviteSent();
     }
     setReassignLoading(false);
+  }
+
+  async function handleRevoke(member: ImportedMember) {
+    if (!member.inviteId) return;
+    setRevokingId(member.id);
+    // Delete the invite and unlink from imported member
+    await supabase.from('league_invites').delete().eq('id', member.inviteId);
+    await supabase.from('league_imported_members').update({ invite_id: null }).eq('id', member.id);
+    setRevokingId(null);
+    onInviteSent();
+  }
+
+  async function handleResendInvite(member: ImportedMember) {
+    if (!member.inviteId) return;
+    const invite = invites.find(i => i.id === member.inviteId);
+    if (!invite) { onError('Invite not found.'); return; }
+    const contact = invite.email ?? invite.phone_e164;
+    if (!contact) { onError('No contact info on this invite to resend.'); return; }
+
+    setSendingId(member.id);
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) { onError('Not authenticated'); setSendingId(null); return; }
+
+    const inviteUrl = `${window.location.origin}/leagues/join/${member.inviteId}`;
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+    const isEmail = !!invite.email;
+    const fnSlug = isEmail ? 'send-invite-email' : 'send-invite-sms';
+    const body = isEmail
+      ? { email: contact, inviteUrl, leagueName, teamName: member.teamName }
+      : { phone: contact, inviteUrl, leagueName, teamName: member.teamName };
+
+    const resp = await fetch(`${supabaseUrl}/functions/v1/${fnSlug}`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    setSendingId(null);
+    if (!data.success) {
+      onError(`Failed to resend: ${data.error}`);
+    } else {
+      setSentId(member.id);
+      setTimeout(() => setSentId(null), 3000);
+    }
   }
 
   const uninvited = importedMembers.filter(m => !m.inviteId && !m.invitedUserId);
@@ -180,8 +222,7 @@ function ImportedLeaguematesPanel({
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {uninvited.map(m => {
-          const contact = contactInputs[m.id]?.trim() ?? '';
-          const contactType = detectContactType(contact);
+          const { normalized: normContact, type: contactType } = normalizeContact(contactInputs[m.id] ?? '');
           const isSending = sendingId === m.id;
           const wasSent = sentId === m.id;
           const canSend = contactType === 'email' || contactType === 'phone';
@@ -215,10 +256,10 @@ function ImportedLeaguematesPanel({
                       type="text"
                       value={contactInputs[m.id] ?? ''}
                       onChange={e => setContact(m.id, e.target.value)}
-                      placeholder="Email or phone (+12125551234)"
+                      placeholder="Email or phone (e.g. 3135551234)"
                       style={{
                         width: '100%', padding: '7px 46px 7px 10px',
-                        border: `1px solid ${contactType === 'invalid' || contactType === 'bare_number' ? '#f87171' : '#bae6fd'}`,
+                        border: `1px solid ${contactType === 'invalid' ? '#f87171' : '#bae6fd'}`,
                         borderRadius: '5px', fontSize: '13px', color: '#0c4a6e',
                         background: '#f0f9ff', boxSizing: 'border-box',
                       }}
@@ -230,9 +271,9 @@ function ImportedLeaguematesPanel({
                       <span style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', fontSize: '10px', color: '#059669', fontWeight: '700', pointerEvents: 'none' }}>SMS</span>
                     )}
                   </div>
-                  {contactType === 'bare_number' && (
-                    <p style={{ margin: '3px 0 0', fontSize: '11px', color: '#dc2626' }}>
-                      Add country code: +1{contact.replace(/\D/g, '')}
+                  {contactType === 'phone' && normContact !== (contactInputs[m.id] ?? '').trim() && (
+                    <p style={{ margin: '3px 0 0', fontSize: '11px', color: '#059669' }}>
+                      Will send SMS to {normContact}
                     </p>
                   )}
                 </div>
@@ -256,19 +297,48 @@ function ImportedLeaguematesPanel({
           );
         })}
 
-        {invited.map(m => (
-          <div key={m.id} style={{ ...rowStyle, opacity: 0.8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
-              <div style={{ minWidth: 0 }}>
-                <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
-                {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
-                  <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
-                )}
+        {invited.map(m => {
+          const invite = invites.find(i => i.id === m.inviteId);
+          const contactLabel = invite?.email ?? invite?.phone_e164 ?? null;
+          const isSending = sendingId === m.id;
+          const wasSent = sentId === m.id;
+          const isRevoking = revokingId === m.id;
+          const canResend = !!(invite?.email || invite?.phone_e164);
+          return (
+            <div key={m.id} style={{ ...rowStyle, background: '#fffbeb', border: '1px solid #fde68a' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 0 }}>
+                  <span style={{ fontWeight: '600', fontSize: '14px', color: '#0c4a6e' }}>{m.teamName}</span>
+                  {m.externalOwnerName && m.externalOwnerName !== m.teamName && (
+                    <span style={{ marginLeft: '8px', fontSize: '12px', color: '#64748b' }}>{m.externalOwnerName}</span>
+                  )}
+                  {contactLabel && (
+                    <span style={{ marginLeft: '8px', fontSize: '11px', color: '#92400e' }}>{contactLabel}</span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
+                  <span style={{ fontSize: '12px', color: '#d97706', fontWeight: '600' }}>Invite Sent</span>
+                  {canResend && (
+                    <button
+                      onClick={() => handleResendInvite(m)}
+                      disabled={isSending || wasSent}
+                      style={{ fontSize: '11px', padding: '3px 8px', background: 'none', border: '1px solid #d97706', color: '#92400e', borderRadius: '4px', cursor: isSending ? 'not-allowed' : 'pointer' }}
+                    >
+                      {wasSent ? 'Sent!' : isSending ? '...' : 'Resend'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleRevoke(m)}
+                    disabled={isRevoking}
+                    style={{ fontSize: '11px', padding: '3px 8px', background: 'none', border: '1px solid #ef4444', color: '#dc2626', borderRadius: '4px', cursor: isRevoking ? 'not-allowed' : 'pointer' }}
+                  >
+                    {isRevoking ? '...' : 'Revoke'}
+                  </button>
+                </div>
               </div>
-              <span style={{ fontSize: '12px', color: '#d97706', fontWeight: '600', whiteSpace: 'nowrap' }}>Invite Sent</span>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {joined.map(m => {
           const claimedMember = leagueMembers.find(lm => lm.user_id === m.invitedUserId);
@@ -336,6 +406,7 @@ function ImportedLeaguematesPanel({
 export default function LeagueDetail() {
   const { leagueId } = useParams<{ leagueId: string }>();
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [league, setLeague] = useState<League | null>(null);
   const [leagueSettings, setLeagueSettings] = useState<LeagueSettings | null>(null);
@@ -344,7 +415,8 @@ export default function LeagueDetail() {
   const [invites, setInvites] = useState<LeagueInvite[]>([]);
   const [myDraftIds, setMyDraftIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<Tab>('drafts');
+  const tabParam = searchParams.get('tab') as Tab | null;
+  const [activeTab, setActiveTab] = useState<Tab>(tabParam && ['drafts', 'members', 'settings'].includes(tabParam) ? tabParam : 'drafts');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -388,29 +460,6 @@ export default function LeagueDetail() {
   });
 
   useEffect(() => {
-    if (leagueId) {
-      loadLeagueData();
-    }
-  }, [leagueId]);
-
-  useEffect(() => {
-    if (!leagueId) return;
-    const channel = supabase
-      .channel(`league-${leagueId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_members', filter: `league_id=eq.${leagueId}` }, () => {
-        loadLeagueData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_invites', filter: `league_id=eq.${leagueId}` }, () => {
-        loadLeagueData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_imported_members', filter: `league_id=eq.${leagueId}` }, () => {
-        loadLeagueData();
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [leagueId]);
-
-  useEffect(() => {
     if (leagueSettings) {
       setFormData({
         draft_format: leagueSettings.draft_format,
@@ -433,7 +482,7 @@ export default function LeagueDetail() {
     }
   }, [leagueSettings]);
 
-  async function loadLeagueData() {
+  const loadLeagueData = useCallback(async () => {
     try {
       const [leagueResult, settingsResult, draftsResult, membersResult, invitesResult, importedResult] = await Promise.all([
         supabase.from('leagues').select('*').eq('id', leagueId).maybeSingle(),
@@ -493,7 +542,31 @@ export default function LeagueDetail() {
     } finally {
       setLoading(false);
     }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leagueId]);
+
+  useEffect(() => {
+    if (leagueId) {
+      loadLeagueData();
+    }
+  }, [leagueId, loadLeagueData]);
+
+  useEffect(() => {
+    if (!leagueId) return;
+    const channel = supabase
+      .channel(`league-${leagueId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_members', filter: `league_id=eq.${leagueId}` }, () => {
+        loadLeagueData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_invites', filter: `league_id=eq.${leagueId}` }, () => {
+        loadLeagueData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_imported_members', filter: `league_id=eq.${leagueId}` }, () => {
+        loadLeagueData();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [leagueId, loadLeagueData]);
 
   async function createInviteLink() {
     if (!leagueId || !user) return;
@@ -792,7 +865,7 @@ export default function LeagueDetail() {
       <div style={{ borderBottom: '1px solid #e5e7eb', marginBottom: '30px' }}>
         <div style={{ display: 'flex', gap: '30px' }}>
           <button
-            onClick={() => setActiveTab('drafts')}
+            onClick={() => { setActiveTab('drafts'); setSearchParams({ tab: 'drafts' }); }}
             style={{
               background: 'none',
               border: 'none',
@@ -807,7 +880,7 @@ export default function LeagueDetail() {
             Drafts
           </button>
           <button
-            onClick={() => setActiveTab('members')}
+            onClick={() => { setActiveTab('members'); setSearchParams({ tab: 'members' }); }}
             style={{
               background: 'none',
               border: 'none',
@@ -822,7 +895,7 @@ export default function LeagueDetail() {
             Members
           </button>
           <button
-            onClick={() => setActiveTab('settings')}
+            onClick={() => { setActiveTab('settings'); setSearchParams({ tab: 'settings' }); }}
             style={{
               background: 'none',
               border: 'none',
@@ -1002,6 +1075,7 @@ export default function LeagueDetail() {
               leagueId={leagueId!}
               userId={user!.id}
               leagueName={league.name}
+              invites={invites}
               onInviteSent={loadLeagueData}
               onError={setMemberError}
             />
@@ -1148,6 +1222,31 @@ export default function LeagueDetail() {
               ))}
             </div>
           )}
+
+          {(() => {
+            const myImportedTeam = importedMembers.find(m => m.invitedUserId === user?.id);
+            if (!myImportedTeam) return null;
+            // Find any draft the user is a participant in for a "View My Team" link
+            const myDraft = drafts.find(d => myDraftIds.has(d.id));
+            return (
+              <div style={{ marginBottom: '24px', padding: '16px 20px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px' }}>
+                <h3 style={{ margin: '0 0 4px', fontSize: '15px', color: '#0c4a6e' }}>Your Team</h3>
+                <p style={{ margin: '0 0 10px', fontSize: '13px', color: '#0369a1' }}>
+                  You are connected to the <strong>{myImportedTeam.teamName}</strong> team imported from {myImportedTeam.provider?.toUpperCase()}.
+                </p>
+                {myDraft ? (
+                  <Link
+                    to={`/drafts/${myDraft.id}/my-team`}
+                    style={{ display: 'inline-block', padding: '7px 16px', background: '#0f766e', color: 'white', textDecoration: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}
+                  >
+                    View My Roster
+                  </Link>
+                ) : (
+                  <p style={{ margin: 0, fontSize: '12px', color: '#6b7280' }}>A roster view will be available once a draft is created for this league.</p>
+                )}
+              </div>
+            );
+          })()}
 
           {isOwner && invites.filter(i => !i.accepted_at).length > 0 && (
             <div>
