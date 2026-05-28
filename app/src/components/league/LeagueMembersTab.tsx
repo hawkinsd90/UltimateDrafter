@@ -70,7 +70,17 @@ export default function LeagueMembersTab({
       return;
     }
 
-    const normalized = entries.map(normalizeEntry);
+    // Deduplicate (case-insensitive for email)
+    const seen = new Set<string>();
+    const normalized = entries
+      .map(normalizeEntry)
+      .filter(en => {
+        const key = en.includes('@') ? en.toLowerCase() : en;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
     const invalid = normalized.filter(en => !en.includes('@') && !validateE164(en));
     if (invalid.length > 0) {
       setFormError(`Invalid: "${invalid.join(', ')}" — use an email address or a 10-digit US phone number`);
@@ -93,6 +103,18 @@ export default function LeagueMembersTab({
     );
     if (alreadyMembers.length > 0) {
       setFormError(`Already in this league: ${alreadyMembers.join(', ')}`);
+      setAddingPhone(false);
+      return;
+    }
+
+    // Block contacts that already have a pending invite
+    const pendingEmails = new Set(invites.map(i => i.email?.toLowerCase()).filter(Boolean) as string[]);
+    const pendingPhones = new Set(invites.map(i => i.phone_e164).filter(Boolean) as string[]);
+    const alreadyInvited = normalized.filter(en =>
+      en.includes('@') ? pendingEmails.has(en.toLowerCase()) : pendingPhones.has(en)
+    );
+    if (alreadyInvited.length > 0) {
+      setFormError(`Already invited (pending): ${alreadyInvited.join(', ')}`);
       setAddingPhone(false);
       return;
     }

@@ -147,13 +147,27 @@ export default function ImportedLeaguematesPanel({
   async function handleRevoke(member: ImportedMember) {
     if (!member.inviteId) return;
     setRevokingId(member.id);
-    await supabase.from('league_invites').delete().eq('id', member.inviteId);
-    await supabase.from('league_imported_members').update({ invite_id: null }).eq('id', member.id);
+    // Deleting the invite automatically nulls invite_id on league_imported_members via FK ON DELETE SET NULL.
+    const { error } = await supabase.from('league_invites').delete().eq('id', member.inviteId);
     setRevokingId(null);
+    if (error) {
+      onError('Failed to revoke invite: ' + error.message);
+      return;
+    }
     onInviteSent();
   }
 
   async function handleReassign(importedMemberId: string, newMemberId: string | null) {
+    // Prevent assigning a member who already owns another imported team in this league
+    if (newMemberId) {
+      const conflict = importedMembers.find(
+        m => m.id !== importedMemberId && m.invitedUserId === newMemberId
+      );
+      if (conflict) {
+        onError(`That member is already assigned to "${conflict.teamName}". Unassign them first.`);
+        return;
+      }
+    }
     setReassignLoading(true);
     const { error } = await supabase
       .from('league_imported_members')

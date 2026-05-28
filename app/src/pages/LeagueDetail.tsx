@@ -19,27 +19,29 @@ type Tab = 'drafts' | 'members' | 'settings';
 const TABS: Tab[] = ['drafts', 'members', 'settings'];
 
 export default function LeagueDetail() {
-  const { leagueId } = useParams<{ leagueId: string }>();
-  const { user }     = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const { leagueId }                        = useParams<{ leagueId: string }>();
+  const { user, isLoadingAuth }             = useAuth();
+  const [searchParams, setSearchParams]     = useSearchParams();
 
-  const [league, setLeague]                 = useState<League | null>(null);
-  const [leagueSettings, setLeagueSettings] = useState<LeagueSettings | null>(null);
-  const [drafts, setDrafts]                 = useState<Draft[]>([]);
-  const [members, setMembers]               = useState<LeagueMember[]>([]);
-  const [invites, setInvites]               = useState<LeagueInvite[]>([]);
-  const [myDraftIds, setMyDraftIds]         = useState<Set<string>>(new Set());
+  const [league, setLeague]                   = useState<League | null>(null);
+  const [leagueSettings, setLeagueSettings]   = useState<LeagueSettings | null>(null);
+  const [drafts, setDrafts]                   = useState<Draft[]>([]);
+  const [members, setMembers]                 = useState<LeagueMember[]>([]);
+  const [invites, setInvites]                 = useState<LeagueInvite[]>([]);
+  const [myDraftIds, setMyDraftIds]           = useState<Set<string>>(new Set());
   const [importedMembers, setImportedMembers] = useState<ImportedMember[]>([]);
-  const [loading, setLoading]               = useState(true);
-  const [error, setError]                   = useState('');
+  const [loading, setLoading]                 = useState(true);
+  const [error, setError]                     = useState('');
 
   const tabParam  = searchParams.get('tab') as Tab | null;
   const [activeTab, setActiveTab] = useState<Tab>(
     tabParam && TABS.includes(tabParam) ? tabParam : 'drafts'
   );
 
+  const userId = user?.id;
+
   const loadLeagueData = useCallback(async () => {
-    if (!leagueId || !user) return;
+    if (!leagueId || !userId) return;
     try {
       const [leagueResult, settingsResult, draftsResult, membersResult, invitesResult, importedResult] = await Promise.all([
         supabase.from('leagues').select('*').eq('id', leagueId).maybeSingle(),
@@ -76,7 +78,7 @@ export default function LeagueDetail() {
             .from('draft_participants')
             .select('draft_id')
             .in('draft_id', draftIds)
-            .eq('user_id', user.id);
+            .eq('user_id', userId);
           setMyDraftIds(new Set((participantRows ?? []).map(r => r.draft_id)));
         } else {
           setMyDraftIds(new Set());
@@ -87,19 +89,31 @@ export default function LeagueDetail() {
     } finally {
       setLoading(false);
     }
-  }, [leagueId, user]);
+  }, [leagueId, userId]);
+
+  // When auth finishes loading and there's no user, stop showing Loading.
+  useEffect(() => {
+    if (!isLoadingAuth && !userId) {
+      setLoading(false);
+    }
+  }, [isLoadingAuth, userId]);
 
   useEffect(() => {
-    loadLeagueData();
-  }, [loadLeagueData]);
+    if (userId) {
+      setLoading(true);
+      loadLeagueData();
+    }
+  }, [userId, loadLeagueData]);
 
+  // Realtime subscription — stable because it depends on leagueId only.
+  // loadLeagueData is stable when leagueId and userId are stable.
   useEffect(() => {
     if (!leagueId) return;
     const channel = supabase
       .channel(`league-${leagueId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_members',          filter: `league_id=eq.${leagueId}` }, () => loadLeagueData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_invites',           filter: `league_id=eq.${leagueId}` }, () => loadLeagueData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_imported_members',  filter: `league_id=eq.${leagueId}` }, () => loadLeagueData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_members',         filter: `league_id=eq.${leagueId}` }, () => loadLeagueData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_invites',          filter: `league_id=eq.${leagueId}` }, () => loadLeagueData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_imported_members', filter: `league_id=eq.${leagueId}` }, () => loadLeagueData())
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [leagueId, loadLeagueData]);
@@ -127,7 +141,27 @@ export default function LeagueDetail() {
 
   const isOwner = !!(user && league && league.owner_id === user.id);
 
-  if (loading) return <div style={{ padding: '40px' }}>Loading...</div>;
+  // Auth is still resolving — wait before deciding what to show
+  if (isLoadingAuth) {
+    return <div style={{ padding: '40px' }}>Loading...</div>;
+  }
+
+  // Auth resolved but no user — show sign-in prompt
+  if (!userId) {
+    return (
+      <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
+        <Link to="/leagues" style={{ color: '#2563eb', textDecoration: 'none' }}>← Back to Leagues</Link>
+        <p style={{ marginTop: '20px', color: '#374151' }}>
+          Please <Link to="/login" style={{ color: '#2563eb' }}>sign in</Link> to view this league.
+        </p>
+      </div>
+    );
+  }
+
+  // League data is still fetching
+  if (loading) {
+    return <div style={{ padding: '40px' }}>Loading...</div>;
+  }
 
   if (!league) {
     return (
@@ -184,11 +218,11 @@ export default function LeagueDetail() {
         />
       )}
 
-      {activeTab === 'members' && user && (
+      {activeTab === 'members' && (
         <LeagueMembersTab
           leagueId={leagueId!}
           leagueName={league.name}
-          userId={user.id}
+          userId={userId}
           isOwner={isOwner}
           members={members}
           invites={invites}
