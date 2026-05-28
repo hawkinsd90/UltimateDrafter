@@ -47,6 +47,41 @@ export async function enqueueNotification(input: EnqueueNotificationInput): Prom
   }
 }
 
+interface SendInviteOptions {
+  contact: string;
+  inviteUrl: string;
+  leagueName: string;
+  teamName?: string;
+}
+
+export async function sendInviteNotification(opts: SendInviteOptions): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) return { success: false, error: 'Not authenticated' };
+
+    const supabaseUrl = (supabase as unknown as { supabaseUrl: string }).supabaseUrl
+      ?? import.meta.env.VITE_SUPABASE_URL;
+    const isEmail = opts.contact.includes('@');
+    const fnSlug = isEmail ? 'send-invite-email' : 'send-invite-sms';
+    const body: Record<string, string> = {
+      inviteUrl: opts.inviteUrl,
+      leagueName: opts.leagueName,
+    };
+    if (isEmail) body.email = opts.contact; else body.phone = opts.contact;
+    if (opts.teamName) body.teamName = opts.teamName;
+
+    const resp = await fetch(`${supabaseUrl}/functions/v1/${fnSlug}`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return await resp.json() as { success: boolean; error?: string };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
+  }
+}
+
 export function validateE164PhoneNumber(phone: string): boolean {
   const e164Regex = /^\+[1-9]\d{1,14}$/;
   return e164Regex.test(phone);
