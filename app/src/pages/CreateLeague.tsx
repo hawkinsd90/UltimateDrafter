@@ -8,6 +8,15 @@ import ScoringRulesPanel, { type ScoringRules } from '../components/ScoringRules
 
 type Provider = 'sleeper' | 'espn';
 
+interface PendingImport {
+  provider: Provider;
+  leagueId: string;
+  season: number;
+  isPrivate: boolean;
+  swid?: string;
+  espnS2?: string;
+}
+
 interface ImportedTeam {
   externalTeamId: string;
   externalOwnerId?: string;
@@ -79,8 +88,9 @@ export default function CreateLeague() {
   const [importSwid, setImportSwid] = useState('');
   const [importEspnS2, setImportEspnS2] = useState('');
   const [importLoading, setImportLoading] = useState(false);
-  const [importError, setImportError] = useState('');
-  const [preview, setPreview] = useState<LeaguePreview | null>(null);
+  const [importError, setImportError]     = useState('');
+  const [preview, setPreview]             = useState<LeaguePreview | null>(null);
+  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
   const [creatorTeamId, setCreatorTeamId] = useState<string | null>(null);
 
   const season = getSeasonLabel(sport);
@@ -117,6 +127,15 @@ export default function CreateLeague() {
     }
 
     const p = data as LeaguePreview & { success: true };
+    // Store import params (incl. credentials) so the full import can run at submit time
+    setPendingImport({
+      provider: importProvider,
+      leagueId: importLeagueId.trim(),
+      season: parseInt(importSeason, 10),
+      isPrivate: importIsPrivate,
+      swid:   importIsPrivate ? importSwid   : undefined,
+      espnS2: importIsPrivate ? importEspnS2 : undefined,
+    });
     setPreview(p);
     setCreatorTeamId(null);
 
@@ -146,6 +165,7 @@ export default function CreateLeague() {
 
   function clearPreview() {
     setPreview(null);
+    setPendingImport(null);
     setCreatorTeamId(null);
     setImportLeagueId('');
     setImportError('');
@@ -225,20 +245,72 @@ export default function CreateLeague() {
       await supabase.from('league_scoring_rules').insert(scoringRows);
     }
 
-    // Save imported member names so they can be invited later.
-    // If the creator selected their team, mark it as claimed immediately.
-    if (preview && preview.teams.length > 0) {
+    // Full import — fetches rosters, external teams, and updates settings with limits.
+    // If the import succeeds the edge function writes league_imported_members;
+    // we then claim the creator's team. On failure, fall back to the preview data.
+    if (pendingImport) {
+      const importBody: Record<string, unknown> = {
+        provider:   pendingImport.provider,
+        leagueId:   pendingImport.leagueId,
+        season:     pendingImport.season,
+        leagueDbId: leagueData.id,
+      };
+      if (pendingImport.provider === 'espn') {
+        importBody.isPrivate = pendingImport.isPrivate;
+        if (pendingImport.isPrivate && pendingImport.swid && pendingImport.espnS2) {
+          importBody.swid   = pendingImport.swid;
+          importBody.espnS2 = pendingImport.espnS2;
+        }
+      }
+
+      const { data: importData, error: importErr } = await supabase.functions.invoke(
+        'import-external-league', { body: importBody }
+      );
+
+      if (!importErr && importData?.success !== false) {
+        // Import succeeded — claim the creator's team if one was selected
+        if (creatorTeamId) {
+          await supabase
+            .from('league_imported_members')
+            .update({ invited_user_id: user.id })
+            .eq('league_id', leagueData.id)
+            .eq('provider', pendingImport.provider)
+            .eq('external_league_id', pendingImport.leagueId)
+            .eq('external_team_id', creatorTeamId);
+        }
+      } else {
+        // Import failed — fall back to writing league_imported_members from preview data
+        if (preview && preview.teams.length > 0) {
+          const rows = preview.teams
+            .filter(t => t.externalOwnerId || t.externalOwnerName || t.externalTeamId === creatorTeamId)
+            .map(t => ({
+              league_id:           leagueData.id,
+              provider:            preview.provider,
+              external_league_id:  preview.externalLeagueId,
+              external_team_id:    t.externalTeamId,
+              external_owner_id:   t.externalOwnerId   ?? null,
+              external_owner_name: t.externalOwnerName ?? null,
+              team_name:           t.teamName,
+              invited_user_id:     t.externalTeamId === creatorTeamId ? user.id : null,
+            }));
+          if (rows.length > 0) {
+            await supabase.from('league_imported_members').insert(rows);
+          }
+        }
+      }
+    } else if (preview && preview.teams.length > 0) {
+      // No pendingImport (preview was cleared and re-entered manually) — write members from preview
       const rows = preview.teams
         .filter(t => t.externalOwnerId || t.externalOwnerName || t.externalTeamId === creatorTeamId)
         .map(t => ({
-          league_id: leagueData.id,
-          provider: preview.provider,
-          external_league_id: preview.externalLeagueId,
-          external_team_id: t.externalTeamId,
-          external_owner_id: t.externalOwnerId ?? null,
+          league_id:           leagueData.id,
+          provider:            preview.provider,
+          external_league_id:  preview.externalLeagueId,
+          external_team_id:    t.externalTeamId,
+          external_owner_id:   t.externalOwnerId   ?? null,
           external_owner_name: t.externalOwnerName ?? null,
-          team_name: t.teamName,
-          invited_user_id: t.externalTeamId === creatorTeamId ? user.id : null,
+          team_name:           t.teamName,
+          invited_user_id:     t.externalTeamId === creatorTeamId ? user.id : null,
         }));
       if (rows.length > 0) {
         await supabase.from('league_imported_members').insert(rows);
@@ -295,7 +367,7 @@ export default function CreateLeague() {
             {!preview ? (
               <form onSubmit={handleFetchPreview} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <p style={{ margin: 0, fontSize: '13px', color: '#94a3b8' }}>
-                  Importing here pre-fills league settings and saves team/member names for invites. Roster/keeper import is completed when setting up a draft.
+                  Importing here fetches your league's teams, rosters, and settings directly from the provider. All roster and member data is saved when you create the league.
                 </p>
 
                 {/* Provider toggle */}
@@ -527,7 +599,7 @@ export default function CreateLeague() {
                 )}
 
                 <p style={{ margin: '12px 0 0', fontSize: '12px', color: '#64748b' }}>
-                  League name and roster settings have been pre-filled below. You can adjust them before creating.
+                  League name and roster settings have been pre-filled below. Rosters and member data will be fully imported when you click Create League.
                 </p>
               </div>
             )}
