@@ -115,7 +115,8 @@ function normalizeEspnResponse(
 
   const rosterSettings_raw = (settings?.rosterSettings as Record<string, unknown> | undefined);
   const lineupSlotCounts = rosterSettings_raw?.lineupSlotCounts as Record<string, unknown> | undefined;
-  const rosterSettings = espnRosterSettings(lineupSlotCounts);
+  const positionLimits = rosterSettings_raw?.positionLimits as Record<string, unknown> | undefined;
+  const rosterSettings = espnRosterSettings(lineupSlotCounts, positionLimits);
 
   const scoringSettings = (settings?.scoringSettings as unknown) ?? undefined;
   const scoringType = espnScoringType(scoringSettings);

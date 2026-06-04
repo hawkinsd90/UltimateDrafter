@@ -242,12 +242,12 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
     // Derive per-position draft caps from roster format.
     // FLEX can be filled by RB/WR/TE; OP (SuperFlex) can be filled by QB.
     roster_limits_enabled: true,
-    max_qb:  rs.qb + rs.op,
-    max_rb:  rs.rb + rs.flex,
-    max_wr:  rs.wr + rs.flex,
-    max_te:  rs.te + rs.flex,
-    max_k:   rs.k,
-    max_dst: rs.dst,
+    max_qb:  rs.max_qb  ?? rs.qb + rs.op,
+    max_rb:  rs.max_rb  ?? rs.rb + rs.flex,
+    max_wr:  rs.max_wr  ?? rs.wr + rs.flex,
+    max_te:  rs.max_te  ?? rs.te + rs.flex,
+    max_k:   rs.max_k   ?? rs.k,
+    max_dst: rs.max_dst ?? rs.dst,
   };
 
   // Update league_settings — this is the canonical source for the League Roster tab

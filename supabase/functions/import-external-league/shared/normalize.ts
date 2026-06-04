@@ -35,10 +35,22 @@ export function espnPositionLabel(defaultPositionId: unknown): string | undefine
   return ESPN_POSITION_MAP[defaultPositionId];
 }
 
+// ESPN defaultPositionId → NormalizedRosterSettings max field
+const ESPN_POSITION_LIMIT_MAP: Record<number, "max_qb" | "max_rb" | "max_wr" | "max_te" | "max_k" | "max_dst"> = {
+  1:  "max_qb",
+  2:  "max_rb",
+  3:  "max_wr",
+  4:  "max_te",
+  5:  "max_k",
+  16: "max_dst",
+};
+
 // Build NormalizedRosterSettings from ESPN lineupSlotCounts map.
 // lineupSlotCounts keys are string slot IDs; values are counts.
+// positionLimits keys are string defaultPositionIds; values are max counts (-1 = no limit).
 export function espnRosterSettings(
-  lineupSlotCounts: Record<string, unknown> | undefined
+  lineupSlotCounts: Record<string, unknown> | undefined,
+  positionLimits: Record<string, unknown> | undefined,
 ): NormalizedRosterSettings {
   const settings = emptyRosterSettings();
   if (!lineupSlotCounts) return settings;
@@ -51,6 +63,18 @@ export function espnRosterSettings(
       settings[key] += count;
     }
   }
+
+  if (positionLimits) {
+    for (const [posIdStr, limitRaw] of Object.entries(positionLimits)) {
+      const posId = Number(posIdStr);
+      const maxField = ESPN_POSITION_LIMIT_MAP[posId];
+      if (!maxField) continue;
+      const limit = typeof limitRaw === "number" ? limitRaw : -1;
+      // -1 and values ≤ 0 mean "no limit" in ESPN's API
+      settings[maxField] = limit > 0 ? limit : null;
+    }
+  }
+
   return settings;
 }
 
@@ -87,7 +111,8 @@ export function sleeperRosterSettings(
 }
 
 function emptyRosterSettings(): NormalizedRosterSettings {
-  return { qb: 0, rb: 0, wr: 0, te: 0, flex: 0, op: 0, k: 0, dst: 0, bench: 0, ir: 0, taxi: 0 };
+  return { qb: 0, rb: 0, wr: 0, te: 0, flex: 0, op: 0, k: 0, dst: 0, bench: 0, ir: 0, taxi: 0,
+    max_qb: null, max_rb: null, max_wr: null, max_te: null, max_k: null, max_dst: null };
 }
 
 // ── Scoring type detection ────────────────────────────────────────────────────

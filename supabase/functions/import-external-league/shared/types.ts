@@ -53,6 +53,13 @@ export interface NormalizedRosterSettings {
   bench: number;
   ir: number;
   taxi: number;
+  // Per-position draft maximums. null = no explicit limit from the provider.
+  max_qb: number | null;
+  max_rb: number | null;
+  max_wr: number | null;
+  max_te: number | null;
+  max_k:  number | null;
+  max_dst: number | null;
 }
 
 export interface NormalizedLeague {
