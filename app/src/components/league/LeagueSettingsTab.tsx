@@ -129,7 +129,7 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
         <div style={{ padding: '20px', background: '#f3f4f6', borderRadius: '8px', marginBottom: '20px' }}>
           <p style={{ margin: '0', fontSize: '14px', color: '#6b7280' }}>You are viewing settings in read-only mode. Only the league owner can edit settings.</p>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px', marginBottom: '30px' }}>
           <div>
             <h3 style={{ marginTop: '0' }}>Draft Settings</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
@@ -138,12 +138,6 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
               <div><strong>Allow Pauses:</strong> {leagueSettings.allow_pauses ? 'Yes' : 'No'}</div>
               <div><strong>Drafting Hours:</strong> {leagueSettings.drafting_hours_enabled ? `${leagueSettings.drafting_hours_start} - ${leagueSettings.drafting_hours_end}` : 'Not restricted'}</div>
             </div>
-            <h3>Roster Settings</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-              {ROSTER_SLOTS.map(({ key, label }) => (
-                <div key={key}><strong>{label}:</strong> {(leagueSettings as Record<string, unknown>)[key] as number}</div>
-              ))}
-            </div>
           </div>
           <div>
             <h3 style={{ marginTop: '0' }}>League Behavior</h3>
@@ -151,6 +145,14 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
               <div><strong>Allow Trades:</strong> {leagueSettings.allow_trades ? 'Yes' : 'No'}</div>
               <div><strong>Allow Pick Trades:</strong> {leagueSettings.allow_pick_trades ? 'Yes' : 'No'}</div>
             </div>
+          </div>
+        </div>
+        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '24px' }}>
+          <h3 style={{ marginTop: '0' }}>Roster Settings</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+            {ROSTER_SLOTS.map(({ key, label }) => (
+              <div key={key}><strong>{label}:</strong> {(leagueSettings as Record<string, unknown>)[key] as number}</div>
+            ))}
           </div>
         </div>
       </div>
@@ -166,7 +168,9 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
             {message}
           </div>
         )}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
+
+        {/* Row 1: Draft Settings + League Behavior */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px', marginBottom: '30px' }}>
           <div>
             <h3 style={{ marginTop: '0' }}>Draft Settings</h3>
             <div style={{ marginBottom: '20px' }}>
@@ -204,15 +208,6 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
                 </div>
               )}
             </div>
-            <h3>Roster Settings</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-              {ROSTER_SLOTS.map(({ key, label }) => (
-                <div key={key}>
-                  <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '500' }}>{label}</label>
-                  <input type="number" min="0" value={formData[key] as number} onChange={e => setField(key, parseInt(e.target.value) || 0)} style={inputStyle} />
-                </div>
-              ))}
-            </div>
           </div>
           <div>
             <h3 style={{ marginTop: '0' }}>League Behavior</h3>
@@ -230,7 +225,24 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
             </div>
           </div>
         </div>
-        <div style={{ marginTop: '30px', paddingTop: '20px', borderTop: '1px solid #e5e7eb' }}>
+
+        {/* Row 2: Roster Settings — full width, league-scoped */}
+        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '24px', marginBottom: '30px' }}>
+          <h3 style={{ marginTop: '0' }}>Roster Settings</h3>
+          <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#6b7280' }}>
+            These limits define the roster format for this league. They are automatically populated when you import an external league through a draft.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px' }}>
+            {ROSTER_SLOTS.map(({ key, label }) => (
+              <div key={key}>
+                <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '500' }}>{label}</label>
+                <input type="number" min="0" value={formData[key] as number} onChange={e => setField(key, parseInt(e.target.value) || 0)} style={inputStyle} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ paddingTop: '20px', borderTop: '1px solid #e5e7eb' }}>
           <button
             type="submit"
             disabled={saving}
