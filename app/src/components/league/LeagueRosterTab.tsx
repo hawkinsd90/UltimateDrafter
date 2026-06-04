@@ -8,7 +8,6 @@ type LeagueMember = Database['public']['Tables']['league_members']['Row'];
 interface Props {
   leagueId: string;
   userId: string;
-  isOwner: boolean;
   importedMembers: ImportedMember[];
   leagueMembers: LeagueMember[];
 }
@@ -214,6 +213,14 @@ export default function LeagueRosterTab({
       loadRoster(selectedMember);
     }
   }, [selectedMember, loadRoster]);
+
+  // If importedMembers arrive after first render and nothing is selected yet,
+  // pick the user's claimed team (or the first team). Does not override a manual selection.
+  useEffect(() => {
+    if (!selectedMemberId && defaultMember?.id) {
+      setSelectedMemberId(defaultMember.id);
+    }
+  }, [selectedMemberId, defaultMember?.id]);
 
   // ── Render helpers ────────────────────────────────────────────────────────────
 

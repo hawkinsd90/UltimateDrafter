@@ -17,6 +17,7 @@ type LeagueMember = Database['public']['Tables']['league_members']['Row'];
 type LeagueInvite = Database['public']['Tables']['league_invites']['Row'];
 
 type Tab = 'drafts' | 'members' | 'roster' | 'settings';
+const ALL_TABS: Tab[] = ['drafts', 'members', 'roster', 'settings'];
 const BASE_TABS: Tab[] = ['drafts', 'members', 'settings'];
 
 export default function LeagueDetail() {
@@ -35,10 +36,9 @@ export default function LeagueDetail() {
   const [error, setError]                     = useState('');
 
   const tabParam = searchParams.get('tab') as Tab | null;
-  // Roster tab is valid only when there are imported members; fall back to drafts otherwise
-  const [activeTab, setActiveTab] = useState<Tab>(
-    tabParam && [...BASE_TABS, 'roster' as Tab].includes(tabParam) ? tabParam : 'drafts'
-  );
+  // Derive active tab directly from the URL — no duplicate state.
+  // This ensures "View My Roster" link changes in the URL immediately reflect in rendered content.
+  const activeTab: Tab = tabParam && ALL_TABS.includes(tabParam) ? tabParam : 'drafts';
 
   const userId = user?.id;
 
@@ -141,7 +141,6 @@ export default function LeagueDetail() {
   }
 
   function switchTab(tab: Tab) {
-    setActiveTab(tab);
     setSearchParams({ tab });
   }
 
@@ -246,7 +245,6 @@ export default function LeagueDetail() {
         <LeagueRosterTab
           leagueId={leagueId!}
           userId={userId}
-          isOwner={isOwner}
           importedMembers={importedMembers}
           leagueMembers={members}
         />
