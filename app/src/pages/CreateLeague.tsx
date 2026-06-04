@@ -254,6 +254,7 @@ export default function CreateLeague() {
         leagueId:   pendingImport.leagueId,
         season:     pendingImport.season,
         leagueDbId: leagueData.id,
+        importMode: 'reference_only',
       };
       if (pendingImport.provider === 'espn') {
         importBody.isPrivate = pendingImport.isPrivate;
