@@ -8,7 +8,6 @@ import type { Database } from '../../types/supabase';
 
 type LeagueMember = Database['public']['Tables']['league_members']['Row'];
 type LeagueInvite = Database['public']['Tables']['league_invites']['Row'];
-type Draft = Database['public']['Tables']['drafts']['Row'];
 
 interface Props {
   leagueId: string;
@@ -18,14 +17,12 @@ interface Props {
   members: LeagueMember[];
   invites: LeagueInvite[];
   importedMembers: ImportedMember[];
-  drafts: Draft[];
-  myDraftIds: Set<string>;
   onRefresh: () => void;
 }
 
 export default function LeagueMembersTab({
   leagueId, leagueName, userId, isOwner,
-  members, invites, importedMembers, drafts, myDraftIds, onRefresh,
+  members, invites, importedMembers, onRefresh,
 }: Props) {
   const [phoneInputs, setPhoneInputs]     = useState<string[]>(['']);
   const [addingPhone, setAddingPhone]     = useState(false);
@@ -185,7 +182,6 @@ export default function LeagueMembersTab({
 
   // "Your Team" card — shown to members who claimed an imported team
   const myImportedTeam = importedMembers.find(m => m.invitedUserId === userId);
-  const myDraft = myImportedTeam ? drafts.find(d => myDraftIds.has(d.id)) : null;
 
   return (
     <div>
@@ -338,16 +334,12 @@ export default function LeagueMembersTab({
           <p style={{ margin: '0 0 10px', fontSize: '13px', color: '#0369a1' }}>
             You are connected to the <strong>{myImportedTeam.teamName}</strong> team imported from {myImportedTeam.provider?.toUpperCase()}.
           </p>
-          {myDraft ? (
-            <Link
-              to={`/drafts/${myDraft.id}/my-team`}
-              style={{ display: 'inline-block', padding: '7px 16px', background: '#0f766e', color: 'white', textDecoration: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}
-            >
-              View My Roster
-            </Link>
-          ) : (
-            <p style={{ margin: 0, fontSize: '12px', color: '#6b7280' }}>A roster view will be available once a draft is created for this league.</p>
-          )}
+          <Link
+            to={`/leagues/${leagueId}?tab=roster`}
+            style={{ display: 'inline-block', padding: '7px 16px', background: '#0f766e', color: 'white', textDecoration: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}
+          >
+            View My Roster
+          </Link>
         </div>
       )}
 

@@ -222,7 +222,7 @@ export function useDraftBoard(draftId: string, userId: string | undefined): UseD
   const isOwner = !!(userId && league && league.owner_id === userId);
   const myParticipant = participants.find(p => p.user_id === userId) ?? null;
   const isMyTurn = !!(currentParticipant && myParticipant && currentParticipant.id === myParticipant.id);
-  const draftNotStarted = !!(draft && draft.status === 'in_progress' && !currentParticipant && participants.length > 0);
+  const draftNotStarted = !!(draft && draft.status === 'pending' && participants.length > 0);
   const canMakePick = !!(draft && draft.status === 'in_progress' && currentParticipant && isMyTurn);
   const canForcePick = !!(draft && draft.status === 'in_progress' && currentParticipant && isOwner && !isMyTurn);
   const pickedPlayerIds = new Set(picks.map(p => p.player_id).filter(Boolean) as string[]);

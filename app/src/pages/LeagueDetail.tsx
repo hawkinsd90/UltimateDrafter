@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import LeagueDraftsTab from '../components/league/LeagueDraftsTab';
 import LeagueMembersTab from '../components/league/LeagueMembersTab';
 import LeagueSettingsTab from '../components/league/LeagueSettingsTab';
+import LeagueRosterTab from '../components/league/LeagueRosterTab';
 import type { ImportedMember } from '../components/league/ImportedLeaguematesPanel';
 import type { Database } from '../types/supabase';
 
@@ -15,8 +16,8 @@ type Draft = Database['public']['Tables']['drafts']['Row'];
 type LeagueMember = Database['public']['Tables']['league_members']['Row'];
 type LeagueInvite = Database['public']['Tables']['league_invites']['Row'];
 
-type Tab = 'drafts' | 'members' | 'settings';
-const TABS: Tab[] = ['drafts', 'members', 'settings'];
+type Tab = 'drafts' | 'members' | 'roster' | 'settings';
+const BASE_TABS: Tab[] = ['drafts', 'members', 'settings'];
 
 export default function LeagueDetail() {
   const { leagueId }                        = useParams<{ leagueId: string }>();
@@ -33,9 +34,10 @@ export default function LeagueDetail() {
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState('');
 
-  const tabParam  = searchParams.get('tab') as Tab | null;
+  const tabParam = searchParams.get('tab') as Tab | null;
+  // Roster tab is valid only when there are imported members; fall back to drafts otherwise
   const [activeTab, setActiveTab] = useState<Tab>(
-    tabParam && TABS.includes(tabParam) ? tabParam : 'drafts'
+    tabParam && [...BASE_TABS, 'roster' as Tab].includes(tabParam) ? tabParam : 'drafts'
   );
 
   const userId = user?.id;
@@ -49,7 +51,12 @@ export default function LeagueDetail() {
         supabase.from('drafts').select('*').eq('league_id', leagueId).order('created_at', { ascending: false }),
         supabase.from('league_members').select('*').eq('league_id', leagueId).order('joined_at', { ascending: true }),
         supabase.from('league_invites').select('*').eq('league_id', leagueId).is('accepted_at', null).order('created_at', { ascending: false }),
-        supabase.from('league_imported_members').select('id, external_owner_name, team_name, provider, invite_id, invited_user_id').eq('league_id', leagueId).order('created_at', { ascending: true }),
+        // Include external_team_id and external_league_id so LeagueRosterTab can traverse
+        // the import chain without a draft_id
+        supabase.from('league_imported_members')
+          .select('id, external_owner_name, team_name, provider, invite_id, invited_user_id, external_team_id, external_league_id')
+          .eq('league_id', leagueId)
+          .order('created_at', { ascending: true }),
       ]);
 
       if (leagueResult.error || !leagueResult.data) {
@@ -68,6 +75,8 @@ export default function LeagueDetail() {
           provider: r.provider,
           inviteId: r.invite_id,
           invitedUserId: r.invited_user_id,
+          externalTeamId: (r as Record<string, unknown>).external_team_id as string | null ?? null,
+          externalLeagueId: (r as Record<string, unknown>).external_league_id as string | null ?? null,
         })));
       }
       if (!draftsResult.error && draftsResult.data) {
@@ -91,7 +100,6 @@ export default function LeagueDetail() {
     }
   }, [leagueId, userId]);
 
-  // When auth finishes loading and there's no user, stop showing Loading.
   useEffect(() => {
     if (!isLoadingAuth && !userId) {
       setLoading(false);
@@ -105,8 +113,6 @@ export default function LeagueDetail() {
     }
   }, [userId, loadLeagueData]);
 
-  // Realtime subscription — stable because it depends on leagueId only.
-  // loadLeagueData is stable when leagueId and userId are stable.
   useEffect(() => {
     if (!leagueId) return;
     const channel = supabase
@@ -140,13 +146,16 @@ export default function LeagueDetail() {
   }
 
   const isOwner = !!(user && league && league.owner_id === user.id);
+  const hasImport = importedMembers.length > 0;
+  // Visible tabs: always show drafts/members/settings; only show roster if an import exists
+  const visibleTabs: Tab[] = hasImport
+    ? ['drafts', 'members', 'roster', 'settings']
+    : BASE_TABS;
 
-  // Auth is still resolving — wait before deciding what to show
   if (isLoadingAuth) {
     return <div style={{ padding: '40px' }}>Loading...</div>;
   }
 
-  // Auth resolved but no user — show sign-in prompt
   if (!userId) {
     return (
       <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif' }}>
@@ -158,7 +167,6 @@ export default function LeagueDetail() {
     );
   }
 
-  // League data is still fetching
   if (loading) {
     return <div style={{ padding: '40px' }}>Loading...</div>;
   }
@@ -171,6 +179,9 @@ export default function LeagueDetail() {
       </div>
     );
   }
+
+  // If the user landed on ?tab=roster but no import exists, redirect to drafts
+  const safeActiveTab: Tab = activeTab === 'roster' && !hasImport ? 'drafts' : activeTab;
 
   return (
     <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif', maxWidth: '1200px', margin: '0 auto' }}>
@@ -189,15 +200,15 @@ export default function LeagueDetail() {
 
       <div style={{ borderBottom: '1px solid #e5e7eb', marginBottom: '30px' }}>
         <div style={{ display: 'flex', gap: '30px' }}>
-          {TABS.map(tab => (
+          {visibleTabs.map(tab => (
             <button
               key={tab}
               onClick={() => switchTab(tab)}
               style={{
                 background: 'none', border: 'none', padding: '10px 0', fontSize: '16px', cursor: 'pointer',
-                fontWeight: activeTab === tab ? '600' : '400',
-                color: activeTab === tab ? '#2563eb' : '#6b7280',
-                borderBottom: activeTab === tab ? '2px solid #2563eb' : '2px solid transparent',
+                fontWeight: safeActiveTab === tab ? '600' : '400',
+                color: safeActiveTab === tab ? '#2563eb' : '#6b7280',
+                borderBottom: safeActiveTab === tab ? '2px solid #2563eb' : '2px solid transparent',
               }}
             >
               {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -206,7 +217,7 @@ export default function LeagueDetail() {
         </div>
       </div>
 
-      {activeTab === 'drafts' && (
+      {safeActiveTab === 'drafts' && (
         <LeagueDraftsTab
           drafts={drafts}
           leagueId={leagueId!}
@@ -218,7 +229,7 @@ export default function LeagueDetail() {
         />
       )}
 
-      {activeTab === 'members' && (
+      {safeActiveTab === 'members' && (
         <LeagueMembersTab
           leagueId={leagueId!}
           leagueName={league.name}
@@ -227,13 +238,21 @@ export default function LeagueDetail() {
           members={members}
           invites={invites}
           importedMembers={importedMembers}
-          drafts={drafts}
-          myDraftIds={myDraftIds}
           onRefresh={loadLeagueData}
         />
       )}
 
-      {activeTab === 'settings' && (
+      {safeActiveTab === 'roster' && hasImport && (
+        <LeagueRosterTab
+          leagueId={leagueId!}
+          userId={userId}
+          isOwner={isOwner}
+          importedMembers={importedMembers}
+          leagueMembers={members}
+        />
+      )}
+
+      {safeActiveTab === 'settings' && (
         <LeagueSettingsTab
           leagueId={leagueId!}
           leagueSettings={leagueSettings}

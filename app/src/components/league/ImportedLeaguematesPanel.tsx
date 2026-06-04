@@ -14,6 +14,9 @@ export interface ImportedMember {
   provider: string;
   inviteId: string | null;
   invitedUserId: string | null;
+  // Used by LeagueRosterTab to traverse the import chain without a draft_id
+  externalTeamId: string | null;
+  externalLeagueId: string | null;
 }
 
 interface Props {
