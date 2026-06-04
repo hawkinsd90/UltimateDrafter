@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import UserMenu from '../components/UserMenu';
 import { useAuth } from '../contexts/AuthContext';
@@ -25,6 +25,7 @@ export default function LeagueDetail() {
   const { leagueId }                        = useParams<{ leagueId: string }>();
   const { user, isLoadingAuth }             = useAuth();
   const [searchParams, setSearchParams]     = useSearchParams();
+  const navigate                            = useNavigate();
 
   const [league, setLeague]                   = useState<League | null>(null);
   const [leagueSettings, setLeagueSettings]   = useState<LeagueSettings | null>(null);
@@ -139,6 +140,13 @@ export default function LeagueDetail() {
     if (!window.confirm(`Delete draft "${draftName}"? This cannot be undone.`)) return;
     await supabase.from('drafts').delete().eq('id', draftId);
     await loadLeagueData();
+  }
+
+  async function handleDeleteLeague() {
+    if (!league) return;
+    if (!window.confirm(`Delete league "${league.name}"?\n\nAll data will be preserved but the league will no longer be visible. This cannot be undone.`)) return;
+    await supabase.from('leagues').update({ is_active: false }).eq('id', league.id);
+    navigate('/leagues');
   }
 
   function switchTab(tab: Tab) {
@@ -262,6 +270,27 @@ export default function LeagueDetail() {
           />
           {isOwner && (
             <LeagueImportPanel leagueId={leagueId!} onImportComplete={loadLeagueData} />
+          )}
+          {isOwner && (
+            <div style={{ marginTop: '48px', borderTop: '1px solid #fca5a5', paddingTop: '32px' }}>
+              <h3 style={{ margin: '0 0 6px 0', fontSize: '16px', fontWeight: '600', color: '#991b1b' }}>
+                Danger Zone
+              </h3>
+              <p style={{ margin: '0 0 16px 0', fontSize: '14px', color: '#6b7280', lineHeight: '1.5' }}>
+                Deleting a league hides it from your league list. All data — drafts, members, and
+                imported rosters — is preserved and can be recovered by an admin if needed.
+              </p>
+              <button
+                onClick={handleDeleteLeague}
+                style={{
+                  padding: '9px 20px', fontSize: '14px', fontWeight: '500',
+                  background: 'transparent', color: '#dc2626',
+                  border: '1px solid #dc2626', borderRadius: '6px', cursor: 'pointer',
+                }}
+              >
+                Delete League
+              </button>
+            </div>
           )}
         </>
       )}

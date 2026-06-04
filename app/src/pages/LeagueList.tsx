@@ -18,6 +18,7 @@ export default function LeagueList() {
     const { data, error } = await supabase
       .from('leagues')
       .select('*')
+      .eq('is_active', true)
       .order('created_at', { ascending: false });
 
     if (!error && data) {
