@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import type { ImportedMember } from './ImportedLeaguematesPanel';
 import type { Database } from '../../types/supabase';
+import PlayerDetailModal from '../draft/PlayerDetailModal';
+import { usePlayerDetail } from '../../hooks/draft/usePlayerDetail';
 
 type LeagueMember   = Database['public']['Tables']['league_members']['Row'];
 type LeagueSettings = Database['public']['Tables']['league_settings']['Row'];
@@ -16,7 +18,8 @@ interface Props {
 }
 
 interface RosterPlayer {
-  id:               string;
+  id:               string;  // external_roster_players.id
+  sportsPlayerId:   string | null;
   displayName:      string;
   fantasyPosition:  string | null;
   teamAbbr:         string | null;
@@ -131,6 +134,8 @@ export default function LeagueRosterTab({
   const [fetchError, setFetchError]   = useState('');
   const [draftPicks, setDraftPicks]   = useState<DraftPick[]>([]);
 
+  const { playerDetail, detailLoading, openPlayerDetail, closePlayerDetail } = usePlayerDetail('', userId, null);
+
   const selectedMember = joinedMembers.find(m => m.id === selectedMemberId) ?? null;
 
   useEffect(() => {
@@ -145,35 +150,43 @@ export default function LeagueRosterTab({
     setDraftPicks([]);
     if (!member.invitedUserId) return;
 
+    // Fetch active drafts + their settings (rounds/type live in draft_settings)
     const { data: draftsData } = await supabase
       .from('drafts')
-      .select('id, name, rounds, num_teams, draft_type, status')
+      .select('id, name, draft_type, status')
       .eq('league_id', leagueId)
       .in('status', ['pending', 'in_progress']);
 
     if (!draftsData || draftsData.length === 0) return;
 
-    // Fall back to league-level defaults when a draft doesn't have explicit values
     const leagueExt = leagueSettings as (LeagueSettings & { default_draft_type?: string; default_rounds?: number }) | null;
     const leagueDraftType = leagueExt?.default_draft_type ?? 'snake';
     const leagueRounds    = leagueExt?.default_rounds ?? 15;
 
     const picks: DraftPick[] = [];
     for (const draft of draftsData) {
-      const { data: participants } = await supabase
-        .from('draft_participants')
-        .select('user_id, draft_position')
-        .eq('draft_id', draft.id)
-        .order('draft_position', { ascending: true });
+      const [participantsRes, draftSettingsRes] = await Promise.all([
+        supabase
+          .from('draft_participants')
+          .select('user_id, draft_position')
+          .eq('draft_id', draft.id)
+          .order('draft_position', { ascending: true }),
+        supabase
+          .from('draft_settings')
+          .select('num_rounds, draft_type')
+          .eq('draft_id', draft.id)
+          .maybeSingle(),
+      ]);
 
+      const participants = participantsRes.data;
       if (!participants) continue;
-      const totalTeams = participants.length || draft.num_teams || 1;
+      const totalTeams = participants.length || 1;
       const myParticipant = participants.find(p => p.user_id === member.invitedUserId);
       if (!myParticipant || myParticipant.draft_position == null) continue;
 
-      const myPos  = myParticipant.draft_position;
-      const rounds = draft.rounds ?? leagueRounds;
-      const isSnake = ((draft.draft_type ?? leagueDraftType)) === 'snake';
+      const myPos   = myParticipant.draft_position;
+      const rounds  = draftSettingsRes.data?.num_rounds ?? leagueRounds;
+      const isSnake = (draftSettingsRes.data?.draft_type ?? draft.draft_type ?? leagueDraftType) === 'snake';
 
       for (let round = 1; round <= rounds; round++) {
         const posInRound = isSnake && round % 2 === 0
@@ -264,6 +277,7 @@ export default function LeagueRosterTab({
       const detail = row.sports_player_id ? detailMap.get(row.sports_player_id) : null;
       return {
         id:               row.id,
+        sportsPlayerId:   row.sports_player_id ?? null,
         displayName:      detail?.display_name ?? row.external_player_name ?? 'Unknown',
         fantasyPosition:  detail?.fantasy_position ?? row.external_position ?? null,
         teamAbbr:         detail?.team_abbr ?? null,
@@ -350,6 +364,8 @@ export default function LeagueRosterTab({
   const benchSlots     = emptySlots.filter(s => s.section === 'bench');
   const assignments    = players.length > 0 ? assignPlayersToSlots(emptySlots, orderedPlayers) : null;
   const unresolvedCount = players.filter(p => p.unresolved).length;
+  // Only allow movement on your own team
+  const isOwnTeam = selectedMember?.invitedUserId === userId;
 
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', color: textPrimary }}>
@@ -418,14 +434,14 @@ export default function LeagueRosterTab({
             {starterSlots.map((slot, slotIdx) => {
               const player = assignments[slotIdx];
               const group  = slotGroup(slot);
-              const canUp = !!player && (() => {
+              const canUp = isOwnTeam && !!player && (() => {
                 for (let i = slotIdx - 1; i >= 0; i--) {
                   if (slotGroup(emptySlots[i]) !== group) break;
                   if (assignments[i]) return true;
                 }
                 return false;
               })();
-              const canDown = !!player && (() => {
+              const canDown = isOwnTeam && !!player && (() => {
                 for (let i = slotIdx + 1; i < emptySlots.length; i++) {
                   if (slotGroup(emptySlots[i]) !== group) break;
                   if (assignments[i]) return true;
@@ -445,6 +461,7 @@ export default function LeagueRosterTab({
                   canMoveDown={canDown}
                   onMoveUp={() => player && movePlayerInGroup(player.id, -1, slotIdx, emptySlots, assignments)}
                   onMoveDown={() => player && movePlayerInGroup(player.id, 1, slotIdx, emptySlots, assignments)}
+                  onPlayerClick={player?.sportsPlayerId && !player?.unresolved ? () => openPlayerDetail(player.sportsPlayerId!) : undefined}
                 />
               );
             })}
@@ -456,14 +473,14 @@ export default function LeagueRosterTab({
                   const globalSlotIdx = starterSlots.length + i;
                   const player        = assignments[globalSlotIdx];
                   const group         = slotGroup(slot);
-                  const canUp = !!player && (() => {
+                  const canUp = isOwnTeam && !!player && (() => {
                     for (let j = globalSlotIdx - 1; j >= 0; j--) {
                       if (slotGroup(emptySlots[j]) !== group) break;
                       if (assignments[j]) return true;
                     }
                     return false;
                   })();
-                  const canDown = !!player && (() => {
+                  const canDown = isOwnTeam && !!player && (() => {
                     for (let j = globalSlotIdx + 1; j < emptySlots.length; j++) {
                       if (slotGroup(emptySlots[j]) !== group) break;
                       if (assignments[j]) return true;
@@ -483,6 +500,7 @@ export default function LeagueRosterTab({
                       canMoveDown={canDown}
                       onMoveUp={() => player && movePlayerInGroup(player.id, -1, globalSlotIdx, emptySlots, assignments)}
                       onMoveDown={() => player && movePlayerInGroup(player.id, 1, globalSlotIdx, emptySlots, assignments)}
+                      onPlayerClick={player?.sportsPlayerId && !player?.unresolved ? () => openPlayerDetail(player.sportsPlayerId!) : undefined}
                     />
                   );
                 })}
@@ -540,6 +558,21 @@ export default function LeagueRosterTab({
           </p>
         </div>
       )}
+
+      {/* Player detail modal */}
+      <PlayerDetailModal
+        detail={playerDetail}
+        loading={detailLoading}
+        isOnBoard={false}
+        isPicked={false}
+        canPick={false}
+        showBoardActions={false}
+        sourceBadge="Imported"
+        onAdd={() => {}}
+        onRemove={() => {}}
+        onPick={() => {}}
+        onClose={closePlayerDetail}
+      />
     </div>
   );
 }
@@ -556,7 +589,7 @@ function SectionHeader({ label, border, textSecondary }: { label: string; border
 
 function PlayerSlotRow({
   slot, player, border, textPrimary, textSecondary, isLast,
-  canMoveUp, canMoveDown, onMoveUp, onMoveDown,
+  canMoveUp, canMoveDown, onMoveUp, onMoveDown, onPlayerClick,
 }: {
   slot: RosterSlot;
   player: RosterPlayer | null;
@@ -568,14 +601,23 @@ function PlayerSlotRow({
   canMoveDown: boolean;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  onPlayerClick?: (sportsPlayerId: string) => void;
 }) {
   const col = posColor(slot.label);
+  const clickable = !!player && !player.unresolved && !!onPlayerClick;
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: '10px',
-      padding: '9px 16px',
-      borderBottom: isLast ? 'none' : `1px solid ${border}`,
-    }}>
+    <div
+      onClick={() => clickable && onPlayerClick!(player!.id)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: '10px',
+        padding: '9px 16px',
+        borderBottom: isLast ? 'none' : `1px solid ${border}`,
+        cursor: clickable ? 'pointer' : 'default',
+        transition: clickable ? 'background 0.1s' : 'none',
+      }}
+      onMouseEnter={e => { if (clickable) (e.currentTarget as HTMLDivElement).style.background = 'rgba(59,130,246,0.06)'; }}
+      onMouseLeave={e => { if (clickable) (e.currentTarget as HTMLDivElement).style.background = ''; }}
+    >
       <span style={{
         minWidth: '38px', padding: '2px 5px', borderRadius: '4px',
         fontSize: '10px', fontWeight: '700', textAlign: 'center',
@@ -610,15 +652,15 @@ function PlayerSlotRow({
       </div>
       {player && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}>
-          <ArrowBtn enabled={canMoveUp} dir="up" onClick={onMoveUp} />
-          <ArrowBtn enabled={canMoveDown} dir="down" onClick={onMoveDown} />
+          <ArrowBtn enabled={canMoveUp} dir="up" onClick={e => { e.stopPropagation(); onMoveUp(); }} />
+          <ArrowBtn enabled={canMoveDown} dir="down" onClick={e => { e.stopPropagation(); onMoveDown(); }} />
         </div>
       )}
     </div>
   );
 }
 
-function ArrowBtn({ enabled, dir, onClick }: { enabled: boolean; dir: 'up' | 'down'; onClick: () => void }) {
+function ArrowBtn({ enabled, dir, onClick }: { enabled: boolean; dir: 'up' | 'down'; onClick: (e: React.MouseEvent) => void }) {
   return (
     <button
       onClick={onClick}

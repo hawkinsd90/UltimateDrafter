@@ -185,6 +185,12 @@ export default function CreateDraft() {
       return;
     }
 
+    // Sync draft type and rounds back to league settings so pick previews stay accurate
+    await supabase.from('league_settings').update({
+      default_draft_type: draftType,
+      default_rounds: numRounds ?? suggestedRounds ?? 15,
+    } as Record<string, unknown>).eq('league_id', leagueId!);
+
     // Pre-populate draft participants from draft order
     if (draftOrderIds.length > 0) {
       const memberMap = Object.fromEntries(leagueMembers.map(m => [m.id, m]));

@@ -120,6 +120,17 @@ export default function LeagueMembersTab({
       .then(({ data }) => setExternalLink(data ?? null));
   }, [isOwner, leagueId, importedMembers.length]);
 
+  // Auto-fetch standings once the external link resolves (no credentials needed for public leagues)
+  useEffect(() => {
+    if (!externalLink) return;
+    // Only auto-fetch for Sleeper (always public) or ESPN public leagues
+    // ESPN private leagues require credentials so we don't auto-fetch
+    if (externalLink.provider === 'sleeper') {
+      fetchStandings();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalLink]);
+
   async function fetchStandings() {
     if (!externalLink) return;
     setStandingsLoading(true);
