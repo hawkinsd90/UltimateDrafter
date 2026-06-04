@@ -329,7 +329,7 @@ export default function LeagueRosterTab({
           <>
             {/* Notice banner */}
             <div style={{ padding: '10px 16px', background: '#172033', borderBottom: `1px solid ${border}`, fontSize: '12px', color: '#93c5fd' }}>
-              No roster players have been imported for this team yet. To import rosters, the commissioner must run the full import wizard from a draft in this league (Drafts tab &rarr; draft settings &rarr; Import External League).
+              No roster players have been imported for this team yet. The league commissioner can import rosters from the Settings tab &rarr; Import External League Roster.
             </div>
 
             {/* Starters section */}
