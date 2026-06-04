@@ -34,11 +34,18 @@ interface RosterSlot {
 }
 
 interface DraftPick {
-  round: number;
-  pick: number;
-  overall: number;
+  round:    number;
+  pick:     number;
+  overall:  number;
   draftName: string;
 }
+
+type PicksState =
+  | { kind: 'loading' }
+  | { kind: 'no_member' }          // member has no invitedUserId
+  | { kind: 'no_draft_order' }     // member has no draft_order in league_members
+  | { kind: 'projected'; picks: DraftPick[] }
+  | { kind: 'actual';    picks: DraftPick[]; draftName: string };
 
 const card          = '#1e293b';
 const border        = '#334155';
@@ -132,8 +139,7 @@ export default function LeagueRosterTab({
   const [loading, setLoading]         = useState(false);
   const [rosterEmpty, setRosterEmpty] = useState(false);
   const [fetchError, setFetchError]   = useState('');
-  const [draftPicks, setDraftPicks]   = useState<DraftPick[]>([]);
-  const [noDraftYet, setNoDraftYet]   = useState(false);
+  const [picksState, setPicksState]   = useState<PicksState>({ kind: 'loading' });
 
   const { playerDetail, detailLoading, openPlayerDetail, closePlayerDetail } = usePlayerDetail('', userId, null);
 
@@ -148,27 +154,28 @@ export default function LeagueRosterTab({
   }, [initialMemberId]);
 
   const loadDraftPicks = useCallback(async (member: ImportedMember) => {
-    setDraftPicks([]);
-    if (!member.invitedUserId) return;
+    setPicksState({ kind: 'loading' });
 
-    // Fetch active drafts + their settings (rounds/type live in draft_settings)
+    if (!member.invitedUserId) {
+      setPicksState({ kind: 'no_member' });
+      return;
+    }
+
+    const leagueExt       = leagueSettings as (LeagueSettings & { default_draft_type?: string; default_rounds?: number }) | null;
+    const leagueDraftType = leagueExt?.default_draft_type ?? 'snake';
+    const leagueRounds    = leagueExt?.default_rounds ?? 15;
+
+    // 1. Check for an active/paused draft — use it as source of truth if found
     const { data: draftsData } = await supabase
       .from('drafts')
       .select('id, name, draft_type, status')
       .eq('league_id', leagueId)
-      .in('status', ['pending', 'in_progress', 'paused']);
+      .in('status', ['pending', 'in_progress', 'paused'])
+      .order('created_at', { ascending: false })
+      .limit(1);
 
-    if (!draftsData || draftsData.length === 0) {
-      setNoDraftYet(true);
-      return;
-    }
-
-    const leagueExt = leagueSettings as (LeagueSettings & { default_draft_type?: string; default_rounds?: number }) | null;
-    const leagueDraftType = leagueExt?.default_draft_type ?? 'snake';
-    const leagueRounds    = leagueExt?.default_rounds ?? 15;
-
-    const picks: DraftPick[] = [];
-    for (const draft of draftsData) {
+    if (draftsData && draftsData.length > 0) {
+      const draft = draftsData[0];
       const [participantsRes, draftSettingsRes] = await Promise.all([
         supabase
           .from('draft_participants')
@@ -182,26 +189,51 @@ export default function LeagueRosterTab({
           .maybeSingle(),
       ]);
 
-      const participants = participantsRes.data;
-      if (!participants) continue;
-      const totalTeams = participants.length || 1;
+      const participants  = participantsRes.data ?? [];
       const myParticipant = participants.find(p => p.user_id === member.invitedUserId);
-      if (!myParticipant || myParticipant.draft_position == null) continue;
 
-      const myPos   = myParticipant.draft_position;
-      const rounds  = draftSettingsRes.data?.num_rounds ?? leagueRounds;
-      const isSnake = (draftSettingsRes.data?.draft_type ?? draft.draft_type ?? leagueDraftType) === 'snake';
-
-      for (let round = 1; round <= rounds; round++) {
-        const posInRound = isSnake && round % 2 === 0
-          ? totalTeams + 1 - myPos
-          : myPos;
-        const overall = (round - 1) * totalTeams + posInRound;
-        picks.push({ round, pick: posInRound, overall, draftName: draft.name ?? 'Draft' });
+      if (myParticipant && myParticipant.draft_position != null) {
+        const totalTeams = participants.length || 1;
+        const myPos      = myParticipant.draft_position;
+        const rounds     = draftSettingsRes.data?.num_rounds ?? leagueRounds;
+        const isSnake    = (draftSettingsRes.data?.draft_type ?? draft.draft_type ?? leagueDraftType) === 'snake';
+        const picks: DraftPick[] = [];
+        for (let round = 1; round <= rounds; round++) {
+          const pick    = isSnake && round % 2 === 0 ? totalTeams + 1 - myPos : myPos;
+          const overall = (round - 1) * totalTeams + pick;
+          picks.push({ round, pick, overall, draftName: draft.name ?? 'Draft' });
+        }
+        setPicksState({ kind: 'actual', picks, draftName: draft.name ?? 'Draft' });
+        return;
       }
+      // Draft exists but user not yet a participant — fall through to projected
     }
 
-    setDraftPicks(picks);
+    // 2. No active draft (or user not in participants) — project from league_members.draft_order
+    const { data: allMembers } = await supabase
+      .from('league_members')
+      .select('id, user_id, draft_order')
+      .eq('league_id', leagueId)
+      .not('draft_order', 'is', null)
+      .order('draft_order', { ascending: true });
+
+    const myLeagueMember = (allMembers ?? []).find(m => m.user_id === member.invitedUserId);
+
+    if (!myLeagueMember || myLeagueMember.draft_order == null) {
+      setPicksState({ kind: 'no_draft_order' });
+      return;
+    }
+
+    const totalTeams = allMembers?.length ?? 1;
+    const myPos      = myLeagueMember.draft_order;
+    const isSnake    = leagueDraftType === 'snake';
+    const picks: DraftPick[] = [];
+    for (let round = 1; round <= leagueRounds; round++) {
+      const pick    = isSnake && round % 2 === 0 ? totalTeams + 1 - myPos : myPos;
+      const overall = (round - 1) * totalTeams + pick;
+      picks.push({ round, pick, overall, draftName: 'Projected' });
+    }
+    setPicksState({ kind: 'projected', picks });
   }, [leagueId, leagueSettings]);
 
   const loadRoster = useCallback(async (member: ImportedMember) => {
@@ -515,51 +547,49 @@ export default function LeagueRosterTab({
       </div>
 
       {/* Draft Picks */}
-      {!loading && selectedMember && (noDraftYet || draftPicks.length > 0) && (
+      {!loading && selectedMember && picksState.kind !== 'loading' && picksState.kind !== 'no_member' && (
         <div style={{ marginTop: '16px', background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden' }}>
+
+          {/* Header */}
           <div style={{ padding: '12px 16px', borderBottom: `1px solid ${border}` }}>
-            <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>Draft Picks</span>
-            {!noDraftYet && (
-              <span style={{ marginLeft: '8px', fontSize: '12px', color: textSecondary }}>Active drafts only</span>
-            )}
-          </div>
-          {noDraftYet ? (
-            <div style={{ padding: '20px 16px', color: textSecondary, fontSize: '13px' }}>
-              No active draft found for this league. Create a draft to see pick assignments.
+            <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>
+              {picksState.kind === 'projected' ? 'Projected Current Draft Picks' : 'Draft Picks'}
+            </span>
+            <div style={{ marginTop: '3px', fontSize: '12px', color: textSecondary }}>
+              {picksState.kind === 'projected'
+                ? 'Based on current league draft order and league settings. Create a draft to lock these picks in.'
+                : `Based on this draft's participant order and draft settings.`}
             </div>
-          ) : (
-            <>
-              {Array.from(new Set(draftPicks.map(p => p.draftName))).map(draftName => {
-                const picks = draftPicks.filter(p => p.draftName === draftName);
-                return (
-                  <div key={draftName} style={{ borderBottom: `1px solid ${border}` }}>
-                    <div style={{ padding: '8px 16px 4px', background: 'rgba(255,255,255,0.02)' }}>
-                      <span style={{ fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                        {draftName}
-                      </span>
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '8px 16px 12px' }}>
-                      {picks.map(pick => (
-                        <div key={`${pick.round}-${pick.pick}`} style={{
-                          padding: '5px 12px', borderRadius: '6px', background: '#0f172a',
-                          border: `1px solid ${border}`, textAlign: 'center', minWidth: '70px',
-                        }}>
-                          <div style={{ fontSize: '10px', color: textSecondary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                            Rd {pick.round}
-                          </div>
-                          <div style={{ fontSize: '15px', fontWeight: '700', color: textPrimary }}>
-                            #{pick.overall}
-                          </div>
-                          <div style={{ fontSize: '10px', color: textSecondary }}>
-                            Pick {pick.pick}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+          </div>
+
+          {/* No draft order */}
+          {picksState.kind === 'no_draft_order' && (
+            <div style={{ padding: '20px 16px', color: textSecondary, fontSize: '13px' }}>
+              This team does not have a draft order position yet. The commissioner can set draft order from the Members tab.
+            </div>
+          )}
+
+          {/* Picks grid */}
+          {(picksState.kind === 'projected' || picksState.kind === 'actual') && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '12px 16px' }}>
+              {picksState.picks.map(pick => (
+                <div key={`${pick.round}-${pick.pick}`} style={{
+                  padding: '6px 12px', borderRadius: '7px', background: '#0f172a',
+                  border: `1px solid ${picksState.kind === 'projected' ? '#334155' : '#1d4ed8'}`,
+                  textAlign: 'center', minWidth: '72px',
+                }}>
+                  <div style={{ fontSize: '10px', color: textSecondary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Rd {pick.round}
                   </div>
-                );
-              })}
-            </>
+                  <div style={{ fontSize: '16px', fontWeight: '700', color: picksState.kind === 'projected' ? textSecondary : textPrimary }}>
+                    #{pick.overall}
+                  </div>
+                  <div style={{ fontSize: '10px', color: textSecondary }}>
+                    Pick {pick.pick}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}
