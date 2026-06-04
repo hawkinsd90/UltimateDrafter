@@ -260,6 +260,71 @@ export default function LeagueRosterTab({
 
     loadDraftPicks(member);
 
+    // ── 1. Try app-owned league_roster_players first ──────────────────────────
+    const { data: appRows, error: appErr } = await supabase
+      .from('league_roster_players')
+      .select('id, sports_player_id, external_player_name, external_position, sort_order')
+      .eq('imported_member_id', member.id)
+      .eq('roster_status', 'active')
+      .order('sort_order', { ascending: true });
+
+    if (!appErr && appRows && appRows.length > 0) {
+      const resolvedIds = appRows.filter(r => r.sports_player_id).map(r => r.sports_player_id as string);
+      const detailMap   = new Map<string, { display_name: string; fantasy_position: string | null; team_abbr: string | null }>();
+
+      if (resolvedIds.length > 0) {
+        const { data: poolRows } = await supabase
+          .from('nfl_draft_player_pool')
+          .select('id, display_name, fantasy_position, team_abbr')
+          .in('id', resolvedIds);
+        for (const sp of poolRows ?? []) {
+          detailMap.set(sp.id, { display_name: sp.display_name, fantasy_position: sp.fantasy_position, team_abbr: sp.team_abbr });
+        }
+        const missingIds = resolvedIds.filter(id => !detailMap.has(id));
+        if (missingIds.length > 0) {
+          const { data: spRows } = await supabase
+            .from('sports_players')
+            .select('id, display_name, fantasy_position, team:sports_teams(abbreviation)')
+            .in('id', missingIds);
+          for (const sp of spRows ?? []) {
+            detailMap.set(sp.id, {
+              display_name:     sp.display_name,
+              fantasy_position: sp.fantasy_position,
+              team_abbr:        (sp.team as unknown as { abbreviation: string | null } | null)?.abbreviation ?? null,
+            });
+          }
+        }
+      }
+
+      const resolved: RosterPlayer[] = appRows.map(row => {
+        const detail = row.sports_player_id ? detailMap.get(row.sports_player_id) : null;
+        return {
+          id:               row.id,
+          sportsPlayerId:   row.sports_player_id ?? null,
+          displayName:      detail?.display_name ?? row.external_player_name ?? 'Unknown',
+          fantasyPosition:  detail?.fantasy_position ?? row.external_position ?? null,
+          teamAbbr:         detail?.team_abbr ?? null,
+          resolutionStatus: row.sports_player_id ? 'matched' : 'unresolved',
+          unresolved:       !row.sports_player_id,
+        };
+      });
+
+      // Sort: resolved first by position priority, then unresolved; within group by name
+      resolved.sort((a, b) => {
+        if (a.unresolved !== b.unresolved) return a.unresolved ? 1 : -1;
+        const ai = POS_PRIORITY.indexOf(a.fantasyPosition ?? '');
+        const bi = POS_PRIORITY.indexOf(b.fantasyPosition ?? '');
+        if (ai !== bi) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+        return a.displayName.localeCompare(b.displayName);
+      });
+
+      setPlayers(resolved);
+      setLocalOrder(resolved.map(p => p.id));
+      setLoading(false);
+      return;
+    }
+
+    // ── 2. Fallback: read directly from external_roster_players (snapshot) ────
     if (!member.externalTeamId || !member.externalLeagueId) {
       setRosterEmpty(true);
       setLoading(false);

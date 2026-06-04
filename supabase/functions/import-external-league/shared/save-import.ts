@@ -276,6 +276,88 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
         warnings.push("Could not insert new imported members: " + insertErr.message);
       }
     }
+
+    // ── 8c. Seed league_roster_players for ALL imported teams (league path) ───
+    // Runs for every team regardless of claim status.
+    // - Claimed teams get league_member_id and user_id filled.
+    // - Unclaimed teams get imported_member_id only; league_member_id / user_id = null.
+    // - ON CONFLICT based on partial unique indexes — safe to re-run on re-import.
+    // - Does not touch roster_status or any app-owned decisions on existing rows.
+    if (!isDraftPath && teams.length > 0) {
+      // Reload league_imported_members to get fresh ids (including just-inserted ones)
+      const { data: allImportedMembers } = await adminClient
+        .from("league_imported_members")
+        .select("id, external_team_id, invited_user_id")
+        .eq("league_id", leagueId)
+        .eq("provider", provider)
+        .eq("external_league_id", league.externalLeagueId);
+
+      const importedByTeamId = new Map(
+        (allImportedMembers ?? []).map((r) => [r.external_team_id as string, r])
+      );
+
+      // Load league_members for any claimed users so we can set league_member_id
+      const claimedUserIds = (allImportedMembers ?? [])
+        .map((r) => r.invited_user_id as string | null)
+        .filter((uid): uid is string => uid !== null);
+
+      const memberByUserId = new Map<string, string>();
+      if (claimedUserIds.length > 0) {
+        const { data: leagueMemberRows } = await adminClient
+          .from("league_members")
+          .select("id, user_id")
+          .eq("league_id", leagueId)
+          .in("user_id", claimedUserIds);
+        for (const lm of leagueMemberRows ?? []) {
+          memberByUserId.set(lm.user_id as string, lm.id as string);
+        }
+      }
+
+      // For each external_roster_players row, build a league_roster_players row
+      const { data: allSnapshotRows } = await adminClient
+        .from("external_roster_players")
+        .select("id, external_team_id, sports_player_id, external_player_name, external_position")
+        .eq("link_id", linkId);
+
+      const rosterPlayerRows: Record<string, unknown>[] = [];
+      for (const snap of allSnapshotRows ?? []) {
+        const importedMember = importedByTeamId.get(snap.external_team_id as string);
+        if (!importedMember) continue;
+
+        const userId         = importedMember.invited_user_id as string | null ?? null;
+        const leagueMemberId = userId ? (memberByUserId.get(userId) ?? null) : null;
+
+        rosterPlayerRows.push({
+          league_id:                 leagueId,
+          imported_member_id:        importedMember.id,
+          league_member_id:          leagueMemberId,
+          user_id:                   userId,
+          external_roster_player_id: snap.id,
+          sports_player_id:          snap.sports_player_id ?? null,
+          external_player_name:      snap.external_player_name,
+          external_position:         snap.external_position ?? null,
+          acquisition_source:        "imported",
+          roster_status:             "active",
+          sort_order:                0,
+        });
+      }
+
+      if (rosterPlayerRows.length > 0) {
+        const BATCH = 200;
+        for (let i = 0; i < rosterPlayerRows.length; i += BATCH) {
+          const batch = rosterPlayerRows.slice(i, i + BATCH);
+          const { error: rosterInsertErr } = await adminClient
+            .from("league_roster_players")
+            .upsert(batch, {
+              onConflict: "external_roster_player_id",
+              ignoreDuplicates: true,
+            });
+          if (rosterInsertErr) {
+            warnings.push(`Could not seed app roster rows (batch ${i}): ${rosterInsertErr.message}`);
+          }
+        }
+      }
+    }
   }
 
   // ── 9. Sync roster slots to league_settings (both paths) ──────────────────
