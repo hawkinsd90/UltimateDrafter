@@ -128,3 +128,25 @@ npm run dev
 - Row Level Security on all tables
 - Provider-agnostic design (no ESPN/Sleeper dependencies)
 - Transactional notifications only
+
+## Next Required Phase: League-Level Full Roster Import
+
+**Current state (workaround only):** The full external league import — which writes
+`external_league_links`, `external_league_teams`, `external_roster_players`, roster settings,
+and roster limits — is triggered from inside the draft import wizard and requires a `draft_id`.
+This means imported player rosters are not visible until a draft has been created and its import
+wizard has been run. "Add Leaguemates" imports team/member names into `league_imported_members`
+at the league level, but that is not the same as a full roster import.
+
+**Required direction:** Implement a league-level full roster import flow that:
+- Runs from the League detail page, not from inside a draft wizard
+- Does not require a `draft_id` to exist
+- Writes `external_league_links`, `external_league_teams`, `external_roster_players`, roster
+  settings, and roster limits scoped to the league
+- Makes the League Roster tab show imported players before any draft is created
+- Allows drafts created afterward to inherit the league-level import and settings
+
+**What NOT to do until this phase is approved:**
+- Do not keep describing "run import from a draft" as the final intended behavior
+- Do not create `league_rosters`, `draft_pick_assets`, transaction logs, or pick trades
+- Do not implement the league-level import flow until explicitly approved

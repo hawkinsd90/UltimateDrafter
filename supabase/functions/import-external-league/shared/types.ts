@@ -53,7 +53,12 @@ export interface NormalizedRosterSettings {
   bench: number;
   ir: number;
   taxi: number;
-  // Per-position draft maximums. null = no explicit limit from the provider.
+  // True when the provider supplied explicit per-position limits (e.g. ESPN positionLimits).
+  // False for providers that have no concept of per-position caps (e.g. Sleeper).
+  // save-import.ts uses this to decide whether to use max_* as-is or derive fallbacks.
+  hasExplicitPositionLimits: boolean;
+  // Per-position draft maximums. null = "no limit" per the provider. Only meaningful when
+  // hasExplicitPositionLimits is true.
   max_qb: number | null;
   max_rb: number | null;
   max_wr: number | null;

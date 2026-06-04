@@ -65,6 +65,7 @@ export function espnRosterSettings(
   }
 
   if (positionLimits) {
+    settings.hasExplicitPositionLimits = true;
     for (const [posIdStr, limitRaw] of Object.entries(positionLimits)) {
       const posId = Number(posIdStr);
       const maxField = ESPN_POSITION_LIMIT_MAP[posId];
@@ -112,6 +113,7 @@ export function sleeperRosterSettings(
 
 function emptyRosterSettings(): NormalizedRosterSettings {
   return { qb: 0, rb: 0, wr: 0, te: 0, flex: 0, op: 0, k: 0, dst: 0, bench: 0, ir: 0, taxi: 0,
+    hasExplicitPositionLimits: false,
     max_qb: null, max_rb: null, max_wr: null, max_te: null, max_k: null, max_dst: null };
 }
 
