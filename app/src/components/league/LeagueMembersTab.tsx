@@ -98,14 +98,16 @@ export default function LeagueMembersTab({
   async function saveDraftOrder() {
     setSavingOrder(true);
     setOrderSaved(false);
-    await Promise.all(
-      draftOrderIds.map((memberId, i) =>
-        supabase.from('league_members').update({ draft_order: i + 1 } as Partial<ExtMember>).eq('id', memberId)
-      )
-    );
+    const { error } = await supabase.rpc('save_league_draft_order', {
+      p_league_id:          leagueId,
+      p_ordered_member_ids: draftOrderIds,
+    });
     setSavingOrder(false);
-    setOrderSaved(true);
-    setTimeout(() => setOrderSaved(false), 2500);
+    if (!error) {
+      setOrderSaved(true);
+      setTimeout(() => setOrderSaved(false), 2500);
+      onRefresh();
+    }
   }
 
   // Load external link for standings (owner only, if imported members exist)

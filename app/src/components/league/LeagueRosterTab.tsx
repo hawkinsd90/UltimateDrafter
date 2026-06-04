@@ -309,17 +309,14 @@ export default function LeagueRosterTab({
         };
       });
 
-      // Sort: resolved first by position priority, then unresolved; within group by name
-      resolved.sort((a, b) => {
-        if (a.unresolved !== b.unresolved) return a.unresolved ? 1 : -1;
-        const ai = POS_PRIORITY.indexOf(a.fantasyPosition ?? '');
-        const bi = POS_PRIORITY.indexOf(b.fantasyPosition ?? '');
-        if (ai !== bi) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-        return a.displayName.localeCompare(b.displayName);
-      });
+      // Preserve DB sort_order for app-owned rows — do not re-sort.
+      // Unresolved players are pushed to the end as a stable partition.
+      const resolvedPlayers   = resolved.filter(p => !p.unresolved);
+      const unresolvedPlayers = resolved.filter(p => p.unresolved);
 
-      setPlayers(resolved);
-      setLocalOrder(resolved.map(p => p.id));
+      const ordered = [...resolvedPlayers, ...unresolvedPlayers];
+      setPlayers(ordered);
+      setLocalOrder(ordered.map(p => p.id));
       setLoading(false);
       return;
     }

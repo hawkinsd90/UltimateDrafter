@@ -281,8 +281,10 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
     // Runs for every team regardless of claim status.
     // - Claimed teams get league_member_id and user_id filled.
     // - Unclaimed teams get imported_member_id only; league_member_id / user_id = null.
-    // - ON CONFLICT based on partial unique indexes — safe to re-run on re-import.
+    // - ignoreDuplicates: conflicts on the partial unique indexes are skipped.
     // - Does not touch roster_status or any app-owned decisions on existing rows.
+    // - sort_order: assigned per team in position-priority order, starting after
+    //   the current max sort_order for that team so re-imports append safely.
     if (!isDraftPath && teams.length > 0) {
       // Reload league_imported_members to get fresh ids (including just-inserted ones)
       const { data: allImportedMembers } = await adminClient
@@ -295,6 +297,7 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
       const importedByTeamId = new Map(
         (allImportedMembers ?? []).map((r) => [r.external_team_id as string, r])
       );
+      const allImportedMemberIds = (allImportedMembers ?? []).map((r) => r.id as string);
 
       // Load league_members for any claimed users so we can set league_member_id
       const claimedUserIds = (allImportedMembers ?? [])
@@ -313,33 +316,79 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
         }
       }
 
-      // For each external_roster_players row, build a league_roster_players row
+      // Get max existing sort_order per imported_member_id for safe appending on re-import
+      const maxSortOrderByMemberId = new Map<string, number>();
+      if (allImportedMemberIds.length > 0) {
+        const { data: existingSortRows } = await adminClient
+          .from("league_roster_players")
+          .select("imported_member_id, sort_order")
+          .in("imported_member_id", allImportedMemberIds);
+        for (const row of existingSortRows ?? []) {
+          const mid = row.imported_member_id as string;
+          const cur = maxSortOrderByMemberId.get(mid) ?? -1;
+          if ((row.sort_order as number) > cur) {
+            maxSortOrderByMemberId.set(mid, row.sort_order as number);
+          }
+        }
+      }
+
+      // Fetch snapshot rows and group by imported_member_id
       const { data: allSnapshotRows } = await adminClient
         .from("external_roster_players")
         .select("id, external_team_id, sports_player_id, external_player_name, external_position")
         .eq("link_id", linkId);
 
-      const rosterPlayerRows: Record<string, unknown>[] = [];
+      // Position priority for stable sort within each team group
+      const POSITION_PRIORITY = ["QB", "RB", "WR", "TE", "K", "DST", "DEF", "FLEX", "OP"];
+
+      // Group snapshot rows by imported_member_id
+      const rowsByMemberId = new Map<string, Array<typeof allSnapshotRows extends (infer T)[] | null ? T : never>>();
       for (const snap of allSnapshotRows ?? []) {
         const importedMember = importedByTeamId.get(snap.external_team_id as string);
+        if (!importedMember) continue;
+        const key = importedMember.id as string;
+        if (!rowsByMemberId.has(key)) rowsByMemberId.set(key, []);
+        rowsByMemberId.get(key)!.push(snap);
+      }
+
+      // Build roster player rows with stable, incrementing sort_order per team
+      const rosterPlayerRows: Record<string, unknown>[] = [];
+
+      for (const [memberId, snaps] of rowsByMemberId) {
+        const importedMember = (allImportedMembers ?? []).find((r) => r.id === memberId);
         if (!importedMember) continue;
 
         const userId         = importedMember.invited_user_id as string | null ?? null;
         const leagueMemberId = userId ? (memberByUserId.get(userId) ?? null) : null;
 
-        rosterPlayerRows.push({
-          league_id:                 leagueId,
-          imported_member_id:        importedMember.id,
-          league_member_id:          leagueMemberId,
-          user_id:                   userId,
-          external_roster_player_id: snap.id,
-          sports_player_id:          snap.sports_player_id ?? null,
-          external_player_name:      snap.external_player_name,
-          external_position:         snap.external_position ?? null,
-          acquisition_source:        "imported",
-          roster_status:             "active",
-          sort_order:                0,
+        // Sort group: resolved players first in position priority, then unresolved
+        const sorted = [...snaps].sort((a, b) => {
+          const aResolved = !!a.sports_player_id;
+          const bResolved = !!b.sports_player_id;
+          if (aResolved !== bResolved) return aResolved ? -1 : 1;
+          const ai = POSITION_PRIORITY.indexOf((a.external_position as string) ?? "");
+          const bi = POSITION_PRIORITY.indexOf((b.external_position as string) ?? "");
+          return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
         });
+
+        // Start sort_order after the existing max for this team (0 on first import)
+        let sortOrder = (maxSortOrderByMemberId.get(memberId) ?? -1) + 1;
+
+        for (const snap of sorted) {
+          rosterPlayerRows.push({
+            league_id:                 leagueId,
+            imported_member_id:        memberId,
+            league_member_id:          leagueMemberId,
+            user_id:                   userId,
+            external_roster_player_id: snap.id,
+            sports_player_id:          snap.sports_player_id ?? null,
+            external_player_name:      snap.external_player_name,
+            external_position:         snap.external_position ?? null,
+            acquisition_source:        "imported",
+            roster_status:             "active",
+            sort_order:                sortOrder++,
+          });
+        }
       }
 
       if (rosterPlayerRows.length > 0) {
