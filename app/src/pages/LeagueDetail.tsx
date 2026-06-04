@@ -247,6 +247,7 @@ export default function LeagueDetail() {
           userId={userId}
           importedMembers={importedMembers}
           leagueMembers={members}
+          leagueSettings={leagueSettings}
         />
       )}
 

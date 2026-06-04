@@ -3,22 +3,30 @@ import { supabase } from '../../lib/supabase';
 import type { ImportedMember } from './ImportedLeaguematesPanel';
 import type { Database } from '../../types/supabase';
 
-type LeagueMember = Database['public']['Tables']['league_members']['Row'];
+type LeagueMember   = Database['public']['Tables']['league_members']['Row'];
+type LeagueSettings = Database['public']['Tables']['league_settings']['Row'];
 
 interface Props {
-  leagueId: string;
-  userId: string;
+  leagueId:       string;
+  userId:         string;
   importedMembers: ImportedMember[];
-  leagueMembers: LeagueMember[];
+  leagueMembers:  LeagueMember[];
+  leagueSettings: LeagueSettings | null;
 }
 
 interface RosterPlayer {
-  id: string;
-  displayName: string;
-  fantasyPosition: string | null;
-  teamAbbr: string | null;
+  id:               string;
+  displayName:      string;
+  fantasyPosition:  string | null;
+  teamAbbr:         string | null;
   resolutionStatus: string;
-  unresolved: boolean;
+  unresolved:       boolean;
+}
+
+// Describes one starter or bench slot in the empty roster shell
+interface RosterSlot {
+  label:    string;  // e.g. "QB", "RB", "FLEX", "BN"
+  section:  'starters' | 'bench';
 }
 
 const card          = '#1e293b';
@@ -28,35 +36,59 @@ const textSecondary = '#94a3b8';
 const blue          = '#3b82f6';
 
 const POSITION_COLORS: Record<string, { bg: string; text: string }> = {
-  QB:  { bg: '#7c2d12', text: '#fed7aa' },
-  RB:  { bg: '#14532d', text: '#bbf7d0' },
-  WR:  { bg: '#1e3a5f', text: '#bfdbfe' },
-  TE:  { bg: '#3b1a5f', text: '#e9d5ff' },
-  K:   { bg: '#1a2e1a', text: '#86efac' },
-  DST: { bg: '#1c1a2e', text: '#a5b4fc' },
-  DEF: { bg: '#1c1a2e', text: '#a5b4fc' },
+  QB:   { bg: '#7c2d12', text: '#fed7aa' },
+  RB:   { bg: '#14532d', text: '#bbf7d0' },
+  WR:   { bg: '#1e3a5f', text: '#bfdbfe' },
+  TE:   { bg: '#3b1a5f', text: '#e9d5ff' },
+  FLEX: { bg: '#1e3a5f', text: '#93c5fd' },
+  K:    { bg: '#1a2e1a', text: '#86efac' },
+  DST:  { bg: '#1c1a2e', text: '#a5b4fc' },
+  DEF:  { bg: '#1c1a2e', text: '#a5b4fc' },
+  OP:   { bg: '#3b2a12', text: '#fde68a' },
+  BN:   { bg: '#1e293b', text: '#64748b' },
 };
 
 function posColor(pos: string | null) {
   return POSITION_COLORS[pos ?? ''] ?? { bg: '#334155', text: '#94a3b8' };
 }
 
+function buildEmptySlots(settings: LeagueSettings | null): RosterSlot[] {
+  const s = settings;
+  const qb    = s?.roster_qb   ?? 1;
+  const rb    = s?.roster_rb   ?? 2;
+  const wr    = s?.roster_wr   ?? 2;
+  const te    = s?.roster_te   ?? 1;
+  const flex  = s?.roster_flex ?? 1;
+  const k     = s?.roster_k    ?? 1;
+  const dst   = s?.roster_dst  ?? 1;
+  const op    = (s as (LeagueSettings & { roster_op?: number }) | null)?.roster_op ?? 0;
+  const bench = s?.bench       ?? 6;
+
+  const slots: RosterSlot[] = [];
+  for (let i = 0; i < qb;   i++) slots.push({ label: 'QB',   section: 'starters' });
+  for (let i = 0; i < rb;   i++) slots.push({ label: 'RB',   section: 'starters' });
+  for (let i = 0; i < wr;   i++) slots.push({ label: 'WR',   section: 'starters' });
+  for (let i = 0; i < te;   i++) slots.push({ label: 'TE',   section: 'starters' });
+  for (let i = 0; i < flex; i++) slots.push({ label: 'FLEX', section: 'starters' });
+  for (let i = 0; i < k;    i++) slots.push({ label: 'K',    section: 'starters' });
+  for (let i = 0; i < dst;  i++) slots.push({ label: 'DST',  section: 'starters' });
+  for (let i = 0; i < op;   i++) slots.push({ label: 'OP',   section: 'starters' });
+  for (let i = 0; i < bench; i++) slots.push({ label: 'BN',  section: 'bench' });
+  return slots;
+}
+
 export default function LeagueRosterTab({
-  leagueId, userId, importedMembers, leagueMembers,
+  leagueId, userId, importedMembers, leagueMembers, leagueSettings,
 }: Props) {
   // Only show teams whose owner has actually joined the league
-  const joinedMembers = importedMembers.filter(m => m.invitedUserId !== null);
+  const joinedMembers  = importedMembers.filter(m => m.invitedUserId !== null);
+  const myTeam         = joinedMembers.find(m => m.invitedUserId === userId) ?? null;
+  const defaultMember  = myTeam ?? joinedMembers[0] ?? null;
 
-  const myTeam       = joinedMembers.find(m => m.invitedUserId === userId) ?? null;
-  const defaultMember = myTeam ?? joinedMembers[0] ?? null;
-
-  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(
-    defaultMember?.id ?? null
-  );
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(defaultMember?.id ?? null);
   const [players, setPlayers]       = useState<RosterPlayer[]>([]);
   const [loading, setLoading]       = useState(false);
-  const [noImport, setNoImport]     = useState(false);
-  const [noTeamMap, setNoTeamMap]   = useState(false);
+  const [rosterEmpty, setRosterEmpty] = useState(false);   // true when no players found for any reason
   const [fetchError, setFetchError] = useState('');
 
   const selectedMember = joinedMembers.find(m => m.id === selectedMemberId) ?? null;
@@ -64,12 +96,11 @@ export default function LeagueRosterTab({
   const loadRoster = useCallback(async (member: ImportedMember) => {
     setLoading(true);
     setPlayers([]);
-    setNoImport(false);
-    setNoTeamMap(false);
+    setRosterEmpty(false);
     setFetchError('');
 
     if (!member.externalTeamId || !member.externalLeagueId) {
-      setNoImport(true);
+      setRosterEmpty(true);
       setLoading(false);
       return;
     }
@@ -91,7 +122,7 @@ export default function LeagueRosterTab({
       l => l.provider === member.provider && l.external_league_id === member.externalLeagueId
     );
     if (!matchingLink) {
-      setNoImport(true);
+      setRosterEmpty(true);
       setLoading(false);
       return;
     }
@@ -110,7 +141,7 @@ export default function LeagueRosterTab({
       return;
     }
     if (!teamRow) {
-      setNoTeamMap(true);
+      setRosterEmpty(true);
       setLoading(false);
       return;
     }
@@ -129,7 +160,7 @@ export default function LeagueRosterTab({
     }
 
     if (!rosterRows || rosterRows.length === 0) {
-      setPlayers([]);
+      setRosterEmpty(true);
       setLoading(false);
       return;
     }
@@ -194,12 +225,10 @@ export default function LeagueRosterTab({
   }, [leagueId]);
 
   useEffect(() => {
-    if (selectedMember) {
-      loadRoster(selectedMember);
-    }
+    if (selectedMember) loadRoster(selectedMember);
   }, [selectedMember, loadRoster]);
 
-  // Set default selection once joinedMembers are available without overriding a manual pick
+  // Set default selection once joinedMembers arrive without overriding a manual pick
   useEffect(() => {
     if (!selectedMemberId && defaultMember?.id) {
       setSelectedMemberId(defaultMember.id);
@@ -214,7 +243,7 @@ export default function LeagueRosterTab({
     return m.teamName + suffix;
   }
 
-  // ── No joined members at all ─────────────────────────────────────────────────
+  // ── No joined members ─────────────────────────────────────────────────────────
   if (joinedMembers.length === 0) {
     return (
       <div style={{ fontFamily: 'system-ui, sans-serif', color: textPrimary }}>
@@ -231,6 +260,9 @@ export default function LeagueRosterTab({
   }
 
   const unresolvedCount = players.filter(p => p.unresolved).length;
+  const emptySlots      = buildEmptySlots(leagueSettings);
+  const starterSlots    = emptySlots.filter(s => s.section === 'starters');
+  const benchSlots      = emptySlots.filter(s => s.section === 'bench');
 
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', color: textPrimary }}>
@@ -279,44 +311,104 @@ export default function LeagueRosterTab({
           )}
         </div>
 
+        {/* Loading */}
         {loading && (
           <div style={{ padding: '32px', textAlign: 'center', color: textSecondary, fontSize: '14px' }}>
             Loading roster...
           </div>
         )}
 
+        {/* Fetch error */}
         {!loading && fetchError && (
           <div style={{ padding: '16px', color: '#f87171', fontSize: '13px' }}>{fetchError}</div>
         )}
 
-        {/* Roster not imported yet — shown when no matching external_league_links row exists */}
-        {!loading && !fetchError && (noImport || noTeamMap) && (
-          <div style={{ padding: '32px 24px', textAlign: 'center' }}>
-            <p style={{ color: textSecondary, margin: '0 0 6px', fontSize: '14px' }}>
-              Roster not imported yet
-            </p>
-            <p style={{ color: textSecondary, margin: 0, fontSize: '13px', lineHeight: '1.5' }}>
-              The commissioner needs to run a league import before rosters appear here.
-              This is separate from creating a draft — it pulls last season's rosters from {selectedMember?.provider?.toUpperCase() ?? 'the provider'}.
-            </p>
-          </div>
+        {/* Empty roster shell — shown when no players found for any reason */}
+        {!loading && !fetchError && rosterEmpty && (
+          <>
+            {/* Notice banner */}
+            <div style={{ padding: '10px 16px', background: '#172033', borderBottom: `1px solid ${border}`, fontSize: '12px', color: '#93c5fd' }}>
+              No roster players have been imported for this team yet. The commissioner may need to run the full roster import.
+            </div>
+
+            {/* Starters section */}
+            <div style={{ padding: '8px 16px 2px', borderBottom: `1px solid ${border}` }}>
+              <span style={{ fontSize: '10px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                Starters
+              </span>
+            </div>
+            {starterSlots.map((slot, i) => {
+              const col = posColor(slot.label);
+              return (
+                <div
+                  key={`starter-${i}`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    padding: '9px 16px',
+                    borderBottom: `1px solid ${border}`,
+                    opacity: 0.55,
+                  }}
+                >
+                  <span style={{
+                    minWidth: '36px', padding: '2px 5px', borderRadius: '4px',
+                    fontSize: '10px', fontWeight: '700', textAlign: 'center',
+                    background: col.bg, color: col.text, flexShrink: 0,
+                  }}>
+                    {slot.label}
+                  </span>
+                  <span style={{ fontSize: '13px', color: textSecondary, fontStyle: 'italic' }}>
+                    — Empty —
+                  </span>
+                </div>
+              );
+            })}
+
+            {/* Bench section */}
+            {benchSlots.length > 0 && (
+              <>
+                <div style={{ padding: '8px 16px 2px', borderBottom: `1px solid ${border}` }}>
+                  <span style={{ fontSize: '10px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    Bench
+                  </span>
+                </div>
+                {benchSlots.map((slot, i) => {
+                  const col = posColor(slot.label);
+                  return (
+                    <div
+                      key={`bench-${i}`}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '10px',
+                        padding: '9px 16px',
+                        borderBottom: i < benchSlots.length - 1 ? `1px solid ${border}` : 'none',
+                        opacity: 0.45,
+                      }}
+                    >
+                      <span style={{
+                        minWidth: '36px', padding: '2px 5px', borderRadius: '4px',
+                        fontSize: '10px', fontWeight: '700', textAlign: 'center',
+                        background: col.bg, color: col.text, flexShrink: 0,
+                      }}>
+                        {slot.label}
+                      </span>
+                      <span style={{ fontSize: '13px', color: textSecondary, fontStyle: 'italic' }}>
+                        — Empty —
+                      </span>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </>
         )}
 
-        {/* Empty roster (import exists but zero players) */}
-        {!loading && !fetchError && !noImport && !noTeamMap && players.length === 0 && (
-          <div style={{ padding: '24px 16px', textAlign: 'center', color: textSecondary, fontSize: '13px' }}>
-            No players found for this roster.
-          </div>
-        )}
-
-        {/* Unresolved notice */}
-        {!loading && unresolvedCount > 0 && (
+        {/* Unresolved notice (only shown when real players exist) */}
+        {!loading && !rosterEmpty && unresolvedCount > 0 && (
           <div style={{ padding: '8px 16px', background: '#1c2840', borderBottom: `1px solid ${border}`, fontSize: '12px', color: '#93c5fd' }}>
             {unresolvedCount} player{unresolvedCount !== 1 ? 's' : ''} could not be matched to the player database and are shown with their imported names.
           </div>
         )}
 
-        {/* Player rows */}
+        {/* Imported player rows */}
         {!loading && !fetchError && players.length > 0 && (
           <div>
             {players.map((player, i) => {
@@ -338,7 +430,6 @@ export default function LeagueRosterTab({
                   }}>
                     {player.fantasyPosition ?? '—'}
                   </span>
-
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: '600', fontSize: '14px', color: player.unresolved ? textSecondary : textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {player.displayName}
@@ -349,7 +440,6 @@ export default function LeagueRosterTab({
                       </div>
                     )}
                   </div>
-
                   {player.unresolved ? (
                     <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: '#292524', color: '#a8a29e', flexShrink: 0 }}>
                       Unresolved
@@ -367,7 +457,7 @@ export default function LeagueRosterTab({
 
       </div>
 
-      {/* No selected team (user has no claimed team) */}
+      {/* No selected team (user has no claimed team in this league) */}
       {!selectedMember && !loading && (
         <div style={{ marginTop: '16px', background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '24px', textAlign: 'center' }}>
           <p style={{ color: textSecondary, margin: 0, fontSize: '14px' }}>You are not connected to an imported team yet.</p>
