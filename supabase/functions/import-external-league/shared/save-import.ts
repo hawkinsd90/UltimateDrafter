@@ -217,36 +217,64 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
   }
 
   // ── 8b. League path only: sync league_imported_members ────────────────────
-  // This populates the members list so the Roster tab can display per-team
-  // rosters immediately after the league-level import completes.
+  // Merges provider team data into league_imported_members without wiping user
+  // assignments. On re-import: updates metadata (name, owner) for existing teams
+  // and inserts new teams, but never resets invited_user_id or invite_id.
+  // Teams that no longer appear in the provider response are left untouched.
   if (!isDraftPath && teams.length > 0) {
-    // Delete existing imported members for this provider/external_league_id combo
-    // to ensure a clean replace on re-import.
-    await adminClient
+    // Load existing rows so we can diff by external_team_id
+    const { data: existingMembers } = await adminClient
       .from("league_imported_members")
-      .delete()
+      .select("id, external_team_id")
       .eq("league_id", leagueId)
       .eq("provider", provider)
       .eq("external_league_id", league.externalLeagueId);
 
-    const memberRows = teams.map((t) => ({
-      league_id: leagueId,
-      provider,
-      external_league_id: league.externalLeagueId,
-      external_team_id: t.externalTeamId,
-      external_owner_id: t.externalOwnerId ?? null,
-      external_owner_name: t.externalOwnerName ?? null,
-      team_name: t.teamName,
-      invited_user_id: null,
-      invite_id: null,
-    }));
+    const existingByTeamId = new Map(
+      (existingMembers ?? []).map((r) => [r.external_team_id as string, r.id as string])
+    );
 
-    const { error: membersErr } = await adminClient
-      .from("league_imported_members")
-      .insert(memberRows);
+    const toInsert: Record<string, unknown>[] = [];
 
-    if (membersErr) {
-      warnings.push("Could not sync league imported members: " + membersErr.message);
+    for (const t of teams) {
+      const existingId = existingByTeamId.get(t.externalTeamId);
+      if (existingId) {
+        // Update only safe metadata — never touch invited_user_id or invite_id
+        const { error: updateErr } = await adminClient
+          .from("league_imported_members")
+          .update({
+            external_owner_id:   t.externalOwnerId   ?? null,
+            external_owner_name: t.externalOwnerName ?? null,
+            team_name:           t.teamName,
+          })
+          .eq("id", existingId);
+
+        if (updateErr) {
+          warnings.push(`Could not update imported member ${t.externalTeamId}: ${updateErr.message}`);
+        }
+      } else {
+        toInsert.push({
+          league_id:           leagueId,
+          provider,
+          external_league_id:  league.externalLeagueId,
+          external_team_id:    t.externalTeamId,
+          external_owner_id:   t.externalOwnerId   ?? null,
+          external_owner_name: t.externalOwnerName ?? null,
+          team_name:           t.teamName,
+          invited_user_id:     null,
+          invite_id:           null,
+        });
+      }
+    }
+
+    if (toInsert.length > 0) {
+      const { error: insertErr } = await adminClient
+        .from("league_imported_members")
+        .insert(toInsert);
+
+      if (insertErr) {
+        warnings.push("Could not insert new imported members: " + insertErr.message);
+      }
     }
   }
 
