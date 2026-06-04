@@ -68,7 +68,7 @@ const ROSTER_SLOTS = [
   { key: 'roster_flex', label: 'FLEX' },
   { key: 'roster_k',    label: 'K' },
   { key: 'roster_dst',  label: 'DST' },
-  { key: 'roster_op',   label: 'OP' },
+  { key: 'roster_op',   label: 'SuperFlex (OP)' },
   { key: 'bench',       label: 'Bench' },
 ] as const;
 

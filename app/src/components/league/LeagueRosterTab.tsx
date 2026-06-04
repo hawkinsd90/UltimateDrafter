@@ -25,8 +25,9 @@ interface RosterPlayer {
 
 // Describes one starter or bench slot in the empty roster shell
 interface RosterSlot {
-  label:    string;  // e.g. "QB", "RB", "FLEX", "BN"
-  section:  'starters' | 'bench';
+  label:        string;  // e.g. "QB", "RB", "FLEX", "BN" — used for badge + color
+  displayLabel: string;  // full label shown in the slot row
+  section:      'starters' | 'bench';
 }
 
 const card          = '#1e293b';
@@ -65,15 +66,15 @@ function buildEmptySlots(settings: LeagueSettings | null): RosterSlot[] {
   const bench = s?.bench       ?? 6;
 
   const slots: RosterSlot[] = [];
-  for (let i = 0; i < qb;   i++) slots.push({ label: 'QB',   section: 'starters' });
-  for (let i = 0; i < rb;   i++) slots.push({ label: 'RB',   section: 'starters' });
-  for (let i = 0; i < wr;   i++) slots.push({ label: 'WR',   section: 'starters' });
-  for (let i = 0; i < te;   i++) slots.push({ label: 'TE',   section: 'starters' });
-  for (let i = 0; i < flex; i++) slots.push({ label: 'FLEX', section: 'starters' });
-  for (let i = 0; i < k;    i++) slots.push({ label: 'K',    section: 'starters' });
-  for (let i = 0; i < dst;  i++) slots.push({ label: 'DST',  section: 'starters' });
-  for (let i = 0; i < op;   i++) slots.push({ label: 'OP',   section: 'starters' });
-  for (let i = 0; i < bench; i++) slots.push({ label: 'BN',  section: 'bench' });
+  for (let i = 0; i < qb;   i++) slots.push({ label: 'QB',   displayLabel: 'QB',             section: 'starters' });
+  for (let i = 0; i < rb;   i++) slots.push({ label: 'RB',   displayLabel: 'RB',             section: 'starters' });
+  for (let i = 0; i < wr;   i++) slots.push({ label: 'WR',   displayLabel: 'WR',             section: 'starters' });
+  for (let i = 0; i < te;   i++) slots.push({ label: 'TE',   displayLabel: 'TE',             section: 'starters' });
+  for (let i = 0; i < flex; i++) slots.push({ label: 'FLEX', displayLabel: 'FLEX',           section: 'starters' });
+  for (let i = 0; i < k;    i++) slots.push({ label: 'K',    displayLabel: 'K',              section: 'starters' });
+  for (let i = 0; i < dst;  i++) slots.push({ label: 'DST',  displayLabel: 'DST',            section: 'starters' });
+  for (let i = 0; i < op;   i++) slots.push({ label: 'OP',   displayLabel: 'SuperFlex (OP)', section: 'starters' });
+  for (let i = 0; i < bench; i++) slots.push({ label: 'BN',  displayLabel: 'BN',             section: 'bench' });
   return slots;
 }
 
@@ -328,7 +329,7 @@ export default function LeagueRosterTab({
           <>
             {/* Notice banner */}
             <div style={{ padding: '10px 16px', background: '#172033', borderBottom: `1px solid ${border}`, fontSize: '12px', color: '#93c5fd' }}>
-              No roster players have been imported for this team yet. The commissioner may need to run the full roster import.
+              No roster players have been imported for this team yet. To import rosters, the commissioner must run the full import wizard from a draft in this league (Drafts tab &rarr; draft settings &rarr; Import External League).
             </div>
 
             {/* Starters section */}
@@ -356,9 +357,15 @@ export default function LeagueRosterTab({
                   }}>
                     {slot.label}
                   </span>
-                  <span style={{ fontSize: '13px', color: textSecondary, fontStyle: 'italic' }}>
-                    — Empty —
-                  </span>
+                  {slot.displayLabel !== slot.label ? (
+                    <span style={{ fontSize: '13px', color: textSecondary }}>
+                      {slot.displayLabel}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: '13px', color: textSecondary, fontStyle: 'italic' }}>
+                      — Empty —
+                    </span>
+                  )}
                 </div>
               );
             })}
