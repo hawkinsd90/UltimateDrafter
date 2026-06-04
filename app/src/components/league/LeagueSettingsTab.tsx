@@ -29,6 +29,8 @@ type FormData = {
   bench: number;
   allow_trades: boolean;
   allow_pick_trades: boolean;
+  allow_future_picks: boolean;
+  future_pick_years: number;
   roster_limits_enabled: boolean;
   max_qb: number | null;
   max_rb: number | null;
@@ -47,6 +49,8 @@ type ExtLeagueSettings = LeagueSettings & {
   max_te?: number | null;
   max_k?: number | null;
   max_dst?: number | null;
+  allow_future_picks?: boolean;
+  future_pick_years?: number;
 };
 
 function settingsToForm(s: LeagueSettings): FormData {
@@ -69,6 +73,8 @@ function settingsToForm(s: LeagueSettings): FormData {
     bench: s.bench,
     allow_trades: s.allow_trades,
     allow_pick_trades: s.allow_pick_trades,
+    allow_future_picks: ext.allow_future_picks ?? false,
+    future_pick_years: ext.future_pick_years ?? 1,
     roster_limits_enabled: ext.roster_limits_enabled ?? false,
     max_qb:  ext.max_qb  ?? null,
     max_rb:  ext.max_rb  ?? null,
@@ -84,6 +90,7 @@ const DEFAULTS: FormData = {
   drafting_hours_enabled: false, drafting_hours_start: '', drafting_hours_end: '',
   roster_qb: 1, roster_rb: 2, roster_wr: 2, roster_te: 1, roster_flex: 1,
   roster_k: 1, roster_dst: 1, roster_op: 0, bench: 6, allow_trades: true, allow_pick_trades: true,
+  allow_future_picks: false, future_pick_years: 1,
   roster_limits_enabled: false, max_qb: null, max_rb: null, max_wr: null, max_te: null, max_k: null, max_dst: null,
 };
 
@@ -171,6 +178,7 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               <div><strong>Allow Trades:</strong> {leagueSettings.allow_trades ? 'Yes' : 'No'}</div>
               <div><strong>Allow Pick Trades:</strong> {leagueSettings.allow_pick_trades ? 'Yes' : 'No'}</div>
+              <div><strong>Allow Future Pick Trades:</strong> {(leagueSettings as ExtLeagueSettings).allow_future_picks ? `Yes (${(leagueSettings as ExtLeagueSettings).future_pick_years ?? 1} year${((leagueSettings as ExtLeagueSettings).future_pick_years ?? 1) !== 1 ? 's' : ''})` : 'No'}</div>
             </div>
           </div>
         </div>
@@ -267,6 +275,26 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
                 <input type="checkbox" checked={formData.allow_pick_trades} onChange={e => setField('allow_pick_trades', e.target.checked)} />
                 <span>Allow draft pick trades</span>
               </label>
+            </div>
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input type="checkbox" checked={formData.allow_future_picks} onChange={e => setField('allow_future_picks', e.target.checked)} />
+                <span>Allow future draft pick trades</span>
+              </label>
+              {formData.allow_future_picks && (
+                <div style={{ marginTop: '10px', marginLeft: '24px' }}>
+                  <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '500' }}>Years ahead</label>
+                  <select
+                    value={formData.future_pick_years}
+                    onChange={e => setField('future_pick_years', parseInt(e.target.value, 10))}
+                    style={{ ...inputStyle, maxWidth: '120px' }}
+                  >
+                    <option value={1}>1 year</option>
+                    <option value={2}>2 years</option>
+                    <option value={3}>3 years</option>
+                  </select>
+                </div>
+              )}
             </div>
           </div>
         </div>

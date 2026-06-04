@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { normalizePhoneToE164, validateE164 } from '../../utils/phone';
 import { sendInviteNotification } from '../../utils/notifications';
@@ -8,6 +8,8 @@ import type { Database } from '../../types/supabase';
 
 type LeagueMember = Database['public']['Tables']['league_members']['Row'];
 type LeagueInvite = Database['public']['Tables']['league_invites']['Row'];
+
+type ExtMember = LeagueMember & { draft_order?: number | null };
 
 interface Props {
   leagueId: string;
@@ -24,6 +26,8 @@ export default function LeagueMembersTab({
   leagueId, leagueName, userId, isOwner,
   members, invites, importedMembers, onRefresh,
 }: Props) {
+  const navigate = useNavigate();
+
   const [phoneInputs, setPhoneInputs]     = useState<string[]>(['']);
   const [addingPhone, setAddingPhone]     = useState(false);
   const [formError, setFormError]         = useState('');
@@ -32,6 +36,47 @@ export default function LeagueMembersTab({
   const [copiedId, setCopiedId]           = useState<string | null>(null);
   const [resendingId, setResendingId]     = useState<string | null>(null);
   const [resentId, setResentId]           = useState<string | null>(null);
+  const [draftOrderIds, setDraftOrderIds] = useState<string[]>([]);
+  const [savingOrder, setSavingOrder]     = useState(false);
+  const [orderSaved, setOrderSaved]       = useState(false);
+
+  // Initialise draft order from members (sorted by draft_order, nulls last)
+  useEffect(() => {
+    const ext = members as ExtMember[];
+    const sorted = [...ext].sort((a, b) => {
+      if (a.draft_order != null && b.draft_order != null) return a.draft_order - b.draft_order;
+      if (a.draft_order != null) return -1;
+      if (b.draft_order != null) return 1;
+      return 0;
+    });
+    setDraftOrderIds(sorted.map(m => m.id));
+  }, [members]);
+
+  function moveDraftOrder(id: string, dir: -1 | 1) {
+    setDraftOrderIds(prev => {
+      const idx  = prev.indexOf(id);
+      if (idx === -1) return prev;
+      const next = idx + dir;
+      if (next < 0 || next >= prev.length) return prev;
+      const copy = [...prev];
+      [copy[idx], copy[next]] = [copy[next], copy[idx]];
+      return copy;
+    });
+    setOrderSaved(false);
+  }
+
+  async function saveDraftOrder() {
+    setSavingOrder(true);
+    setOrderSaved(false);
+    await Promise.all(
+      draftOrderIds.map((memberId, i) =>
+        supabase.from('league_members').update({ draft_order: i + 1 } as Partial<ExtMember>).eq('id', memberId)
+      )
+    );
+    setSavingOrder(false);
+    setOrderSaved(true);
+    setTimeout(() => setOrderSaved(false), 2500);
+  }
 
   function normalizeEntry(raw: string): string {
     if (raw.includes('@')) return raw;
@@ -67,16 +112,13 @@ export default function LeagueMembersTab({
       return;
     }
 
-    // Deduplicate (case-insensitive for email)
     const seen = new Set<string>();
-    const normalized = entries
-      .map(normalizeEntry)
-      .filter(en => {
-        const key = en.includes('@') ? en.toLowerCase() : en;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+    const normalized = entries.map(normalizeEntry).filter(en => {
+      const key = en.includes('@') ? en.toLowerCase() : en;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 
     const invalid = normalized.filter(en => !en.includes('@') && !validateE164(en));
     if (invalid.length > 0) {
@@ -85,8 +127,6 @@ export default function LeagueMembersTab({
       return;
     }
 
-    // Block inviting people already in the league.
-    // Use the server-side RPC which joins auth.users to get actual emails + verified phones.
     const { data: memberContacts } = await supabase.rpc('get_league_member_contacts', { p_league_id: leagueId });
     const memberEmails = new Set<string>();
     const memberPhones = new Set<string>();
@@ -104,7 +144,6 @@ export default function LeagueMembersTab({
       return;
     }
 
-    // Block contacts that already have a pending invite
     const pendingEmails = new Set(invites.map(i => i.email?.toLowerCase()).filter(Boolean) as string[]);
     const pendingPhones = new Set(invites.map(i => i.phone_e164).filter(Boolean) as string[]);
     const alreadyInvited = normalized.filter(en =>
@@ -116,29 +155,22 @@ export default function LeagueMembersTab({
       return;
     }
 
-    // Create all invite records in parallel, then send notifications in parallel
     const results = await Promise.all(normalized.map(async entry => {
       const isEmail = entry.includes('@');
       const payload: Record<string, unknown> = { league_id: leagueId, invited_by: userId };
       if (isEmail) payload.email = entry; else payload.phone_e164 = entry;
-
-      const { data: invite, error: inviteError } = await supabase
-        .from('league_invites').insert(payload).select().single();
-
+      const { data: invite, error: inviteError } = await supabase.from('league_invites').insert(payload).select().single();
       if (inviteError || !invite) return { entry, success: false, error: inviteError?.message ?? 'unknown' };
-
       const inviteUrl = `${window.location.origin}/leagues/join/${invite.id}`;
-      const notifRes = await sendInviteNotification({ contact: entry, inviteUrl, leagueName });
+      const notifRes  = await sendInviteNotification({ contact: entry, inviteUrl, leagueName });
       return { entry, success: true, notifError: notifRes.success ? null : notifRes.error };
     }));
 
-    const failures   = results.filter(r => !r.success);
-    const successes  = results.filter(r => r.success);
-    const notifErrs  = successes.filter(r => r.notifError).map(r => `${r.entry}: ${r.notifError}`);
+    const failures  = results.filter(r => !r.success);
+    const successes = results.filter(r => r.success);
+    const notifErrs = successes.filter(r => r.notifError).map(r => `${r.entry}: ${r.notifError}`);
 
-    if (failures.length > 0) {
-      setFormError('Some entries failed: ' + failures.map(r => `${r.entry}: ${r.error}`).join('; '));
-    }
+    if (failures.length > 0) setFormError('Some entries failed: ' + failures.map(r => `${r.entry}: ${r.error}`).join('; '));
     if (successes.length > 0) {
       const note = notifErrs.length > 0 ? ` Note: notification issue — ${notifErrs.join('; ')}` : ' Invite notification sent.';
       setFormSuccess(`Invited ${successes.length} person(s).${note}`);
@@ -153,8 +185,7 @@ export default function LeagueMembersTab({
     const { error } = await supabase.from('league_members').delete().eq('id', memberId);
     if (error) { setBannerError('Failed to remove member: ' + error.message); return; }
     if (memberToRemove?.user_id) {
-      await supabase
-        .from('league_imported_members')
+      await supabase.from('league_imported_members')
         .update({ invited_user_id: null, invite_id: null })
         .eq('league_id', leagueId)
         .eq('invited_user_id', memberToRemove.user_id);
@@ -178,10 +209,9 @@ export default function LeagueMembersTab({
     setTimeout(() => setResentId(null), 3000);
   }
 
-  const filledCount = phoneInputs.filter(p => p.trim()).length;
-
-  // "Your Team" card — shown to members who claimed an imported team
+  const filledCount    = phoneInputs.filter(p => p.trim()).length;
   const myImportedTeam = importedMembers.find(m => m.invitedUserId === userId);
+  const memberMap      = Object.fromEntries(members.map(m => [m.id, m]));
 
   return (
     <div>
@@ -198,9 +228,7 @@ export default function LeagueMembersTab({
       </div>
 
       {bannerError && (
-        <div style={{ padding: '12px', background: '#fee2e2', border: '1px solid #ef4444', borderRadius: '6px', color: '#dc2626', marginBottom: '16px' }}>
-          {bannerError}
-        </div>
+        <div style={{ padding: '12px', background: '#fee2e2', border: '1px solid #ef4444', borderRadius: '6px', color: '#dc2626', marginBottom: '16px' }}>{bannerError}</div>
       )}
 
       {isOwner && importedMembers.length > 0 && (
@@ -223,69 +251,45 @@ export default function LeagueMembersTab({
             Enter an email address or a US phone number (e.g. <strong>7343588854</strong>). Add multiple rows to invite several people at once.
           </p>
           {formError && (
-            <div style={{ padding: '10px 14px', background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '6px', color: '#dc2626', fontSize: '13px', marginBottom: '12px', lineHeight: '1.5' }}>
-              {formError}
-            </div>
+            <div style={{ padding: '10px 14px', background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '6px', color: '#dc2626', fontSize: '13px', marginBottom: '12px', lineHeight: '1.5' }}>{formError}</div>
           )}
           {formSuccess && (
-            <div style={{ padding: '10px 14px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', color: '#166534', fontSize: '13px', marginBottom: '12px', lineHeight: '1.5', wordBreak: 'break-all' }}>
-              {formSuccess}
-            </div>
+            <div style={{ padding: '10px 14px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '6px', color: '#166534', fontSize: '13px', marginBottom: '12px', lineHeight: '1.5', wordBreak: 'break-all' }}>{formSuccess}</div>
           )}
           <form onSubmit={handleAddMembers}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
               {phoneInputs.map((val, idx) => {
-                const trimmed = val.trim();
+                const trimmed    = val.trim();
                 const normalized = (!trimmed || trimmed.includes('@')) ? null : normalizePhoneToE164(trimmed);
                 return (
                   <div key={idx}>
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <input
-                        type="text"
-                        value={val}
-                        onChange={e => {
-                          const next = [...phoneInputs];
-                          next[idx] = e.target.value;
-                          setPhoneInputs(next);
-                          setFormError('');
-                          setFormSuccess('');
-                        }}
+                        type="text" value={val}
+                        onChange={e => { const next = [...phoneInputs]; next[idx] = e.target.value; setPhoneInputs(next); setFormError(''); setFormSuccess(''); }}
                         placeholder="email@example.com or 7343588854"
                         style={{ flex: 1, padding: '10px', border: '1px solid #d1d5db', borderRadius: '6px', color: '#111827', background: 'white' }}
                       />
                       {phoneInputs.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => setPhoneInputs(phoneInputs.filter((_, i) => i !== idx))}
+                        <button type="button" onClick={() => setPhoneInputs(phoneInputs.filter((_, i) => i !== idx))}
                           style={{ padding: '10px 12px', background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', color: '#6b7280', cursor: 'pointer', fontSize: '16px', lineHeight: 1 }}
-                          title="Remove"
-                        >
-                          ×
-                        </button>
+                          title="Remove">×</button>
                       )}
                     </div>
                     {normalized && normalized !== trimmed && (
-                      <p style={{ margin: '3px 0 0 2px', fontSize: '12px', color: '#059669' }}>
-                        Will send SMS to {normalized}
-                      </p>
+                      <p style={{ margin: '3px 0 0 2px', fontSize: '12px', color: '#059669' }}>Will send SMS to {normalized}</p>
                     )}
                   </div>
                 );
               })}
             </div>
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button
-                type="button"
-                onClick={() => setPhoneInputs([...phoneInputs, ''])}
-                style={{ padding: '8px 14px', background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', color: '#374151', cursor: 'pointer', fontSize: '14px' }}
-              >
+              <button type="button" onClick={() => setPhoneInputs([...phoneInputs, ''])}
+                style={{ padding: '8px 14px', background: 'none', border: '1px solid #d1d5db', borderRadius: '6px', color: '#374151', cursor: 'pointer', fontSize: '14px' }}>
                 + Add Another
               </button>
-              <button
-                type="submit"
-                disabled={addingPhone}
-                style={{ padding: '8px 20px', background: addingPhone ? '#9ca3af' : '#2563eb', color: 'white', border: 'none', borderRadius: '6px', cursor: addingPhone ? 'not-allowed' : 'pointer', fontWeight: '500', fontSize: '14px' }}
-              >
+              <button type="submit" disabled={addingPhone}
+                style={{ padding: '8px 20px', background: addingPhone ? '#9ca3af' : '#2563eb', color: 'white', border: 'none', borderRadius: '6px', cursor: addingPhone ? 'not-allowed' : 'pointer', fontWeight: '500', fontSize: '14px' }}>
                 {addingPhone ? 'Sending invite...' : `Invite ${filledCount > 1 ? `${filledCount} People` : 'Person'}`}
               </button>
             </div>
@@ -293,6 +297,7 @@ export default function LeagueMembersTab({
         </div>
       )}
 
+      {/* Members list */}
       {members.length === 0 ? (
         <div style={{ padding: '40px', background: '#f9fafb', border: '2px dashed #d1d5db', borderRadius: '8px', textAlign: 'center' }}>
           <p style={{ margin: '0', color: '#6b7280' }}>
@@ -301,48 +306,118 @@ export default function LeagueMembersTab({
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '30px' }}>
-          {members.map(m => (
-            <div key={m.id} style={{ padding: '14px 18px', border: '1px solid #e5e7eb', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'white' }}>
-              <div>
-                <span style={{ fontWeight: '500', color: '#111827' }}>{m.display_name || m.phone_e164 || 'Unknown'}</span>
-                {m.phone_e164 && m.display_name !== m.phone_e164 && (
-                  <span style={{ marginLeft: '10px', fontSize: '13px', color: '#6b7280' }}>{m.phone_e164}</span>
-                )}
-                <span style={{ marginLeft: '10px', fontSize: '12px', padding: '2px 8px', borderRadius: '9999px', background: m.role === 'owner' ? '#dbeafe' : '#f3f4f6', color: m.role === 'owner' ? '#1d4ed8' : '#374151' }}>
-                  {m.role}
-                </span>
-                {!m.user_id && (
-                  <span style={{ marginLeft: '8px', fontSize: '12px', color: '#f59e0b' }}>pending</span>
-                )}
+          {members.map(m => {
+            const importedTeam = importedMembers.find(im => im.invitedUserId === m.user_id && im.invitedUserId !== null);
+            const isClickable  = !!importedTeam;
+            return (
+              <div
+                key={m.id}
+                onClick={() => isClickable && navigate(`/leagues/${leagueId}?tab=roster&member=${importedTeam!.id}`)}
+                style={{
+                  padding: '14px 18px', border: '1px solid #e5e7eb', borderRadius: '8px',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  background: 'white',
+                  cursor: isClickable ? 'pointer' : 'default',
+                  transition: isClickable ? 'background 0.1s' : 'none',
+                }}
+                onMouseEnter={e => { if (isClickable) (e.currentTarget as HTMLDivElement).style.background = '#f0f9ff'; }}
+                onMouseLeave={e => { if (isClickable) (e.currentTarget as HTMLDivElement).style.background = 'white'; }}
+              >
+                <div>
+                  <span style={{ fontWeight: '500', color: '#111827' }}>{m.display_name || m.phone_e164 || 'Unknown'}</span>
+                  {m.phone_e164 && m.display_name !== m.phone_e164 && (
+                    <span style={{ marginLeft: '10px', fontSize: '13px', color: '#6b7280' }}>{m.phone_e164}</span>
+                  )}
+                  <span style={{ marginLeft: '10px', fontSize: '12px', padding: '2px 8px', borderRadius: '9999px', background: m.role === 'owner' ? '#dbeafe' : '#f3f4f6', color: m.role === 'owner' ? '#1d4ed8' : '#374151' }}>
+                    {m.role}
+                  </span>
+                  {!m.user_id && (
+                    <span style={{ marginLeft: '8px', fontSize: '12px', color: '#f59e0b' }}>pending</span>
+                  )}
+                  {importedTeam && (
+                    <span style={{ marginLeft: '8px', fontSize: '12px', color: '#0369a1' }}>{importedTeam.teamName}</span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  {isClickable && (
+                    <span style={{ fontSize: '12px', color: '#0369a1', fontWeight: '500' }}>View Roster →</span>
+                  )}
+                  {isOwner && (
+                    <button
+                      onClick={e => { e.stopPropagation(); handleRemoveMember(m.id); }}
+                      style={{ padding: '6px 12px', background: 'none', border: '1px solid #ef4444', color: '#ef4444', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
               </div>
-              {isOwner && (
-                <button
-                  onClick={() => handleRemoveMember(m.id)}
-                  style={{ padding: '6px 12px', background: 'none', border: '1px solid #ef4444', color: '#ef4444', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
+      {/* Your Team card — shown to non-owner members who have a claimed team */}
       {myImportedTeam && (
         <div style={{ marginBottom: '24px', padding: '16px 20px', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '8px' }}>
           <h3 style={{ margin: '0 0 4px', fontSize: '15px', color: '#0c4a6e' }}>Your Team</h3>
           <p style={{ margin: '0 0 10px', fontSize: '13px', color: '#0369a1' }}>
             You are connected to the <strong>{myImportedTeam.teamName}</strong> team imported from {myImportedTeam.provider?.toUpperCase()}.
           </p>
-          <Link
-            to={`/leagues/${leagueId}?tab=roster`}
-            style={{ display: 'inline-block', padding: '7px 16px', background: '#0f766e', color: 'white', textDecoration: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600' }}
+          <button
+            onClick={() => navigate(`/leagues/${leagueId}?tab=roster&member=${myImportedTeam.id}`)}
+            style={{ display: 'inline-block', padding: '7px 16px', background: '#0f766e', color: 'white', textDecoration: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600', border: 'none', cursor: 'pointer' }}
           >
             View My Roster
-          </Link>
+          </button>
         </div>
       )}
 
+      {/* Draft Order — owner only, 2+ members */}
+      {isOwner && members.length > 1 && (
+        <div style={{ marginBottom: '30px', padding: '20px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', gap: '12px' }}>
+            <div>
+              <h3 style={{ margin: '0 0 2px', fontSize: '16px', color: '#374151' }}>Draft Order</h3>
+              <p style={{ margin: 0, fontSize: '13px', color: '#6b7280' }}>Set the default pick order for new drafts. Use arrows to reorder.</p>
+            </div>
+            <button
+              onClick={saveDraftOrder}
+              disabled={savingOrder}
+              style={{
+                padding: '8px 18px', fontWeight: '600', fontSize: '13px',
+                background: orderSaved ? '#059669' : savingOrder ? '#9ca3af' : '#2563eb',
+                color: 'white', border: 'none', borderRadius: '6px',
+                cursor: savingOrder ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+              }}
+            >
+              {orderSaved ? 'Saved!' : savingOrder ? 'Saving…' : 'Save Order'}
+            </button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {draftOrderIds.map((memberId, idx) => {
+              const m = memberMap[memberId];
+              if (!m) return null;
+              return (
+                <div key={memberId} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', borderRadius: '6px', background: 'white', border: '1px solid #e5e7eb' }}>
+                  <span style={{ width: '24px', height: '24px', borderRadius: '50%', background: '#2563eb', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '12px', flexShrink: 0 }}>
+                    {idx + 1}
+                  </span>
+                  <span style={{ flex: 1, fontSize: '14px', color: '#111827', fontWeight: '500' }}>
+                    {m.display_name ?? m.phone_e164 ?? 'Unknown'}
+                  </span>
+                  <div style={{ display: 'flex', gap: '3px' }}>
+                    <DraftOrderBtn enabled={idx > 0} dir="up" onClick={() => moveDraftOrder(memberId, -1)} />
+                    <DraftOrderBtn enabled={idx < draftOrderIds.length - 1} dir="down" onClick={() => moveDraftOrder(memberId, 1)} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Pending Invites */}
       {isOwner && invites.length > 0 && (
         <div>
           <h3 style={{ fontSize: '16px', color: '#374151', marginBottom: '12px' }}>Pending Invites</h3>
@@ -355,15 +430,12 @@ export default function LeagueMembersTab({
                 <div key={inv.id} style={{ padding: '12px 16px', border: '1px solid #e5e7eb', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap', background: '#fafafa' }}>
                   <div style={{ minWidth: 0 }}>
                     <span style={{ fontSize: '13px', color: '#111827', fontWeight: canResend ? '500' : '400' }}>{contactLabel}</span>
-                    <span style={{ marginLeft: '10px', fontSize: '12px', color: '#9ca3af' }}>
-                      Expires {new Date(inv.expires_at).toLocaleDateString()}
-                    </span>
+                    <span style={{ marginLeft: '10px', fontSize: '12px', color: '#9ca3af' }}>Expires {new Date(inv.expires_at).toLocaleDateString()}</span>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
                     {canResend && (
                       <button
-                        onClick={() => handleResendInvite(inv)}
-                        disabled={resendingId === inv.id}
+                        onClick={() => handleResendInvite(inv)} disabled={resendingId === inv.id}
                         style={{ padding: '6px 12px', background: resentId === inv.id ? '#059669' : 'none', border: `1px solid ${resentId === inv.id ? '#059669' : '#0284c7'}`, color: resentId === inv.id ? '#fff' : '#0284c7', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', whiteSpace: 'nowrap' }}
                       >
                         {resendingId === inv.id ? 'Sending…' : resentId === inv.id ? 'Sent!' : `Resend ${inv.email ? 'Email' : 'SMS'}`}
@@ -389,5 +461,23 @@ export default function LeagueMembersTab({
         </div>
       )}
     </div>
+  );
+}
+
+function DraftOrderBtn({ enabled, dir, onClick }: { enabled: boolean; dir: 'up' | 'down'; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick} disabled={!enabled}
+      style={{
+        width: '24px', height: '24px', padding: 0,
+        background: enabled ? '#eff6ff' : 'transparent',
+        border: `1px solid ${enabled ? '#93c5fd' : '#e5e7eb'}`,
+        borderRadius: '4px', cursor: enabled ? 'pointer' : 'default',
+        color: enabled ? '#1d4ed8' : '#d1d5db',
+        fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      {dir === 'up' ? '▲' : '▼'}
+    </button>
   );
 }

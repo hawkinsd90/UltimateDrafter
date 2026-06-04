@@ -257,6 +257,7 @@ export default function LeagueDetail() {
           importedMembers={importedMembers}
           leagueMembers={members}
           leagueSettings={leagueSettings}
+          initialMemberId={searchParams.get('member')}
         />
       )}
 

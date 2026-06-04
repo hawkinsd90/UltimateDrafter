@@ -7,11 +7,12 @@ type LeagueMember   = Database['public']['Tables']['league_members']['Row'];
 type LeagueSettings = Database['public']['Tables']['league_settings']['Row'];
 
 interface Props {
-  leagueId:       string;
-  userId:         string;
+  leagueId:        string;
+  userId:          string;
   importedMembers: ImportedMember[];
-  leagueMembers:  LeagueMember[];
-  leagueSettings: LeagueSettings | null;
+  leagueMembers:   LeagueMember[];
+  leagueSettings:  LeagueSettings | null;
+  initialMemberId?: string | null;
 }
 
 interface RosterPlayer {
@@ -23,10 +24,9 @@ interface RosterPlayer {
   unresolved:       boolean;
 }
 
-// Describes one starter or bench slot in the empty roster shell
 interface RosterSlot {
-  label:        string;  // e.g. "QB", "RB", "FLEX", "BN" — used for badge + color
-  displayLabel: string;  // full label shown in the slot row
+  label:        string;
+  displayLabel: string;
   section:      'starters' | 'bench';
 }
 
@@ -49,6 +49,8 @@ const POSITION_COLORS: Record<string, { bg: string; text: string }> = {
   BN:   { bg: '#1e293b', text: '#64748b' },
 };
 
+const POS_PRIORITY = ['QB', 'RB', 'WR', 'TE', 'K', 'DST', 'DEF'];
+
 function posColor(pos: string | null) {
   return POSITION_COLORS[pos ?? ''] ?? { bg: '#334155', text: '#94a3b8' };
 }
@@ -66,37 +68,68 @@ function buildEmptySlots(settings: LeagueSettings | null): RosterSlot[] {
   const bench = s?.bench       ?? 6;
 
   const slots: RosterSlot[] = [];
-  for (let i = 0; i < qb;   i++) slots.push({ label: 'QB',   displayLabel: 'QB',             section: 'starters' });
-  for (let i = 0; i < rb;   i++) slots.push({ label: 'RB',   displayLabel: 'RB',             section: 'starters' });
-  for (let i = 0; i < wr;   i++) slots.push({ label: 'WR',   displayLabel: 'WR',             section: 'starters' });
-  for (let i = 0; i < te;   i++) slots.push({ label: 'TE',   displayLabel: 'TE',             section: 'starters' });
-  for (let i = 0; i < flex; i++) slots.push({ label: 'FLEX', displayLabel: 'FLEX',           section: 'starters' });
-  for (let i = 0; i < k;    i++) slots.push({ label: 'K',    displayLabel: 'K',              section: 'starters' });
-  for (let i = 0; i < dst;  i++) slots.push({ label: 'DST',  displayLabel: 'DST',            section: 'starters' });
-  for (let i = 0; i < op;   i++) slots.push({ label: 'OP',   displayLabel: 'SuperFlex (OP)', section: 'starters' });
-  for (let i = 0; i < bench; i++) slots.push({ label: 'BN',  displayLabel: 'BN',             section: 'bench' });
+  for (let i = 0; i < qb;    i++) slots.push({ label: 'QB',   displayLabel: 'QB',             section: 'starters' });
+  for (let i = 0; i < rb;    i++) slots.push({ label: 'RB',   displayLabel: 'RB',             section: 'starters' });
+  for (let i = 0; i < wr;    i++) slots.push({ label: 'WR',   displayLabel: 'WR',             section: 'starters' });
+  for (let i = 0; i < te;    i++) slots.push({ label: 'TE',   displayLabel: 'TE',             section: 'starters' });
+  for (let i = 0; i < flex;  i++) slots.push({ label: 'FLEX', displayLabel: 'FLEX',           section: 'starters' });
+  for (let i = 0; i < k;     i++) slots.push({ label: 'K',    displayLabel: 'K',              section: 'starters' });
+  for (let i = 0; i < dst;   i++) slots.push({ label: 'DST',  displayLabel: 'DST',            section: 'starters' });
+  for (let i = 0; i < op;    i++) slots.push({ label: 'OP',   displayLabel: 'SuperFlex (OP)', section: 'starters' });
+  for (let i = 0; i < bench; i++) slots.push({ label: 'BN',   displayLabel: 'BN',             section: 'bench' });
   return slots;
 }
 
-export default function LeagueRosterTab({
-  leagueId, userId, importedMembers, leagueMembers, leagueSettings,
-}: Props) {
-  // Only show teams whose owner has actually joined the league
-  const joinedMembers  = importedMembers.filter(m => m.invitedUserId !== null);
-  const myTeam         = joinedMembers.find(m => m.invitedUserId === userId) ?? null;
-  const defaultMember  = myTeam ?? joinedMembers[0] ?? null;
+function slotFitsPlayer(slotLabel: string, pos: string | null): boolean {
+  if (!pos) return false;
+  if (slotLabel === pos) return true;
+  if (slotLabel === 'BN') return true;
+  if (slotLabel === 'FLEX') return ['RB', 'WR', 'TE'].includes(pos);
+  if (slotLabel === 'OP') return ['QB', 'RB', 'WR', 'TE'].includes(pos);
+  return false;
+}
 
-  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(defaultMember?.id ?? null);
-  const [players, setPlayers]       = useState<RosterPlayer[]>([]);
-  const [loading, setLoading]       = useState(false);
-  const [rosterEmpty, setRosterEmpty] = useState(false);   // true when no players found for any reason
-  const [fetchError, setFetchError] = useState('');
+function assignPlayersToSlots(slots: RosterSlot[], orderedPlayers: RosterPlayer[]): (RosterPlayer | null)[] {
+  const used = new Set<string>();
+  return slots.map(slot => {
+    const match = orderedPlayers.find(p => !used.has(p.id) && slotFitsPlayer(slot.label, p.fantasyPosition));
+    if (match) { used.add(match.id); return match; }
+    return null;
+  });
+}
+
+export default function LeagueRosterTab({
+  leagueId, userId, importedMembers, leagueMembers, leagueSettings, initialMemberId,
+}: Props) {
+  const joinedMembers = importedMembers.filter(m => m.invitedUserId !== null);
+  const myTeam        = joinedMembers.find(m => m.invitedUserId === userId) ?? null;
+
+  const resolveDefault = () => {
+    if (initialMemberId) return joinedMembers.find(m => m.id === initialMemberId) ?? myTeam ?? joinedMembers[0] ?? null;
+    return myTeam ?? joinedMembers[0] ?? null;
+  };
+
+  const [selectedMemberId, setSelectedMemberId] = useState<string | null>(resolveDefault()?.id ?? null);
+  const [players, setPlayers]         = useState<RosterPlayer[]>([]);
+  const [localOrder, setLocalOrder]   = useState<string[]>([]);
+  const [loading, setLoading]         = useState(false);
+  const [rosterEmpty, setRosterEmpty] = useState(false);
+  const [fetchError, setFetchError]   = useState('');
 
   const selectedMember = joinedMembers.find(m => m.id === selectedMemberId) ?? null;
+
+  useEffect(() => {
+    if (initialMemberId) {
+      const match = joinedMembers.find(m => m.id === initialMemberId);
+      if (match) setSelectedMemberId(match.id);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMemberId]);
 
   const loadRoster = useCallback(async (member: ImportedMember) => {
     setLoading(true);
     setPlayers([]);
+    setLocalOrder([]);
     setRosterEmpty(false);
     setFetchError('');
 
@@ -106,29 +139,18 @@ export default function LeagueRosterTab({
       return;
     }
 
-    // Step 1 — find import links for this league
     const { data: links, error: linksErr } = await supabase
       .from('external_league_links')
       .select('id, provider, external_league_id, import_status')
       .eq('league_id', leagueId);
 
-    if (linksErr) {
-      setFetchError('Could not load import data.');
-      setLoading(false);
-      return;
-    }
+    if (linksErr) { setFetchError('Could not load import data.'); setLoading(false); return; }
 
-    // Step 2 — match by provider + external_league_id
     const matchingLink = (links ?? []).find(
       l => l.provider === member.provider && l.external_league_id === member.externalLeagueId
     );
-    if (!matchingLink) {
-      setRosterEmpty(true);
-      setLoading(false);
-      return;
-    }
+    if (!matchingLink) { setRosterEmpty(true); setLoading(false); return; }
 
-    // Step 3 — find the team row
     const { data: teamRow, error: teamErr } = await supabase
       .from('external_league_teams')
       .select('link_id, external_team_id, mapping_status')
@@ -136,60 +158,35 @@ export default function LeagueRosterTab({
       .eq('external_team_id', member.externalTeamId)
       .maybeSingle();
 
-    if (teamErr) {
-      setFetchError('Could not load team data.');
-      setLoading(false);
-      return;
-    }
-    if (!teamRow) {
-      setRosterEmpty(true);
-      setLoading(false);
-      return;
-    }
+    if (teamErr) { setFetchError('Could not load team data.'); setLoading(false); return; }
+    if (!teamRow) { setRosterEmpty(true); setLoading(false); return; }
 
-    // Step 4 — load roster players
     const { data: rosterRows, error: rosterErr } = await supabase
       .from('external_roster_players')
       .select('id, external_player_name, external_position, sports_player_id, resolution_status')
       .eq('link_id', teamRow.link_id)
       .eq('external_team_id', teamRow.external_team_id);
 
-    if (rosterErr) {
-      setFetchError('Could not load roster players.');
-      setLoading(false);
-      return;
-    }
+    if (rosterErr) { setFetchError('Could not load roster players.'); setLoading(false); return; }
+    if (!rosterRows || rosterRows.length === 0) { setRosterEmpty(true); setLoading(false); return; }
 
-    if (!rosterRows || rosterRows.length === 0) {
-      setRosterEmpty(true);
-      setLoading(false);
-      return;
-    }
-
-    // Step 5 — resolve player details
-    const resolvedIds = rosterRows
-      .filter(r => r.sports_player_id)
-      .map(r => r.sports_player_id as string);
-
-    const detailMap = new Map<string, { display_name: string; fantasy_position: string | null; team_abbr: string | null }>();
+    const resolvedIds = rosterRows.filter(r => r.sports_player_id).map(r => r.sports_player_id as string);
+    const detailMap   = new Map<string, { display_name: string; fantasy_position: string | null; team_abbr: string | null }>();
 
     if (resolvedIds.length > 0) {
       const { data: poolRows } = await supabase
         .from('nfl_draft_player_pool')
         .select('id, display_name, fantasy_position, team_abbr')
         .in('id', resolvedIds);
-
       for (const sp of poolRows ?? []) {
         detailMap.set(sp.id, { display_name: sp.display_name, fantasy_position: sp.fantasy_position, team_abbr: sp.team_abbr });
       }
-
       const missingIds = resolvedIds.filter(id => !detailMap.has(id));
       if (missingIds.length > 0) {
         const { data: spRows } = await supabase
           .from('sports_players')
           .select('id, display_name, fantasy_position, team:sports_teams(abbreviation)')
           .in('id', missingIds);
-
         for (const sp of spRows ?? []) {
           detailMap.set(sp.id, {
             display_name:     sp.display_name,
@@ -214,14 +211,14 @@ export default function LeagueRosterTab({
 
     resolved.sort((a, b) => {
       if (a.unresolved !== b.unresolved) return a.unresolved ? 1 : -1;
-      const posOrder = ['QB', 'RB', 'WR', 'TE', 'K', 'DST', 'DEF'];
-      const ai = posOrder.indexOf(a.fantasyPosition ?? '');
-      const bi = posOrder.indexOf(b.fantasyPosition ?? '');
+      const ai = POS_PRIORITY.indexOf(a.fantasyPosition ?? '');
+      const bi = POS_PRIORITY.indexOf(b.fantasyPosition ?? '');
       if (ai !== bi) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
       return a.displayName.localeCompare(b.displayName);
     });
 
     setPlayers(resolved);
+    setLocalOrder(resolved.map(p => p.id));
     setLoading(false);
   }, [leagueId]);
 
@@ -229,12 +226,24 @@ export default function LeagueRosterTab({
     if (selectedMember) loadRoster(selectedMember);
   }, [selectedMember, loadRoster]);
 
-  // Set default selection once joinedMembers arrive without overriding a manual pick
   useEffect(() => {
-    if (!selectedMemberId && defaultMember?.id) {
-      setSelectedMemberId(defaultMember.id);
+    if (!selectedMemberId && (myTeam ?? joinedMembers[0])?.id) {
+      setSelectedMemberId((myTeam ?? joinedMembers[0]).id);
     }
-  }, [selectedMemberId, defaultMember?.id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMemberId, joinedMembers.length]);
+
+  function movePlayer(id: string, dir: -1 | 1) {
+    setLocalOrder(prev => {
+      const idx = prev.indexOf(id);
+      if (idx === -1) return prev;
+      const next = idx + dir;
+      if (next < 0 || next >= prev.length) return prev;
+      const copy = [...prev];
+      [copy[idx], copy[next]] = [copy[next], copy[idx]];
+      return copy;
+    });
+  }
 
   function memberLabel(m: ImportedMember): string {
     const claimed = leagueMembers.find(lm => lm.user_id === m.invitedUserId);
@@ -244,7 +253,6 @@ export default function LeagueRosterTab({
     return m.teamName + suffix;
   }
 
-  // ── No joined members ─────────────────────────────────────────────────────────
   if (joinedMembers.length === 0) {
     return (
       <div style={{ fontFamily: 'system-ui, sans-serif', color: textPrimary }}>
@@ -260,15 +268,17 @@ export default function LeagueRosterTab({
     );
   }
 
+  const playerMap      = new Map(players.map(p => [p.id, p]));
+  const orderedPlayers = localOrder.map(id => playerMap.get(id)).filter(Boolean) as RosterPlayer[];
+  const emptySlots     = buildEmptySlots(leagueSettings);
+  const starterSlots   = emptySlots.filter(s => s.section === 'starters');
+  const benchSlots     = emptySlots.filter(s => s.section === 'bench');
+  const assignments    = players.length > 0 ? assignPlayersToSlots(emptySlots, orderedPlayers) : null;
   const unresolvedCount = players.filter(p => p.unresolved).length;
-  const emptySlots      = buildEmptySlots(leagueSettings);
-  const starterSlots    = emptySlots.filter(s => s.section === 'starters');
-  const benchSlots      = emptySlots.filter(s => s.section === 'bench');
 
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', color: textPrimary }}>
 
-      {/* Team selector — only when more than one joined member */}
       {joinedMembers.length > 1 && (
         <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '14px 16px', marginBottom: '16px' }}>
           <p style={{ margin: '0 0 10px', fontSize: '12px', fontWeight: '600', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -297,10 +307,7 @@ export default function LeagueRosterTab({
         </div>
       )}
 
-      {/* Roster card */}
       <div style={{ background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden' }}>
-
-        {/* Header */}
         <div style={{ padding: '12px 16px', borderBottom: `1px solid ${border}`, display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>
             {selectedMember?.teamName ?? 'Roster'}
@@ -312,159 +319,76 @@ export default function LeagueRosterTab({
           )}
         </div>
 
-        {/* Loading */}
         {loading && (
-          <div style={{ padding: '32px', textAlign: 'center', color: textSecondary, fontSize: '14px' }}>
-            Loading roster...
-          </div>
+          <div style={{ padding: '32px', textAlign: 'center', color: textSecondary, fontSize: '14px' }}>Loading roster...</div>
         )}
 
-        {/* Fetch error */}
         {!loading && fetchError && (
           <div style={{ padding: '16px', color: '#f87171', fontSize: '13px' }}>{fetchError}</div>
         )}
 
-        {/* Empty roster shell — shown when no players found for any reason */}
         {!loading && !fetchError && rosterEmpty && (
-          <>
-            {/* Notice banner */}
-            <div style={{ padding: '10px 16px', background: '#172033', borderBottom: `1px solid ${border}`, fontSize: '12px', color: '#93c5fd' }}>
-              No roster players have been imported for this team yet. The league commissioner can import rosters from the Settings tab &rarr; Import External League Roster.
-            </div>
+          <EmptyRosterShell starterSlots={starterSlots} benchSlots={benchSlots} border={border} textSecondary={textSecondary} />
+        )}
 
-            {/* Starters section */}
-            <div style={{ padding: '8px 16px 2px', borderBottom: `1px solid ${border}` }}>
-              <span style={{ fontSize: '10px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                Starters
-              </span>
-            </div>
-            {starterSlots.map((slot, i) => {
-              const col = posColor(slot.label);
+        {!loading && !fetchError && players.length > 0 && assignments && (
+          <>
+            {unresolvedCount > 0 && (
+              <div style={{ padding: '8px 16px', background: '#1c2840', borderBottom: `1px solid ${border}`, fontSize: '12px', color: '#93c5fd' }}>
+                {unresolvedCount} player{unresolvedCount !== 1 ? 's' : ''} could not be matched and are shown with their imported names.
+              </div>
+            )}
+
+            <SectionHeader label="Starters" border={border} textSecondary={textSecondary} />
+            {starterSlots.map((slot, slotIdx) => {
+              const player    = assignments[slotIdx];
+              const globalIdx = player ? localOrder.indexOf(player.id) : -1;
               return (
-                <div
-                  key={`starter-${i}`}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '9px 16px',
-                    borderBottom: `1px solid ${border}`,
-                    opacity: 0.55,
-                  }}
-                >
-                  <span style={{
-                    minWidth: '36px', padding: '2px 5px', borderRadius: '4px',
-                    fontSize: '10px', fontWeight: '700', textAlign: 'center',
-                    background: col.bg, color: col.text, flexShrink: 0,
-                  }}>
-                    {slot.label}
-                  </span>
-                  {slot.displayLabel !== slot.label ? (
-                    <span style={{ fontSize: '13px', color: textSecondary }}>
-                      {slot.displayLabel}
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: '13px', color: textSecondary, fontStyle: 'italic' }}>
-                      — Empty —
-                    </span>
-                  )}
-                </div>
+                <PlayerSlotRow
+                  key={`starter-${slotIdx}`}
+                  slot={slot}
+                  player={player}
+                  border={border}
+                  textPrimary={textPrimary}
+                  textSecondary={textSecondary}
+                  isLast={false}
+                  canMoveUp={globalIdx > 0}
+                  canMoveDown={globalIdx >= 0 && globalIdx < localOrder.length - 1}
+                  onMoveUp={() => player && movePlayer(player.id, -1)}
+                  onMoveDown={() => player && movePlayer(player.id, 1)}
+                />
               );
             })}
 
-            {/* Bench section */}
             {benchSlots.length > 0 && (
               <>
-                <div style={{ padding: '8px 16px 2px', borderBottom: `1px solid ${border}` }}>
-                  <span style={{ fontSize: '10px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                    Bench
-                  </span>
-                </div>
+                <SectionHeader label="Bench" border={border} textSecondary={textSecondary} />
                 {benchSlots.map((slot, i) => {
-                  const col = posColor(slot.label);
+                  const globalSlotIdx = starterSlots.length + i;
+                  const player        = assignments[globalSlotIdx];
+                  const globalIdx     = player ? localOrder.indexOf(player.id) : -1;
                   return (
-                    <div
+                    <PlayerSlotRow
                       key={`bench-${i}`}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '10px',
-                        padding: '9px 16px',
-                        borderBottom: i < benchSlots.length - 1 ? `1px solid ${border}` : 'none',
-                        opacity: 0.45,
-                      }}
-                    >
-                      <span style={{
-                        minWidth: '36px', padding: '2px 5px', borderRadius: '4px',
-                        fontSize: '10px', fontWeight: '700', textAlign: 'center',
-                        background: col.bg, color: col.text, flexShrink: 0,
-                      }}>
-                        {slot.label}
-                      </span>
-                      <span style={{ fontSize: '13px', color: textSecondary, fontStyle: 'italic' }}>
-                        — Empty —
-                      </span>
-                    </div>
+                      slot={slot}
+                      player={player}
+                      border={border}
+                      textPrimary={textPrimary}
+                      textSecondary={textSecondary}
+                      isLast={i === benchSlots.length - 1}
+                      canMoveUp={globalIdx > 0}
+                      canMoveDown={globalIdx >= 0 && globalIdx < localOrder.length - 1}
+                      onMoveUp={() => player && movePlayer(player.id, -1)}
+                      onMoveDown={() => player && movePlayer(player.id, 1)}
+                    />
                   );
                 })}
               </>
             )}
           </>
         )}
-
-        {/* Unresolved notice (only shown when real players exist) */}
-        {!loading && !rosterEmpty && unresolvedCount > 0 && (
-          <div style={{ padding: '8px 16px', background: '#1c2840', borderBottom: `1px solid ${border}`, fontSize: '12px', color: '#93c5fd' }}>
-            {unresolvedCount} player{unresolvedCount !== 1 ? 's' : ''} could not be matched to the player database and are shown with their imported names.
-          </div>
-        )}
-
-        {/* Imported player rows */}
-        {!loading && !fetchError && players.length > 0 && (
-          <div>
-            {players.map((player, i) => {
-              const col = posColor(player.fantasyPosition);
-              return (
-                <div
-                  key={player.id}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '10px 16px',
-                    borderBottom: i < players.length - 1 ? `1px solid ${border}` : 'none',
-                    background: player.unresolved ? 'rgba(100,116,139,0.06)' : 'transparent',
-                  }}
-                >
-                  <span style={{
-                    minWidth: '36px', padding: '2px 5px', borderRadius: '4px',
-                    fontSize: '10px', fontWeight: '700', textAlign: 'center',
-                    background: col.bg, color: col.text, flexShrink: 0,
-                  }}>
-                    {player.fantasyPosition ?? '—'}
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: '600', fontSize: '14px', color: player.unresolved ? textSecondary : textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {player.displayName}
-                    </div>
-                    {player.teamAbbr && (
-                      <div style={{ fontSize: '11px', color: textSecondary, marginTop: '1px' }}>
-                        {player.teamAbbr}
-                      </div>
-                    )}
-                  </div>
-                  {player.unresolved ? (
-                    <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: '#292524', color: '#a8a29e', flexShrink: 0 }}>
-                      Unresolved
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: '#1c3340', color: '#67e8f9', flexShrink: 0 }}>
-                      Imported
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
       </div>
 
-      {/* No selected team (user has no claimed team in this league) */}
       {!selectedMember && !loading && (
         <div style={{ marginTop: '16px', background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '24px', textAlign: 'center' }}>
           <p style={{ color: textSecondary, margin: 0, fontSize: '14px' }}>You are not connected to an imported team yet.</p>
@@ -473,7 +397,141 @@ export default function LeagueRosterTab({
           </p>
         </div>
       )}
-
     </div>
+  );
+}
+
+function SectionHeader({ label, border, textSecondary }: { label: string; border: string; textSecondary: string }) {
+  return (
+    <div style={{ padding: '8px 16px 2px', borderBottom: `1px solid ${border}`, background: 'rgba(255,255,255,0.02)' }}>
+      <span style={{ fontSize: '10px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function PlayerSlotRow({
+  slot, player, border, textPrimary, textSecondary, isLast,
+  canMoveUp, canMoveDown, onMoveUp, onMoveDown,
+}: {
+  slot: RosterSlot;
+  player: RosterPlayer | null;
+  border: string;
+  textPrimary: string;
+  textSecondary: string;
+  isLast: boolean;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+}) {
+  const col = posColor(slot.label);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: '10px',
+      padding: '9px 16px',
+      borderBottom: isLast ? 'none' : `1px solid ${border}`,
+    }}>
+      <span style={{
+        minWidth: '38px', padding: '2px 5px', borderRadius: '4px',
+        fontSize: '10px', fontWeight: '700', textAlign: 'center',
+        background: col.bg, color: col.text, flexShrink: 0,
+      }}>
+        {slot.label}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {player ? (
+          <>
+            <div style={{
+              fontWeight: '600', fontSize: '14px',
+              color: player.unresolved ? textSecondary : textPrimary,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {player.displayName}
+              {player.unresolved && (
+                <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '4px', background: '#292524', color: '#a8a29e' }}>
+                  Unresolved
+                </span>
+              )}
+            </div>
+            {(player.teamAbbr || player.fantasyPosition) && (
+              <div style={{ fontSize: '11px', color: textSecondary, marginTop: '1px' }}>
+                {[player.fantasyPosition, player.teamAbbr].filter(Boolean).join(' · ')}
+              </div>
+            )}
+          </>
+        ) : (
+          <span style={{ fontSize: '13px', color: textSecondary, fontStyle: 'italic' }}>— Empty —</span>
+        )}
+      </div>
+      {player && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}>
+          <ArrowBtn enabled={canMoveUp} dir="up" onClick={onMoveUp} />
+          <ArrowBtn enabled={canMoveDown} dir="down" onClick={onMoveDown} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ArrowBtn({ enabled, dir, onClick }: { enabled: boolean; dir: 'up' | 'down'; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={!enabled}
+      title={dir === 'up' ? 'Move up' : 'Move down'}
+      style={{
+        width: '22px', height: '20px', padding: 0,
+        background: enabled ? 'rgba(59,130,246,0.15)' : 'transparent',
+        border: `1px solid ${enabled ? '#3b82f6' : '#334155'}`,
+        borderRadius: '3px', cursor: enabled ? 'pointer' : 'default',
+        color: enabled ? '#60a5fa' : '#475569',
+        fontSize: '10px', lineHeight: 1,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      {dir === 'up' ? '▲' : '▼'}
+    </button>
+  );
+}
+
+function EmptyRosterShell({ starterSlots, benchSlots, border, textSecondary }: {
+  starterSlots: RosterSlot[]; benchSlots: RosterSlot[]; border: string; textSecondary: string;
+}) {
+  return (
+    <>
+      <div style={{ padding: '10px 16px', background: '#172033', borderBottom: `1px solid ${border}`, fontSize: '12px', color: '#93c5fd' }}>
+        No roster players have been imported for this team yet. The league commissioner can import rosters from the Settings tab &rarr; Import External League Roster.
+      </div>
+      <div style={{ padding: '8px 16px 2px', borderBottom: `1px solid ${border}` }}>
+        <span style={{ fontSize: '10px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Starters</span>
+      </div>
+      {starterSlots.map((slot, i) => {
+        const col = posColor(slot.label);
+        return (
+          <div key={`es-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 16px', borderBottom: `1px solid ${border}`, opacity: 0.55 }}>
+            <span style={{ minWidth: '38px', padding: '2px 5px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', textAlign: 'center', background: col.bg, color: col.text, flexShrink: 0 }}>{slot.label}</span>
+            <span style={{ fontSize: '13px', color: textSecondary, fontStyle: 'italic' }}>— Empty —</span>
+          </div>
+        );
+      })}
+      {benchSlots.length > 0 && (
+        <>
+          <div style={{ padding: '8px 16px 2px', borderBottom: `1px solid ${border}` }}>
+            <span style={{ fontSize: '10px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Bench</span>
+          </div>
+          {benchSlots.map((slot, i) => {
+            const col = posColor(slot.label);
+            return (
+              <div key={`eb-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 16px', borderBottom: i < benchSlots.length - 1 ? `1px solid ${border}` : 'none', opacity: 0.45 }}>
+                <span style={{ minWidth: '38px', padding: '2px 5px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', textAlign: 'center', background: col.bg, color: col.text, flexShrink: 0 }}>{slot.label}</span>
+                <span style={{ fontSize: '13px', color: textSecondary, fontStyle: 'italic' }}>— Empty —</span>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </>
   );
 }

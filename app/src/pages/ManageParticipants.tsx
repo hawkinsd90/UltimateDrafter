@@ -18,6 +18,7 @@ type LeagueMember = {
   display_name: string | null;
   phone_e164: string | null;
   role: string;
+  draft_order: number | null;
 };
 
 type Participant = {
@@ -64,7 +65,7 @@ export default function ManageParticipants() {
     const [membersRes, existingRes] = await Promise.all([
       supabase
         .from('league_members')
-        .select('id, user_id, display_name, phone_e164, role')
+        .select('id, user_id, display_name, phone_e164, role, draft_order')
         .eq('league_id', draftData.league_id)
         .order('joined_at', { ascending: true }),
       supabase
@@ -95,8 +96,14 @@ export default function ManageParticipants() {
       });
       setParticipants(saved);
     } else {
+      const sortedMembers = [...members].sort((a, b) => {
+        if (a.draft_order != null && b.draft_order != null) return a.draft_order - b.draft_order;
+        if (a.draft_order != null) return -1;
+        if (b.draft_order != null) return 1;
+        return 0;
+      });
       setParticipants(
-        members.map((m, i) => ({
+        sortedMembers.map((m, i) => ({
           memberId: m.id,
           displayName: m.display_name ?? m.phone_e164 ?? 'Member',
           draftPosition: i + 1,
