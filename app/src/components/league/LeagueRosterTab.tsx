@@ -133,6 +133,7 @@ export default function LeagueRosterTab({
   const [rosterEmpty, setRosterEmpty] = useState(false);
   const [fetchError, setFetchError]   = useState('');
   const [draftPicks, setDraftPicks]   = useState<DraftPick[]>([]);
+  const [noDraftYet, setNoDraftYet]   = useState(false);
 
   const { playerDetail, detailLoading, openPlayerDetail, closePlayerDetail } = usePlayerDetail('', userId, null);
 
@@ -155,9 +156,12 @@ export default function LeagueRosterTab({
       .from('drafts')
       .select('id, name, draft_type, status')
       .eq('league_id', leagueId)
-      .in('status', ['pending', 'in_progress']);
+      .in('status', ['pending', 'in_progress', 'paused']);
 
-    if (!draftsData || draftsData.length === 0) return;
+    if (!draftsData || draftsData.length === 0) {
+      setNoDraftYet(true);
+      return;
+    }
 
     const leagueExt = leagueSettings as (LeagueSettings & { default_draft_type?: string; default_rounds?: number }) | null;
     const leagueDraftType = leagueExt?.default_draft_type ?? 'snake';
@@ -511,42 +515,52 @@ export default function LeagueRosterTab({
       </div>
 
       {/* Draft Picks */}
-      {!loading && draftPicks.length > 0 && selectedMember && (
+      {!loading && selectedMember && (noDraftYet || draftPicks.length > 0) && (
         <div style={{ marginTop: '16px', background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', borderBottom: `1px solid ${border}` }}>
             <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>Draft Picks</span>
-            <span style={{ marginLeft: '8px', fontSize: '12px', color: textSecondary }}>Active drafts only</span>
+            {!noDraftYet && (
+              <span style={{ marginLeft: '8px', fontSize: '12px', color: textSecondary }}>Active drafts only</span>
+            )}
           </div>
-          {Array.from(new Set(draftPicks.map(p => p.draftName))).map(draftName => {
-            const picks = draftPicks.filter(p => p.draftName === draftName);
-            return (
-              <div key={draftName} style={{ borderBottom: `1px solid ${border}` }}>
-                <div style={{ padding: '8px 16px 4px', background: 'rgba(255,255,255,0.02)' }}>
-                  <span style={{ fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                    {draftName}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '8px 16px 12px' }}>
-                  {picks.map(pick => (
-                    <div key={`${pick.round}-${pick.pick}`} style={{
-                      padding: '5px 12px', borderRadius: '6px', background: '#0f172a',
-                      border: `1px solid ${border}`, textAlign: 'center', minWidth: '70px',
-                    }}>
-                      <div style={{ fontSize: '10px', color: textSecondary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                        Rd {pick.round}
-                      </div>
-                      <div style={{ fontSize: '15px', fontWeight: '700', color: textPrimary }}>
-                        #{pick.overall}
-                      </div>
-                      <div style={{ fontSize: '10px', color: textSecondary }}>
-                        Pick {pick.pick}
-                      </div>
+          {noDraftYet ? (
+            <div style={{ padding: '20px 16px', color: textSecondary, fontSize: '13px' }}>
+              No active draft found for this league. Create a draft to see pick assignments.
+            </div>
+          ) : (
+            <>
+              {Array.from(new Set(draftPicks.map(p => p.draftName))).map(draftName => {
+                const picks = draftPicks.filter(p => p.draftName === draftName);
+                return (
+                  <div key={draftName} style={{ borderBottom: `1px solid ${border}` }}>
+                    <div style={{ padding: '8px 16px 4px', background: 'rgba(255,255,255,0.02)' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                        {draftName}
+                      </span>
                     </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '8px 16px 12px' }}>
+                      {picks.map(pick => (
+                        <div key={`${pick.round}-${pick.pick}`} style={{
+                          padding: '5px 12px', borderRadius: '6px', background: '#0f172a',
+                          border: `1px solid ${border}`, textAlign: 'center', minWidth: '70px',
+                        }}>
+                          <div style={{ fontSize: '10px', color: textSecondary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                            Rd {pick.round}
+                          </div>
+                          <div style={{ fontSize: '15px', fontWeight: '700', color: textPrimary }}>
+                            #{pick.overall}
+                          </div>
+                          <div style={{ fontSize: '10px', color: textSecondary }}>
+                            Pick {pick.pick}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
         </div>
       )}
 
