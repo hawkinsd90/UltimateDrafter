@@ -25,6 +25,7 @@ type FormData = {
   roster_flex: number;
   roster_k: number;
   roster_dst: number;
+  roster_op: number;
   bench: number;
   allow_trades: boolean;
   allow_pick_trades: boolean;
@@ -45,6 +46,7 @@ function settingsToForm(s: LeagueSettings): FormData {
     roster_flex: s.roster_flex,
     roster_k: s.roster_k,
     roster_dst: s.roster_dst,
+    roster_op: (s as LeagueSettings & { roster_op?: number }).roster_op ?? 0,
     bench: s.bench,
     allow_trades: s.allow_trades,
     allow_pick_trades: s.allow_pick_trades,
@@ -55,7 +57,7 @@ const DEFAULTS: FormData = {
   draft_format: 'snake', pick_timer_seconds: 90, allow_pauses: true,
   drafting_hours_enabled: false, drafting_hours_start: '', drafting_hours_end: '',
   roster_qb: 1, roster_rb: 2, roster_wr: 2, roster_te: 1, roster_flex: 1,
-  roster_k: 1, roster_dst: 1, bench: 6, allow_trades: true, allow_pick_trades: true,
+  roster_k: 1, roster_dst: 1, roster_op: 0, bench: 6, allow_trades: true, allow_pick_trades: true,
 };
 
 const ROSTER_SLOTS = [
@@ -66,6 +68,7 @@ const ROSTER_SLOTS = [
   { key: 'roster_flex', label: 'FLEX' },
   { key: 'roster_k',    label: 'K' },
   { key: 'roster_dst',  label: 'DST' },
+  { key: 'roster_op',   label: 'OP' },
   { key: 'bench',       label: 'Bench' },
 ] as const;
 
@@ -138,7 +141,7 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
             <h3>Roster Settings</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
               {ROSTER_SLOTS.map(({ key, label }) => (
-                <div key={key}><strong>{label}:</strong> {leagueSettings[key]}</div>
+                <div key={key}><strong>{label}:</strong> {(leagueSettings as Record<string, unknown>)[key] as number}</div>
               ))}
             </div>
           </div>
