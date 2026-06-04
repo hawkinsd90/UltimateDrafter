@@ -30,6 +30,13 @@ interface RosterSlot {
   section:      'starters' | 'bench';
 }
 
+interface DraftPick {
+  round: number;
+  pick: number;
+  overall: number;
+  draftName: string;
+}
+
 const card          = '#1e293b';
 const border        = '#334155';
 const textPrimary   = '#f1f5f9';
@@ -98,6 +105,13 @@ function assignPlayersToSlots(slots: RosterSlot[], orderedPlayers: RosterPlayer[
   });
 }
 
+// Movement group: starters each keep their slot label as a group (QB↔QB, RB↔RB, etc.),
+// bench is one free-swap pool. FLEX and OP are each their own group.
+function slotGroup(slot: RosterSlot): string {
+  if (slot.section === 'bench') return 'BN';
+  return slot.label;
+}
+
 export default function LeagueRosterTab({
   leagueId, userId, importedMembers, leagueMembers, leagueSettings, initialMemberId,
 }: Props) {
@@ -115,6 +129,7 @@ export default function LeagueRosterTab({
   const [loading, setLoading]         = useState(false);
   const [rosterEmpty, setRosterEmpty] = useState(false);
   const [fetchError, setFetchError]   = useState('');
+  const [draftPicks, setDraftPicks]   = useState<DraftPick[]>([]);
 
   const selectedMember = joinedMembers.find(m => m.id === selectedMemberId) ?? null;
 
@@ -126,12 +141,55 @@ export default function LeagueRosterTab({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialMemberId]);
 
+  const loadDraftPicks = useCallback(async (member: ImportedMember) => {
+    setDraftPicks([]);
+    if (!member.invitedUserId) return;
+
+    const { data: draftsData } = await supabase
+      .from('drafts')
+      .select('id, name, rounds, num_teams, draft_type, status')
+      .eq('league_id', leagueId)
+      .in('status', ['pending', 'in_progress']);
+
+    if (!draftsData || draftsData.length === 0) return;
+
+    const picks: DraftPick[] = [];
+    for (const draft of draftsData) {
+      const { data: participants } = await supabase
+        .from('draft_participants')
+        .select('user_id, draft_position')
+        .eq('draft_id', draft.id)
+        .order('draft_position', { ascending: true });
+
+      if (!participants) continue;
+      const totalTeams = participants.length || draft.num_teams || 1;
+      const myParticipant = participants.find(p => p.user_id === member.invitedUserId);
+      if (!myParticipant || myParticipant.draft_position == null) continue;
+
+      const myPos = myParticipant.draft_position;
+      const rounds = draft.rounds ?? 15;
+      const isSnake = (draft.draft_type ?? 'snake') === 'snake';
+
+      for (let round = 1; round <= rounds; round++) {
+        const posInRound = isSnake && round % 2 === 0
+          ? totalTeams + 1 - myPos
+          : myPos;
+        const overall = (round - 1) * totalTeams + posInRound;
+        picks.push({ round, pick: posInRound, overall, draftName: draft.name ?? 'Draft' });
+      }
+    }
+
+    setDraftPicks(picks);
+  }, [leagueId]);
+
   const loadRoster = useCallback(async (member: ImportedMember) => {
     setLoading(true);
     setPlayers([]);
     setLocalOrder([]);
     setRosterEmpty(false);
     setFetchError('');
+
+    loadDraftPicks(member);
 
     if (!member.externalTeamId || !member.externalLeagueId) {
       setRosterEmpty(true);
@@ -220,7 +278,7 @@ export default function LeagueRosterTab({
     setPlayers(resolved);
     setLocalOrder(resolved.map(p => p.id));
     setLoading(false);
-  }, [leagueId]);
+  }, [leagueId, loadDraftPicks]);
 
   useEffect(() => {
     if (selectedMember) loadRoster(selectedMember);
@@ -233,14 +291,26 @@ export default function LeagueRosterTab({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMemberId, joinedMembers.length]);
 
-  function movePlayer(id: string, dir: -1 | 1) {
+  // Swap the player in slotIndex with the nearest occupied slot in the same group, in direction dir.
+  function movePlayerInGroup(playerId: string, dir: -1 | 1, slotIndex: number, allSlots: RosterSlot[], allAssignments: (RosterPlayer | null)[]) {
+    const group = slotGroup(allSlots[slotIndex]);
+    let targetSlotIdx = slotIndex + dir;
+    while (targetSlotIdx >= 0 && targetSlotIdx < allSlots.length) {
+      if (slotGroup(allSlots[targetSlotIdx]) !== group) break;
+      if (allAssignments[targetSlotIdx]) break;
+      targetSlotIdx += dir;
+    }
+    if (targetSlotIdx < 0 || targetSlotIdx >= allSlots.length) return;
+    if (slotGroup(allSlots[targetSlotIdx]) !== group) return;
+    const targetPlayer = allAssignments[targetSlotIdx];
+    if (!targetPlayer) return;
+
     setLocalOrder(prev => {
-      const idx = prev.indexOf(id);
-      if (idx === -1) return prev;
-      const next = idx + dir;
-      if (next < 0 || next >= prev.length) return prev;
       const copy = [...prev];
-      [copy[idx], copy[next]] = [copy[next], copy[idx]];
+      const idxA = copy.indexOf(playerId);
+      const idxB = copy.indexOf(targetPlayer.id);
+      if (idxA === -1 || idxB === -1) return prev;
+      [copy[idxA], copy[idxB]] = [copy[idxB], copy[idxA]];
       return copy;
     });
   }
@@ -341,8 +411,22 @@ export default function LeagueRosterTab({
 
             <SectionHeader label="Starters" border={border} textSecondary={textSecondary} />
             {starterSlots.map((slot, slotIdx) => {
-              const player    = assignments[slotIdx];
-              const globalIdx = player ? localOrder.indexOf(player.id) : -1;
+              const player = assignments[slotIdx];
+              const group  = slotGroup(slot);
+              const canUp = !!player && (() => {
+                for (let i = slotIdx - 1; i >= 0; i--) {
+                  if (slotGroup(emptySlots[i]) !== group) break;
+                  if (assignments[i]) return true;
+                }
+                return false;
+              })();
+              const canDown = !!player && (() => {
+                for (let i = slotIdx + 1; i < emptySlots.length; i++) {
+                  if (slotGroup(emptySlots[i]) !== group) break;
+                  if (assignments[i]) return true;
+                }
+                return false;
+              })();
               return (
                 <PlayerSlotRow
                   key={`starter-${slotIdx}`}
@@ -352,10 +436,10 @@ export default function LeagueRosterTab({
                   textPrimary={textPrimary}
                   textSecondary={textSecondary}
                   isLast={false}
-                  canMoveUp={globalIdx > 0}
-                  canMoveDown={globalIdx >= 0 && globalIdx < localOrder.length - 1}
-                  onMoveUp={() => player && movePlayer(player.id, -1)}
-                  onMoveDown={() => player && movePlayer(player.id, 1)}
+                  canMoveUp={canUp}
+                  canMoveDown={canDown}
+                  onMoveUp={() => player && movePlayerInGroup(player.id, -1, slotIdx, emptySlots, assignments)}
+                  onMoveDown={() => player && movePlayerInGroup(player.id, 1, slotIdx, emptySlots, assignments)}
                 />
               );
             })}
@@ -366,7 +450,21 @@ export default function LeagueRosterTab({
                 {benchSlots.map((slot, i) => {
                   const globalSlotIdx = starterSlots.length + i;
                   const player        = assignments[globalSlotIdx];
-                  const globalIdx     = player ? localOrder.indexOf(player.id) : -1;
+                  const group         = slotGroup(slot);
+                  const canUp = !!player && (() => {
+                    for (let j = globalSlotIdx - 1; j >= 0; j--) {
+                      if (slotGroup(emptySlots[j]) !== group) break;
+                      if (assignments[j]) return true;
+                    }
+                    return false;
+                  })();
+                  const canDown = !!player && (() => {
+                    for (let j = globalSlotIdx + 1; j < emptySlots.length; j++) {
+                      if (slotGroup(emptySlots[j]) !== group) break;
+                      if (assignments[j]) return true;
+                    }
+                    return false;
+                  })();
                   return (
                     <PlayerSlotRow
                       key={`bench-${i}`}
@@ -376,10 +474,10 @@ export default function LeagueRosterTab({
                       textPrimary={textPrimary}
                       textSecondary={textSecondary}
                       isLast={i === benchSlots.length - 1}
-                      canMoveUp={globalIdx > 0}
-                      canMoveDown={globalIdx >= 0 && globalIdx < localOrder.length - 1}
-                      onMoveUp={() => player && movePlayer(player.id, -1)}
-                      onMoveDown={() => player && movePlayer(player.id, 1)}
+                      canMoveUp={canUp}
+                      canMoveDown={canDown}
+                      onMoveUp={() => player && movePlayerInGroup(player.id, -1, globalSlotIdx, emptySlots, assignments)}
+                      onMoveDown={() => player && movePlayerInGroup(player.id, 1, globalSlotIdx, emptySlots, assignments)}
                     />
                   );
                 })}
@@ -388,6 +486,46 @@ export default function LeagueRosterTab({
           </>
         )}
       </div>
+
+      {/* Draft Picks */}
+      {!loading && draftPicks.length > 0 && selectedMember && (
+        <div style={{ marginTop: '16px', background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden' }}>
+          <div style={{ padding: '12px 16px', borderBottom: `1px solid ${border}` }}>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>Draft Picks</span>
+            <span style={{ marginLeft: '8px', fontSize: '12px', color: textSecondary }}>Active drafts only</span>
+          </div>
+          {Array.from(new Set(draftPicks.map(p => p.draftName))).map(draftName => {
+            const picks = draftPicks.filter(p => p.draftName === draftName);
+            return (
+              <div key={draftName} style={{ borderBottom: `1px solid ${border}` }}>
+                <div style={{ padding: '8px 16px 4px', background: 'rgba(255,255,255,0.02)' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    {draftName}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '8px 16px 12px' }}>
+                  {picks.map(pick => (
+                    <div key={`${pick.round}-${pick.pick}`} style={{
+                      padding: '5px 12px', borderRadius: '6px', background: '#0f172a',
+                      border: `1px solid ${border}`, textAlign: 'center', minWidth: '70px',
+                    }}>
+                      <div style={{ fontSize: '10px', color: textSecondary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Rd {pick.round}
+                      </div>
+                      <div style={{ fontSize: '15px', fontWeight: '700', color: textPrimary }}>
+                        #{pick.overall}
+                      </div>
+                      <div style={{ fontSize: '10px', color: textSecondary }}>
+                        Pick {pick.pick}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {!selectedMember && !loading && (
         <div style={{ marginTop: '16px', background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '24px', textAlign: 'center' }}>

@@ -11,6 +11,26 @@ type LeagueInvite = Database['public']['Tables']['league_invites']['Row'];
 
 type ExtMember = LeagueMember & { draft_order?: number | null };
 
+interface ExternalLeagueLink {
+  id: string;
+  provider: string;
+  external_league_id: string;
+  external_season: number | null;
+}
+
+interface TeamStanding {
+  externalTeamId: string;
+  teamName: string;
+  externalOwnerId: string | null;
+  wins: number;
+  losses: number;
+  ties: number;
+  pointsFor: number;
+  playoffSeed: number | null;
+  madePlayoffs: boolean;
+  finalStanding: number | null;
+}
+
 interface Props {
   leagueId: string;
   leagueName: string;
@@ -39,6 +59,16 @@ export default function LeagueMembersTab({
   const [draftOrderIds, setDraftOrderIds] = useState<string[]>([]);
   const [savingOrder, setSavingOrder]     = useState(false);
   const [orderSaved, setOrderSaved]       = useState(false);
+
+  // Standings auto-order
+  const [externalLink, setExternalLink]   = useState<ExternalLeagueLink | null | undefined>(undefined);
+  const [swid, setSwid]                   = useState('');
+  const [espnS2, setEspnS2]               = useState('');
+  const [standings, setStandings]         = useState<TeamStanding[] | null>(null);
+  const [draftOrder, setDraftOrder]       = useState<TeamStanding[] | null>(null);
+  const [standingsLoading, setStandingsLoading] = useState(false);
+  const [standingsError, setStandingsError]     = useState('');
+  const [standingsApplied, setStandingsApplied] = useState(false);
 
   // Initialise draft order from members (sorted by draft_order, nulls last)
   useEffect(() => {
@@ -76,6 +106,67 @@ export default function LeagueMembersTab({
     setSavingOrder(false);
     setOrderSaved(true);
     setTimeout(() => setOrderSaved(false), 2500);
+  }
+
+  // Load external link for standings (owner only, if imported members exist)
+  useEffect(() => {
+    if (!isOwner || importedMembers.length === 0) { setExternalLink(null); return; }
+    supabase
+      .from('external_league_links')
+      .select('id, provider, external_league_id, external_season')
+      .eq('league_id', leagueId)
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => setExternalLink(data ?? null));
+  }, [isOwner, leagueId, importedMembers.length]);
+
+  async function fetchStandings() {
+    if (!externalLink) return;
+    setStandingsLoading(true);
+    setStandingsError('');
+    setStandings(null);
+    setDraftOrder(null);
+    setStandingsApplied(false);
+
+    const season = externalLink.external_season ? externalLink.external_season - 1 : new Date().getFullYear() - 1;
+    const body: Record<string, unknown> = {
+      provider: externalLink.provider,
+      leagueId: externalLink.external_league_id,
+      season,
+    };
+    if (externalLink.provider === 'espn' && swid && espnS2) {
+      body.isPrivate = true;
+      body.swid      = swid;
+      body.espnS2    = espnS2;
+    }
+
+    const { data, error } = await supabase.functions.invoke('fetch-league-standings', { body });
+    setStandingsLoading(false);
+    if (error) { setStandingsError(error.message ?? 'Failed to fetch standings'); return; }
+    const result = data as { standings: TeamStanding[]; draftOrder: TeamStanding[] } | { error: string };
+    if ('error' in result) { setStandingsError(result.error); return; }
+    setStandings(result.standings);
+    setDraftOrder(result.draftOrder);
+  }
+
+  function applyStandingsDraftOrder() {
+    if (!draftOrder) return;
+    // Match each standing entry to an imported member by externalTeamId, then to a league member
+    const newOrder: string[] = [];
+    for (const team of draftOrder) {
+      const imported = importedMembers.find(m => m.externalTeamId === team.externalTeamId);
+      if (!imported) continue;
+      const member = members.find(m => m.user_id === imported.invitedUserId);
+      if (member && !newOrder.includes(member.id)) newOrder.push(member.id);
+    }
+    // Append any members not matched (no imported team or unmatched)
+    for (const m of members) {
+      if (!newOrder.includes(m.id)) newOrder.push(m.id);
+    }
+    setDraftOrderIds(newOrder);
+    setOrderSaved(false);
+    setStandingsApplied(true);
+    setTimeout(() => setStandingsApplied(false), 3000);
   }
 
   function normalizeEntry(raw: string): string {
@@ -394,7 +485,7 @@ export default function LeagueMembersTab({
               {orderSaved ? 'Saved!' : savingOrder ? 'Saving…' : 'Save Order'}
             </button>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '20px' }}>
             {draftOrderIds.map((memberId, idx) => {
               const m = memberMap[memberId];
               if (!m) return null;
@@ -414,6 +505,104 @@ export default function LeagueMembersTab({
               );
             })}
           </div>
+
+          {/* Auto-order from standings */}
+          {externalLink && (
+            <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '16px' }}>
+              <h4 style={{ margin: '0 0 4px', fontSize: '14px', color: '#374151' }}>Auto-Order from Previous Season Standings</h4>
+              <p style={{ margin: '0 0 12px', fontSize: '13px', color: '#6b7280', lineHeight: '1.5' }}>
+                Fetches {externalLink.external_season ? externalLink.external_season - 1 : 'previous'} season standings from {externalLink.provider.toUpperCase()} and orders teams worst-to-best (non-playoff teams first, then playoff teams, champion last).
+              </p>
+
+              {externalLink.provider === 'espn' && (
+                <div style={{ marginBottom: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: '140px' }}>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>SWID (optional, private leagues)</label>
+                    <input
+                      type="text" value={swid} onChange={e => setSwid(e.target.value)}
+                      placeholder="{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}"
+                      style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <div style={{ flex: 1, minWidth: '140px' }}>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>espn_s2 (optional, private leagues)</label>
+                    <input
+                      type="text" value={espnS2} onChange={e => setEspnS2(e.target.value)}
+                      placeholder="AEB..."
+                      style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  onClick={fetchStandings}
+                  disabled={standingsLoading}
+                  style={{ padding: '8px 16px', fontSize: '13px', fontWeight: '600', background: standingsLoading ? '#9ca3af' : '#0f766e', color: 'white', border: 'none', borderRadius: '6px', cursor: standingsLoading ? 'not-allowed' : 'pointer' }}
+                >
+                  {standingsLoading ? 'Fetching…' : 'Fetch Standings'}
+                </button>
+                {draftOrder && (
+                  <button
+                    onClick={applyStandingsDraftOrder}
+                    style={{ padding: '8px 16px', fontSize: '13px', fontWeight: '600', background: standingsApplied ? '#059669' : '#2563eb', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                  >
+                    {standingsApplied ? 'Applied!' : 'Apply Draft Order'}
+                  </button>
+                )}
+              </div>
+
+              {standingsError && (
+                <div style={{ marginTop: '10px', padding: '10px 14px', background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '6px', color: '#dc2626', fontSize: '13px' }}>
+                  {standingsError}
+                </div>
+              )}
+
+              {standings && standings.length > 0 && (
+                <div style={{ marginTop: '14px', overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ background: '#f3f4f6' }}>
+                        <th style={{ padding: '6px 10px', textAlign: 'left', color: '#374151', fontWeight: '600', borderBottom: '1px solid #e5e7eb' }}>Team</th>
+                        <th style={{ padding: '6px 10px', textAlign: 'center', color: '#374151', fontWeight: '600', borderBottom: '1px solid #e5e7eb' }}>W-L-T</th>
+                        <th style={{ padding: '6px 10px', textAlign: 'center', color: '#374151', fontWeight: '600', borderBottom: '1px solid #e5e7eb' }}>PF</th>
+                        <th style={{ padding: '6px 10px', textAlign: 'center', color: '#374151', fontWeight: '600', borderBottom: '1px solid #e5e7eb' }}>Playoffs</th>
+                        <th style={{ padding: '6px 10px', textAlign: 'center', color: '#374151', fontWeight: '600', borderBottom: '1px solid #e5e7eb' }}>Draft Pick</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {standings.map((team, i) => {
+                        const draftPos = draftOrder ? draftOrder.findIndex(t => t.externalTeamId === team.externalTeamId) + 1 : null;
+                        return (
+                          <tr key={team.externalTeamId} style={{ background: i % 2 === 0 ? 'white' : '#f9fafb' }}>
+                            <td style={{ padding: '7px 10px', color: '#111827', fontWeight: '500' }}>{team.teamName}</td>
+                            <td style={{ padding: '7px 10px', textAlign: 'center', color: '#374151' }}>{team.wins}-{team.losses}{team.ties > 0 ? `-${team.ties}` : ''}</td>
+                            <td style={{ padding: '7px 10px', textAlign: 'center', color: '#374151' }}>{team.pointsFor.toFixed(1)}</td>
+                            <td style={{ padding: '7px 10px', textAlign: 'center' }}>
+                              {team.madePlayoffs ? (
+                                <span style={{ padding: '2px 8px', borderRadius: '9999px', background: team.finalStanding === 1 ? '#fef3c7' : '#d1fae5', color: team.finalStanding === 1 ? '#92400e' : '#065f46', fontWeight: '600', fontSize: '12px' }}>
+                                  {team.finalStanding === 1 ? 'Champion' : `Seed ${team.playoffSeed ?? ''}`}
+                                </span>
+                              ) : (
+                                <span style={{ color: '#9ca3af', fontSize: '12px' }}>—</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '7px 10px', textAlign: 'center', color: '#2563eb', fontWeight: '700' }}>
+                              {draftPos ?? '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <p style={{ margin: '8px 0 0', fontSize: '12px', color: '#9ca3af' }}>
+                    Note: Only teams matched to league members will be reordered. Unmatched teams will appear at the end.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
