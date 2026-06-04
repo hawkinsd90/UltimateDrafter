@@ -42,8 +42,10 @@ interface DraftPick {
 
 type PicksState =
   | { kind: 'loading' }
-  | { kind: 'no_member' }          // member has no invitedUserId
-  | { kind: 'no_draft_order' }     // member has no draft_order in league_members
+  | { kind: 'no_member' }           // member has no invitedUserId
+  | { kind: 'not_in_league' }       // invitedUserId has no league_members row
+  | { kind: 'no_draft_order' }      // member is in league but has no draft_order
+  | { kind: 'order_incomplete' }    // some other member is missing draft_order
   | { kind: 'projected'; picks: DraftPick[] }
   | { kind: 'actual';    picks: DraftPick[]; draftName: string };
 
@@ -210,21 +212,34 @@ export default function LeagueRosterTab({
     }
 
     // 2. No active draft (or user not in participants) — project from league_members.draft_order
+    // Fetch ALL members so we can count totalTeams accurately and detect incomplete order
     const { data: allMembers } = await supabase
       .from('league_members')
       .select('id, user_id, draft_order')
       .eq('league_id', leagueId)
-      .not('draft_order', 'is', null)
-      .order('draft_order', { ascending: true });
+      .order('draft_order', { ascending: true, nullsFirst: false });
 
-    const myLeagueMember = (allMembers ?? []).find(m => m.user_id === member.invitedUserId);
+    const members        = allMembers ?? [];
+    const totalMembers   = members.length;
+    const myLeagueMember = members.find(m => m.user_id === member.invitedUserId);
 
-    if (!myLeagueMember || myLeagueMember.draft_order == null) {
+    if (!myLeagueMember) {
+      setPicksState({ kind: 'not_in_league' });
+      return;
+    }
+
+    if (myLeagueMember.draft_order == null) {
       setPicksState({ kind: 'no_draft_order' });
       return;
     }
 
-    const totalTeams = allMembers?.length ?? 1;
+    const anyMissingOrder = members.some(m => m.draft_order == null);
+    if (anyMissingOrder) {
+      setPicksState({ kind: 'order_incomplete' });
+      return;
+    }
+
+    const totalTeams = totalMembers;
     const myPos      = myLeagueMember.draft_order;
     const isSnake    = leagueDraftType === 'snake';
     const picks: DraftPick[] = [];
@@ -555,17 +570,33 @@ export default function LeagueRosterTab({
             <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>
               {picksState.kind === 'projected' ? 'Projected Current Draft Picks' : 'Draft Picks'}
             </span>
-            <div style={{ marginTop: '3px', fontSize: '12px', color: textSecondary }}>
-              {picksState.kind === 'projected'
-                ? 'Based on current league draft order and league settings. Create a draft to lock these picks in.'
-                : `Based on this draft's participant order and draft settings.`}
-            </div>
+            {(picksState.kind === 'projected' || picksState.kind === 'actual') && (
+              <div style={{ marginTop: '3px', fontSize: '12px', color: textSecondary }}>
+                {picksState.kind === 'projected'
+                  ? 'Based on current league draft order and league settings. Create a draft to lock these picks in.'
+                  : `Based on this draft's participant order and draft settings.`}
+              </div>
+            )}
           </div>
 
-          {/* No draft order */}
+          {/* Not connected to a league member */}
+          {picksState.kind === 'not_in_league' && (
+            <div style={{ padding: '20px 16px', color: textSecondary, fontSize: '13px' }}>
+              This team is not connected to a league member yet.
+            </div>
+          )}
+
+          {/* No draft order for this team */}
           {picksState.kind === 'no_draft_order' && (
             <div style={{ padding: '20px 16px', color: textSecondary, fontSize: '13px' }}>
               This team does not have a draft order position yet. The commissioner can set draft order from the Members tab.
+            </div>
+          )}
+
+          {/* Some members are missing draft order */}
+          {picksState.kind === 'order_incomplete' && (
+            <div style={{ padding: '20px 16px', color: textSecondary, fontSize: '13px' }}>
+              Draft order is incomplete. The commissioner can finish setting draft order from the Members tab.
             </div>
           )}
 
