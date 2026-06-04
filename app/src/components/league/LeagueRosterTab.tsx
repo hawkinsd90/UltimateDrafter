@@ -153,6 +153,11 @@ export default function LeagueRosterTab({
 
     if (!draftsData || draftsData.length === 0) return;
 
+    // Fall back to league-level defaults when a draft doesn't have explicit values
+    const leagueExt = leagueSettings as (LeagueSettings & { default_draft_type?: string; default_rounds?: number }) | null;
+    const leagueDraftType = leagueExt?.default_draft_type ?? 'snake';
+    const leagueRounds    = leagueExt?.default_rounds ?? 15;
+
     const picks: DraftPick[] = [];
     for (const draft of draftsData) {
       const { data: participants } = await supabase
@@ -166,9 +171,9 @@ export default function LeagueRosterTab({
       const myParticipant = participants.find(p => p.user_id === member.invitedUserId);
       if (!myParticipant || myParticipant.draft_position == null) continue;
 
-      const myPos = myParticipant.draft_position;
-      const rounds = draft.rounds ?? 15;
-      const isSnake = (draft.draft_type ?? 'snake') === 'snake';
+      const myPos  = myParticipant.draft_position;
+      const rounds = draft.rounds ?? leagueRounds;
+      const isSnake = ((draft.draft_type ?? leagueDraftType)) === 'snake';
 
       for (let round = 1; round <= rounds; round++) {
         const posInRound = isSnake && round % 2 === 0
@@ -180,7 +185,7 @@ export default function LeagueRosterTab({
     }
 
     setDraftPicks(picks);
-  }, [leagueId]);
+  }, [leagueId, leagueSettings]);
 
   const loadRoster = useCallback(async (member: ImportedMember) => {
     setLoading(true);

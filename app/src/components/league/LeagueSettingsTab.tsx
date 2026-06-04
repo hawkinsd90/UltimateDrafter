@@ -14,6 +14,8 @@ interface Props {
 type FormData = {
   draft_format: string;
   pick_timer_seconds: number;
+  default_draft_type: string;
+  default_rounds: number;
   allow_pauses: boolean;
   drafting_hours_enabled: boolean;
   drafting_hours_start: string;
@@ -51,6 +53,8 @@ type ExtLeagueSettings = LeagueSettings & {
   max_dst?: number | null;
   allow_future_picks?: boolean;
   future_pick_years?: number;
+  default_draft_type?: string;
+  default_rounds?: number;
 };
 
 function settingsToForm(s: LeagueSettings): FormData {
@@ -58,6 +62,8 @@ function settingsToForm(s: LeagueSettings): FormData {
   return {
     draft_format: s.draft_format,
     pick_timer_seconds: s.pick_timer_seconds,
+    default_draft_type: ext.default_draft_type ?? 'snake',
+    default_rounds: ext.default_rounds ?? 15,
     allow_pauses: s.allow_pauses,
     drafting_hours_enabled: s.drafting_hours_enabled,
     drafting_hours_start: s.drafting_hours_start || '',
@@ -86,7 +92,8 @@ function settingsToForm(s: LeagueSettings): FormData {
 }
 
 const DEFAULTS: FormData = {
-  draft_format: 'snake', pick_timer_seconds: 90, allow_pauses: true,
+  draft_format: 'snake', pick_timer_seconds: 90, default_draft_type: 'snake', default_rounds: 15,
+  allow_pauses: true,
   drafting_hours_enabled: false, drafting_hours_start: '', drafting_hours_end: '',
   roster_qb: 1, roster_rb: 2, roster_wr: 2, roster_te: 1, roster_flex: 1,
   roster_k: 1, roster_dst: 1, roster_op: 0, bench: 6, allow_trades: true, allow_pick_trades: true,
@@ -169,6 +176,8 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               <div><strong>Draft Format:</strong> {leagueSettings.draft_format}</div>
               <div><strong>Pick Timer:</strong> {leagueSettings.pick_timer_seconds === 0 ? 'Unlimited' : `${leagueSettings.pick_timer_seconds} seconds`}</div>
+              <div><strong>Default Draft Type:</strong> {(leagueSettings as ExtLeagueSettings).default_draft_type ?? 'snake'}</div>
+              <div><strong>Default Rounds:</strong> {(leagueSettings as ExtLeagueSettings).default_rounds ?? 15}</div>
               <div><strong>Allow Pauses:</strong> {leagueSettings.allow_pauses ? 'Yes' : 'No'}</div>
               <div><strong>Drafting Hours:</strong> {leagueSettings.drafting_hours_enabled ? `${leagueSettings.drafting_hours_start} - ${leagueSettings.drafting_hours_end}` : 'Not restricted'}</div>
             </div>
@@ -236,6 +245,35 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Pick Timer (seconds, 0 = unlimited)</label>
               <input type="number" min="0" value={formData.pick_timer_seconds} onChange={e => setField('pick_timer_seconds', parseInt(e.target.value) || 0)} style={inputStyle} />
+            </div>
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Default Draft Type</label>
+              <p style={{ margin: '0 0 8px', fontSize: '12px', color: '#6b7280' }}>Used for new drafts and draft pick previews on rosters.</p>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                {(['snake', 'linear'] as const).map(type => (
+                  <button
+                    key={type} type="button"
+                    onClick={() => setField('default_draft_type', type)}
+                    style={{
+                      flex: 1, padding: '10px', borderRadius: '6px', cursor: 'pointer',
+                      border: `2px solid ${formData.default_draft_type === type ? '#2563eb' : '#d1d5db'}`,
+                      background: formData.default_draft_type === type ? '#eff6ff' : 'white',
+                      fontWeight: formData.default_draft_type === type ? '600' : '400',
+                      color: formData.default_draft_type === type ? '#1d4ed8' : '#374151',
+                    }}
+                  >
+                    {type === 'snake' ? 'Snake' : 'Linear'}
+                    <div style={{ fontSize: '11px', color: formData.default_draft_type === type ? '#3b82f6' : '#9ca3af', marginTop: '2px' }}>
+                      {type === 'snake' ? 'Order reverses each round' : 'Same order every round'}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Default Number of Rounds</label>
+              <p style={{ margin: '0 0 8px', fontSize: '12px', color: '#6b7280' }}>Used for new drafts and draft pick previews on rosters.</p>
+              <input type="number" min="1" max="50" value={formData.default_rounds} onChange={e => setField('default_rounds', parseInt(e.target.value) || 15)} style={{ ...inputStyle, maxWidth: '120px' }} />
             </div>
             <div style={{ marginBottom: '20px' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
