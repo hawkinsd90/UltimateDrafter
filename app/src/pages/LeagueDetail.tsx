@@ -7,6 +7,7 @@ import LeagueDraftsTab from '../components/league/LeagueDraftsTab';
 import LeagueMembersTab from '../components/league/LeagueMembersTab';
 import LeagueSettingsTab from '../components/league/LeagueSettingsTab';
 import LeagueRosterTab from '../components/league/LeagueRosterTab';
+import LeagueImportPanel from '../components/league/LeagueImportPanel';
 import type { ImportedMember } from '../components/league/ImportedLeaguematesPanel';
 import type { Database } from '../types/supabase';
 
@@ -252,12 +253,17 @@ export default function LeagueDetail() {
       )}
 
       {safeActiveTab === 'settings' && (
-        <LeagueSettingsTab
-          leagueId={leagueId!}
-          leagueSettings={leagueSettings}
-          isOwner={isOwner}
-          onSaved={loadLeagueData}
-        />
+        <>
+          <LeagueSettingsTab
+            leagueId={leagueId!}
+            leagueSettings={leagueSettings}
+            isOwner={isOwner}
+            onSaved={loadLeagueData}
+          />
+          {isOwner && (
+            <LeagueImportPanel leagueId={leagueId!} onImportComplete={loadLeagueData} />
+          )}
+        </>
       )}
     </div>
   );

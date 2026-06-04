@@ -1,13 +1,12 @@
-// Persists a normalized import into the Phase 1 tables.
-// Uses the service role client throughout — ownership is verified before this runs.
+// Persists a normalized import into the database.
+// Supports two paths:
+//   Draft path  — draftId is set; writes external_league_links (with draft_id),
+//                 draft_scoring_rules, and draft_settings in addition to shared tables.
+//   League path — draftId is null; writes external_league_links (draft_id = null),
+//                 league_imported_members; skips draft_scoring_rules and draft_settings.
 //
-// Flow:
-//   1. Resolve league_id from drafts table (never trusted from client)
-//   2. Upsert external_league_links (reject if locked; re-import clears child rows)
-//   3. Insert external_league_teams
-//   4. Insert external_roster_players (with resolved sports_player_id)
-//   5. Upsert draft_scoring_rules
-//   6. Return ImportSummary
+// leagueId is always pre-resolved and verified by the access layer before this runs.
+// Credentials are never passed here — ownership is re-verified as defense-in-depth.
 
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type {
@@ -19,7 +18,8 @@ import type {
 } from "./types.ts";
 
 export interface SaveImportInput {
-  draftId: string;
+  draftId: string | null;
+  leagueId: string;
   provider: Provider;
   importMode: ImportMode;
   normalized: NormalizedImport;
@@ -31,6 +31,7 @@ export interface SaveImportInput {
 export async function saveImport(input: SaveImportInput): Promise<ImportSummary> {
   const {
     draftId,
+    leagueId,
     provider,
     importMode,
     normalized,
@@ -40,61 +41,61 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
   } = input;
 
   const { league, teams, warnings } = normalized;
+  const isDraftPath = draftId !== null;
 
-  // ── 1. Resolve league_id server-side from drafts table ─────────────────────
-  const { data: draft, error: draftErr } = await adminClient
-    .from("drafts")
-    .select("id, league_id, status")
-    .eq("id", draftId)
-    .maybeSingle();
+  // ── 1. Defense-in-depth: re-verify draft status (draft path only) ──────────
+  if (isDraftPath) {
+    const { data: draft, error: draftErr } = await adminClient
+      .from("drafts")
+      .select("id, league_id, status")
+      .eq("id", draftId)
+      .maybeSingle();
 
-  if (draftErr || !draft) {
-    throw new Error("Draft not found.");
+    if (draftErr || !draft) throw new Error("Draft not found.");
+    if (draft.status !== "pending") throw new Error("Import is only allowed while the draft is pending.");
+    if (draft.league_id !== leagueId) throw new Error("Draft does not belong to the expected league.");
   }
-  if (draft.status !== "pending") {
-    throw new Error("Import is only allowed while the draft is pending.");
-  }
 
-  const leagueId: string = draft.league_id;
-
-  // ── 2. Verify caller owns the league ───────────────────────────────────────
+  // ── 2. Defense-in-depth: re-verify league ownership ────────────────────────
   const { data: leagueRow, error: leagueErr } = await adminClient
     .from("leagues")
     .select("owner_id")
     .eq("id", leagueId)
     .maybeSingle();
 
-  if (leagueErr || !leagueRow) {
-    throw new Error("League not found.");
-  }
-  if (leagueRow.owner_id !== callerUserId) {
-    throw new Error("Only the league owner can import an external league.");
-  }
+  if (leagueErr || !leagueRow) throw new Error("League not found.");
+  if (leagueRow.owner_id !== callerUserId) throw new Error("Only the league owner can import an external league.");
 
-  // ── 3. Check for existing link ─────────────────────────────────────────────
-  const { data: existingLink } = await adminClient
-    .from("external_league_links")
-    .select("id, locked_at")
-    .eq("draft_id", draftId)
-    .maybeSingle();
+  // ── 3. Find existing link ──────────────────────────────────────────────────
+  let existingLink: { id: string; locked_at: string | null } | null = null;
+
+  if (isDraftPath) {
+    const { data } = await adminClient
+      .from("external_league_links")
+      .select("id, locked_at")
+      .eq("draft_id", draftId)
+      .maybeSingle();
+    existingLink = data;
+  } else {
+    const { data } = await adminClient
+      .from("external_league_links")
+      .select("id, locked_at")
+      .eq("league_id", leagueId)
+      .eq("provider", provider)
+      .eq("external_league_id", league.externalLeagueId)
+      .is("draft_id", null)
+      .maybeSingle();
+    existingLink = data;
+  }
 
   if (existingLink?.locked_at) {
-    throw new Error(
-      "This import is locked. Use the re-import flow to replace it."
-    );
+    throw new Error("This import is locked. Use the re-import flow to replace it.");
   }
 
   // ── 4. If re-importing, delete child rows so we can insert fresh ───────────
   if (existingLink) {
-    await adminClient
-      .from("external_roster_players")
-      .delete()
-      .eq("link_id", existingLink.id);
-
-    await adminClient
-      .from("external_league_teams")
-      .delete()
-      .eq("link_id", existingLink.id);
+    await adminClient.from("external_roster_players").delete().eq("link_id", existingLink.id);
+    await adminClient.from("external_league_teams").delete().eq("link_id", existingLink.id);
   }
 
   // ── 5. Upsert external_league_links ────────────────────────────────────────
@@ -110,7 +111,7 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
   };
 
   const linkPayload = {
-    draft_id: draftId,
+    draft_id: draftId ?? null,
     league_id: leagueId,
     provider,
     external_league_id: league.externalLeagueId,
@@ -166,13 +167,8 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
   }));
 
   if (teamRows.length > 0) {
-    const { error: teamErr } = await adminClient
-      .from("external_league_teams")
-      .insert(teamRows);
-
-    if (teamErr) {
-      throw new Error("Failed to insert imported teams: " + teamErr.message);
-    }
+    const { error: teamErr } = await adminClient.from("external_league_teams").insert(teamRows);
+    if (teamErr) throw new Error("Failed to insert imported teams: " + teamErr.message);
   }
 
   // ── 7. Insert external_roster_players ──────────────────────────────────────
@@ -186,53 +182,77 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
     resolution_status: mp.resolutionStatus,
     resolved_at: mp.sportsPlayerId ? new Date().toISOString() : null,
     // external_data holds provider debug info; credentials must never appear here.
-    // The providers are responsible for stripping credentials before populating externalData.
     external_data: mp.externalData ?? null,
   }));
 
   if (rosterRows.length > 0) {
-    // Insert in batches of 500 to stay within payload limits
     const BATCH = 500;
     for (let i = 0; i < rosterRows.length; i += BATCH) {
       const batch = rosterRows.slice(i, i + BATCH);
-      const { error: rosterErr } = await adminClient
-        .from("external_roster_players")
-        .insert(batch);
-
+      const { error: rosterErr } = await adminClient.from("external_roster_players").insert(batch);
       if (rosterErr) {
-        throw new Error(
-          `Failed to insert roster players (batch ${i}–${i + batch.length}): ${rosterErr.message}`
-        );
+        throw new Error(`Failed to insert roster players (batch ${i}–${i + batch.length}): ${rosterErr.message}`);
       }
     }
   }
 
-  // ── 8. Upsert draft_scoring_rules ──────────────────────────────────────────
-  const { error: scoringErr } = await adminClient
-    .from("draft_scoring_rules")
-    .upsert(
-      {
-        draft_id: draftId,
-        link_id: linkId,
-        source: "imported",
-        scoring_type: league.scoringType,
-        raw_scoring: league.rawScoringSettings,
-      },
-      { onConflict: "draft_id" }
-    );
+  // ── 8a. Draft path only: upsert draft_scoring_rules ───────────────────────
+  if (isDraftPath) {
+    const { error: scoringErr } = await adminClient
+      .from("draft_scoring_rules")
+      .upsert(
+        {
+          draft_id: draftId,
+          link_id: linkId,
+          source: "imported",
+          scoring_type: league.scoringType,
+          raw_scoring: league.rawScoringSettings,
+        },
+        { onConflict: "draft_id" }
+      );
 
-  if (scoringErr) {
-    // Non-fatal: warn but don't fail the whole import
-    warnings.push("Could not save scoring rules: " + scoringErr.message);
+    if (scoringErr) {
+      warnings.push("Could not save scoring rules: " + scoringErr.message);
+    }
   }
 
-  // ── 8b. Sync imported roster slot counts to league_settings and draft_settings ─
+  // ── 8b. League path only: sync league_imported_members ────────────────────
+  // This populates the members list so the Roster tab can display per-team
+  // rosters immediately after the league-level import completes.
+  if (!isDraftPath && teams.length > 0) {
+    // Delete existing imported members for this provider/external_league_id combo
+    // to ensure a clean replace on re-import.
+    await adminClient
+      .from("league_imported_members")
+      .delete()
+      .eq("league_id", leagueId)
+      .eq("provider", provider)
+      .eq("external_league_id", league.externalLeagueId);
+
+    const memberRows = teams.map((t) => ({
+      league_id: leagueId,
+      provider,
+      external_league_id: league.externalLeagueId,
+      external_team_id: t.externalTeamId,
+      external_owner_id: t.externalOwnerId ?? null,
+      external_owner_name: t.externalOwnerName ?? null,
+      team_name: t.teamName,
+      invited_user_id: null,
+      invite_id: null,
+    }));
+
+    const { error: membersErr } = await adminClient
+      .from("league_imported_members")
+      .insert(memberRows);
+
+    if (membersErr) {
+      warnings.push("Could not sync league imported members: " + membersErr.message);
+    }
+  }
+
+  // ── 9. Sync roster slots to league_settings (both paths) ──────────────────
   const rs = league.rosterSettings;
 
-  // When the provider supplies explicit per-position limits (ESPN positionLimits), use them
-  // verbatim — null means "no limit" and must NOT be replaced with a derived cap.
-  // When the provider has no concept of per-position caps (Sleeper, missing data), fall back
-  // to a derived cap: starters + flex-eligible slots.
   const maxLimits = rs.hasExplicitPositionLimits
     ? { max_qb: rs.max_qb, max_rb: rs.max_rb, max_wr: rs.max_wr,
         max_te: rs.max_te, max_k:  rs.max_k,  max_dst: rs.max_dst }
@@ -254,7 +274,6 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
     ...maxLimits,
   };
 
-  // Update league_settings — this is the canonical source for the League Roster tab
   const { error: leagueSettingsErr } = await adminClient
     .from("league_settings")
     .update(rosterPayload)
@@ -264,43 +283,31 @@ export async function saveImport(input: SaveImportInput): Promise<ImportSummary>
     warnings.push("Could not update league roster settings: " + leagueSettingsErr.message);
   }
 
-  // Also keep draft_settings in sync for the draft board
-  const { data: existingSettings } = await adminClient
-    .from("draft_settings")
-    .select("draft_id")
-    .eq("draft_id", draftId)
-    .maybeSingle();
-
-  if (existingSettings) {
-    const { error: settingsErr } = await adminClient
+  // ── 10. Draft path only: sync roster slots to draft_settings ──────────────
+  if (isDraftPath) {
+    const { data: existingSettings } = await adminClient
       .from("draft_settings")
-      .update(rosterPayload)
-      .eq("draft_id", draftId);
+      .select("draft_id")
+      .eq("draft_id", draftId)
+      .maybeSingle();
 
-    if (settingsErr) {
-      warnings.push("Could not update draft roster settings: " + settingsErr.message);
-    }
-  } else {
-    const { error: settingsErr } = await adminClient
-      .from("draft_settings")
-      .insert({
-        draft_id:   draftId,
-        created_by: callerUserId,
-        ...rosterPayload,
-      });
-
-    if (settingsErr) {
-      warnings.push("Could not save draft roster settings: " + settingsErr.message);
+    if (existingSettings) {
+      const { error: settingsErr } = await adminClient
+        .from("draft_settings")
+        .update(rosterPayload)
+        .eq("draft_id", draftId);
+      if (settingsErr) warnings.push("Could not update draft roster settings: " + settingsErr.message);
+    } else {
+      const { error: settingsErr } = await adminClient
+        .from("draft_settings")
+        .insert({ draft_id: draftId, created_by: callerUserId, ...rosterPayload });
+      if (settingsErr) warnings.push("Could not save draft roster settings: " + settingsErr.message);
     }
   }
 
-  // ── 9. Build summary ────────────────────────────────────────────────────────
-  const matchedPlayers = mappedPlayers.filter(
-    (p) => p.resolutionStatus === "matched"
-  ).length;
-  const unresolvedPlayers = mappedPlayers.filter(
-    (p) => p.resolutionStatus === "unresolved"
-  ).length;
+  // ── 11. Build summary ──────────────────────────────────────────────────────
+  const matchedPlayers   = mappedPlayers.filter((p) => p.resolutionStatus === "matched").length;
+  const unresolvedPlayers = mappedPlayers.filter((p) => p.resolutionStatus === "unresolved").length;
 
   return {
     success: true,

@@ -34,10 +34,20 @@ export type ProviderParams =
     };
 
 export interface ImportRequest {
+  kind: 'draft';
   draftId: string;
   importMode: ImportMode;
   params: ProviderParams;
 }
+
+export interface LeagueImportRequest {
+  kind: 'league';
+  leagueDbId: string;
+  importMode: ImportMode;
+  params: ProviderParams;
+}
+
+export type AnyImportRequest = ImportRequest | LeagueImportRequest;
 
 // ── Normalized output shape (provider-neutral) ───────────────────────────────
 

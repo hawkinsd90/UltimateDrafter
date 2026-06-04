@@ -2,7 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 import { validateRequest, isValidationError } from "./shared/validation.ts";
-import { verifyImportAccess, isAccessDenied } from "./shared/access.ts";
+import { verifyImportAccess, verifyLeagueImportAccess, isAccessDenied } from "./shared/access.ts";
 import { saveImport } from "./shared/save-import.ts";
 import { mapRosterPlayers } from "./shared/player-mapping.ts";
 import { fetchEspnLeague } from "./providers/espn.ts";
@@ -64,23 +64,38 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: validated.message }, 400);
     }
 
-    const { draftId, importMode, params } = validated;
+    // ── Branch: draft path vs league path ───────────────────────────────────
+    let draftId: string | null = null;
+    let leagueId: string;
 
-    // ── Preflight: verify ownership and draft status before any network call ──
-    const access = await verifyImportAccess(draftId, user.id, adminClient);
-    if (isAccessDenied(access)) {
-      return jsonResponse({ error: access.message }, access.status);
+    if (validated.kind === "draft") {
+      // Draft path — verify via draft record (unchanged behavior)
+      const access = await verifyImportAccess(validated.draftId, user.id, adminClient);
+      if (isAccessDenied(access)) {
+        return jsonResponse({ error: access.message }, access.status);
+      }
+      draftId  = access.draftId;
+      leagueId = access.leagueId;
+    } else {
+      // League path — verify league ownership directly; no draft required
+      const access = await verifyLeagueImportAccess(validated.leagueDbId, user.id, adminClient);
+      if (isAccessDenied(access)) {
+        return jsonResponse({ error: access.message }, access.status);
+      }
+      leagueId = access.leagueId;
     }
+
+    const { importMode, params } = validated;
 
     console.log(JSON.stringify({
       event: "import_start",
+      path: validated.kind,
       draftId,
-      leagueId: access.leagueId,
+      leagueId,
       provider: params.provider,
       importMode,
-      // Safe: boolean presence only for ESPN credentials
       isPrivate: params.provider === "espn" ? params.isPrivate : undefined,
-      hasSwid: params.provider === "espn" && params.isPrivate ? (params.swid.length > 0) : undefined,
+      hasSwid:   params.provider === "espn" && params.isPrivate ? (params.swid.length > 0)   : undefined,
       hasEspnS2: params.provider === "espn" && params.isPrivate ? (params.espnS2.length > 0) : undefined,
     }));
 
@@ -95,6 +110,7 @@ Deno.serve(async (req: Request) => {
 
     console.log(JSON.stringify({
       event: "import_normalized",
+      path: validated.kind,
       provider: params.provider,
       draftId,
       teamCount: normalized.teams.length,
@@ -111,11 +127,12 @@ Deno.serve(async (req: Request) => {
       adminClient
     );
 
-    const matchedCount = mappedPlayers.filter((p) => p.resolutionStatus === "matched").length;
+    const matchedCount   = mappedPlayers.filter((p) => p.resolutionStatus === "matched").length;
     const unresolvedCount = mappedPlayers.filter((p) => p.resolutionStatus === "unresolved").length;
 
     console.log(JSON.stringify({
       event: "import_mapping_complete",
+      path: validated.kind,
       draftId,
       provider: params.provider,
       totalRosterPlayers: mappedPlayers.length,
@@ -124,10 +141,10 @@ Deno.serve(async (req: Request) => {
     }));
 
     // ── Persist to database ─────────────────────────────────────────────────
-    // saveImport re-verifies ownership and draft status server-side.
-    // Credentials are never passed to saveImport.
+    // saveImport re-verifies ownership server-side. Credentials are never passed.
     const summary = await saveImport({
       draftId,
+      leagueId,
       provider: params.provider,
       importMode,
       normalized,
@@ -138,6 +155,7 @@ Deno.serve(async (req: Request) => {
 
     console.log(JSON.stringify({
       event: "import_complete",
+      path: validated.kind,
       draftId,
       linkId: summary.linkId,
       provider: params.provider,

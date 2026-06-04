@@ -1,7 +1,10 @@
 // Input validation for the import-external-league edge function.
 // Validates the raw request body and returns typed params or a clear error string.
+// Supports two paths:
+//   Draft path  — { draftId, provider, leagueId, season, importMode, ... }
+//   League path — { leagueDbId, provider, leagueId, season, importMode, ... }
 
-import type { ImportMode, ImportRequest, Provider, ProviderParams } from "./types.ts";
+import type { AnyImportRequest, ImportMode, Provider, ProviderParams } from "./types.ts";
 
 const VALID_PROVIDERS: Provider[] = ["espn", "sleeper"];
 const VALID_IMPORT_MODES: ImportMode[] = [
@@ -17,17 +20,23 @@ export interface ValidationError {
 
 export function validateRequest(
   body: Record<string, unknown>
-): ImportRequest | ValidationError {
-  const { draftId, provider, leagueId, season, importMode, isPrivate, swid, espnS2 } = body;
+): AnyImportRequest | ValidationError {
+  const { draftId, leagueDbId, provider, leagueId, season, importMode, isPrivate, swid, espnS2 } = body;
 
-  if (typeof draftId !== "string" || draftId.trim() === "") {
-    return error("draftId is required.");
+  const hasDraftId   = typeof draftId    === "string" && draftId.trim()    !== "";
+  const hasLeagueDbId = typeof leagueDbId === "string" && leagueDbId.trim() !== "";
+
+  if (!hasDraftId && !hasLeagueDbId) {
+    return error("Either draftId (draft import) or leagueDbId (league import) is required.");
+  }
+  if (hasDraftId && hasLeagueDbId) {
+    return error("Provide either draftId or leagueDbId, not both.");
   }
   if (!VALID_PROVIDERS.includes(provider as Provider)) {
     return error(`provider must be one of: ${VALID_PROVIDERS.join(", ")}.`);
   }
   if (typeof leagueId !== "string" || leagueId.trim() === "") {
-    return error("leagueId is required.");
+    return error("leagueId (external provider league ID) is required.");
   }
   if (typeof season !== "number" || !Number.isInteger(season) || season < 2000 || season > 2100) {
     return error("season must be an integer year (e.g. 2025).");
@@ -63,7 +72,6 @@ export function validateRequest(
       };
     }
   } else {
-    // Sleeper — no credentials
     params = {
       provider: "sleeper",
       leagueId: leagueId.trim(),
@@ -71,8 +79,18 @@ export function validateRequest(
     };
   }
 
+  if (hasDraftId) {
+    return {
+      kind: "draft",
+      draftId: (draftId as string).trim(),
+      importMode: importMode as ImportMode,
+      params,
+    };
+  }
+
   return {
-    draftId: draftId.trim(),
+    kind: "league",
+    leagueDbId: (leagueDbId as string).trim(),
     importMode: importMode as ImportMode,
     params,
   };

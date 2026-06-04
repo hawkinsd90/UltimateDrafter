@@ -1,6 +1,9 @@
-// Preflight ownership and status check.
-// Called immediately after request validation, before any external provider fetch.
-// saveImport re-checks as defense-in-depth, but this prevents wasting a provider
+// Preflight ownership and status checks.
+// Two paths:
+//   verifyImportAccess      — draft-level import (requires draft ownership + pending status)
+//   verifyLeagueImportAccess — league-level import (requires league ownership, no draft needed)
+//
+// saveImport re-checks as defense-in-depth, but these prevent wasting a provider
 // network call on a request that was never going to be authorized.
 
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
@@ -9,6 +12,10 @@ export interface ImportAccessContext {
   draftId: string;
   leagueId: string;
   draftStatus: string;
+}
+
+export interface LeagueAccessContext {
+  leagueId: string;
 }
 
 export interface AccessDenied {
@@ -67,4 +74,28 @@ export async function verifyImportAccess(
     leagueId: draft.league_id,
     draftStatus: draft.status,
   };
+}
+
+export async function verifyLeagueImportAccess(
+  leagueDbId: string,
+  callerUserId: string,
+  adminClient: SupabaseClient
+): Promise<LeagueAccessContext | AccessDenied> {
+  // league_id comes from the client for the league path, but we verify ownership here.
+  // Never trust the client for authorization — only trust this query result.
+  const { data: league, error: leagueErr } = await adminClient
+    .from("leagues")
+    .select("id, owner_id")
+    .eq("id", leagueDbId)
+    .maybeSingle();
+
+  if (leagueErr || !league) {
+    return { status: 404, message: "League not found." };
+  }
+
+  if (league.owner_id !== callerUserId) {
+    return { status: 403, message: "Only the league owner can import an external league." };
+  }
+
+  return { leagueId: leagueDbId };
 }
