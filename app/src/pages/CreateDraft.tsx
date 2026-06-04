@@ -11,14 +11,16 @@ type LeagueSettings = Database['public']['Tables']['league_settings']['Row'];
 type DraftType = 'snake' | 'linear';
 type PlayerPool = 'all' | 'rookies_only';
 
-interface RosterLimits {
-  max_qb: number | null;
-  max_rb: number | null;
-  max_wr: number | null;
-  max_te: number | null;
-  max_k: number | null;
-  max_dst: number | null;
-}
+type ExtLeagueSettings = LeagueSettings & {
+  roster_op?: number;
+  roster_limits_enabled?: boolean;
+  max_qb?: number | null;
+  max_rb?: number | null;
+  max_wr?: number | null;
+  max_te?: number | null;
+  max_k?: number | null;
+  max_dst?: number | null;
+};
 
 export default function CreateDraft() {
   const { leagueId } = useParams<{ leagueId: string }>();
@@ -30,10 +32,6 @@ export default function CreateDraft() {
   const [draftType, setDraftType] = useState<DraftType>('snake');
   const [playerPool, setPlayerPool] = useState<PlayerPool>('all');
   const [numRounds, setNumRounds] = useState<number | null>(null);
-  const [useRosterLimits, setUseRosterLimits] = useState(false);
-  const [rosterLimits, setRosterLimits] = useState<RosterLimits>({
-    max_qb: null, max_rb: null, max_wr: null, max_te: null, max_k: null, max_dst: null,
-  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -50,16 +48,6 @@ export default function CreateDraft() {
     if (leagueRes.data) setLeague(leagueRes.data);
     if (settingsRes.data) {
       setLeagueSettings(settingsRes.data);
-      // Auto-fill roster limits from league settings
-      const s = settingsRes.data;
-      setRosterLimits({
-        max_qb: s.roster_qb ?? null,
-        max_rb: s.roster_rb ? s.roster_rb + (s.roster_flex ?? 0) : null,
-        max_wr: s.roster_wr ? s.roster_wr + (s.roster_flex ?? 0) : null,
-        max_te: s.roster_te ? s.roster_te + (s.roster_flex ?? 0) : null,
-        max_k: s.roster_k ?? null,
-        max_dst: s.roster_dst ?? null,
-      });
     }
     // If league has imported data, default rounds to null (user sets it)
     if (importedRes.data && importedRes.data.length > 0) {
@@ -138,14 +126,18 @@ export default function CreateDraft() {
         bench: leagueSettings.bench,
         allow_trades: leagueSettings.allow_trades,
         allow_pick_trades: leagueSettings.allow_pick_trades,
-        ...(useRosterLimits ? {
-          max_qb: rosterLimits.max_qb,
-          max_rb: rosterLimits.max_rb,
-          max_wr: rosterLimits.max_wr,
-          max_te: rosterLimits.max_te,
-          max_k: rosterLimits.max_k,
-          max_dst: rosterLimits.max_dst,
-        } : {}),
+        ...(() => {
+          const ext = leagueSettings as ExtLeagueSettings;
+          if (!ext.roster_limits_enabled) return {};
+          return {
+            max_qb:  ext.max_qb  ?? undefined,
+            max_rb:  ext.max_rb  ?? undefined,
+            max_wr:  ext.max_wr  ?? undefined,
+            max_te:  ext.max_te  ?? undefined,
+            max_k:   ext.max_k   ?? undefined,
+            max_dst: ext.max_dst ?? undefined,
+          };
+        })(),
       });
 
     setLoading(false);
@@ -315,61 +307,6 @@ export default function CreateDraft() {
               </button>
             ))}
           </div>
-        </div>
-
-        {/* Roster Limits */}
-        <div style={sectionStyle}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-            <label style={{ ...labelStyle, marginBottom: 0 }}>Roster Limits</label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '7px', cursor: 'pointer', fontSize: '13px', color: '#94a3b8' }}>
-              <input
-                type="checkbox"
-                checked={useRosterLimits}
-                onChange={e => setUseRosterLimits(e.target.checked)}
-                style={{ accentColor: '#3b82f6' }}
-              />
-              Enable
-            </label>
-          </div>
-          <p style={{ margin: '0 0 12px', fontSize: '13px', color: '#64748b', lineHeight: '1.5' }}>
-            Optionally set the maximum number of each position a team can draft.
-            {leagueSettings && !useRosterLimits && ' Values are pre-filled from your league settings.'}
-          </p>
-          {useRosterLimits && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
-              {([
-                { key: 'max_qb', label: 'Max QB' },
-                { key: 'max_rb', label: 'Max RB' },
-                { key: 'max_wr', label: 'Max WR' },
-                { key: 'max_te', label: 'Max TE' },
-                { key: 'max_k', label: 'Max K' },
-                { key: 'max_dst', label: 'Max DST' },
-              ] as { key: keyof RosterLimits; label: string }[]).map(({ key, label }) => (
-                <div key={key}>
-                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', color: '#94a3b8', fontWeight: '600' }}>
-                    {label}
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={20}
-                    value={rosterLimits[key] ?? ''}
-                    onChange={e => setRosterLimits(prev => ({
-                      ...prev,
-                      [key]: e.target.value === '' ? null : parseInt(e.target.value, 10),
-                    }))}
-                    placeholder="No limit"
-                    style={{ ...darkInputStyle, padding: '7px 10px', fontSize: '14px' }}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-          {!useRosterLimits && (
-            <p style={{ margin: 0, fontSize: '12px', color: '#475569', fontStyle: 'italic' }}>
-              No per-position maximums. Teams can draft any number of a given position.
-            </p>
-          )}
         </div>
 
         {error && (

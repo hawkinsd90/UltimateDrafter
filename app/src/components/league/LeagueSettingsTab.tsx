@@ -29,9 +29,28 @@ type FormData = {
   bench: number;
   allow_trades: boolean;
   allow_pick_trades: boolean;
+  roster_limits_enabled: boolean;
+  max_qb: number | null;
+  max_rb: number | null;
+  max_wr: number | null;
+  max_te: number | null;
+  max_k: number | null;
+  max_dst: number | null;
+};
+
+type ExtLeagueSettings = LeagueSettings & {
+  roster_op?: number;
+  roster_limits_enabled?: boolean;
+  max_qb?: number | null;
+  max_rb?: number | null;
+  max_wr?: number | null;
+  max_te?: number | null;
+  max_k?: number | null;
+  max_dst?: number | null;
 };
 
 function settingsToForm(s: LeagueSettings): FormData {
+  const ext = s as ExtLeagueSettings;
   return {
     draft_format: s.draft_format,
     pick_timer_seconds: s.pick_timer_seconds,
@@ -46,10 +65,17 @@ function settingsToForm(s: LeagueSettings): FormData {
     roster_flex: s.roster_flex,
     roster_k: s.roster_k,
     roster_dst: s.roster_dst,
-    roster_op: (s as LeagueSettings & { roster_op?: number }).roster_op ?? 0,
+    roster_op: ext.roster_op ?? 0,
     bench: s.bench,
     allow_trades: s.allow_trades,
     allow_pick_trades: s.allow_pick_trades,
+    roster_limits_enabled: ext.roster_limits_enabled ?? false,
+    max_qb:  ext.max_qb  ?? null,
+    max_rb:  ext.max_rb  ?? null,
+    max_wr:  ext.max_wr  ?? null,
+    max_te:  ext.max_te  ?? null,
+    max_k:   ext.max_k   ?? null,
+    max_dst: ext.max_dst ?? null,
   };
 }
 
@@ -58,6 +84,7 @@ const DEFAULTS: FormData = {
   drafting_hours_enabled: false, drafting_hours_start: '', drafting_hours_end: '',
   roster_qb: 1, roster_rb: 2, roster_wr: 2, roster_te: 1, roster_flex: 1,
   roster_k: 1, roster_dst: 1, roster_op: 0, bench: 6, allow_trades: true, allow_pick_trades: true,
+  roster_limits_enabled: false, max_qb: null, max_rb: null, max_wr: null, max_te: null, max_k: null, max_dst: null,
 };
 
 const ROSTER_SLOTS = [
@@ -155,6 +182,24 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
             ))}
           </div>
         </div>
+        {(leagueSettings as ExtLeagueSettings).roster_limits_enabled && (
+          <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '24px' }}>
+            <h3 style={{ marginTop: '0' }}>Roster Limits</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+              {([
+                { key: 'max_qb',  label: 'Max QB' },
+                { key: 'max_rb',  label: 'Max RB' },
+                { key: 'max_wr',  label: 'Max WR' },
+                { key: 'max_te',  label: 'Max TE' },
+                { key: 'max_k',   label: 'Max K' },
+                { key: 'max_dst', label: 'Max DST' },
+              ] as { key: keyof ExtLeagueSettings; label: string }[]).map(({ key, label }) => {
+                const val = (leagueSettings as ExtLeagueSettings)[key];
+                return <div key={key}><strong>{label}:</strong> {val == null ? 'No limit' : String(val)}</div>;
+              })}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -240,6 +285,47 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
               </div>
             ))}
           </div>
+        </div>
+
+        {/* Roster Limits — per-position max caps, inherited by all drafts */}
+        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '24px', marginBottom: '30px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+            <h3 style={{ margin: '0' }}>Roster Limits</h3>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px', color: '#6b7280', fontWeight: '400' }}>
+              <input type="checkbox" checked={formData.roster_limits_enabled} onChange={e => setField('roster_limits_enabled', e.target.checked)} />
+              Enable
+            </label>
+          </div>
+          <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#6b7280' }}>
+            Optionally cap how many players of each position a team may draft. These limits apply to all drafts in this league.
+          </p>
+          {formData.roster_limits_enabled ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '15px' }}>
+              {([
+                { key: 'max_qb',  label: 'Max QB' },
+                { key: 'max_rb',  label: 'Max RB' },
+                { key: 'max_wr',  label: 'Max WR' },
+                { key: 'max_te',  label: 'Max TE' },
+                { key: 'max_k',   label: 'Max K' },
+                { key: 'max_dst', label: 'Max DST' },
+              ] as { key: keyof FormData; label: string }[]).map(({ key, label }) => (
+                <div key={key}>
+                  <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '500' }}>{label}</label>
+                  <input
+                    type="number" min="0" max="20"
+                    value={(formData[key] as number | null) ?? ''}
+                    placeholder="No limit"
+                    onChange={e => setField(key, e.target.value === '' ? null : parseInt(e.target.value, 10))}
+                    style={inputStyle}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ margin: 0, fontSize: '13px', color: '#9ca3af', fontStyle: 'italic' }}>
+              No per-position maximums. Teams can draft any number of a given position.
+            </p>
+          )}
         </div>
 
         <div style={{ paddingTop: '20px', borderTop: '1px solid #e5e7eb' }}>
