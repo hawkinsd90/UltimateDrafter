@@ -673,30 +673,32 @@ export default function LeagueRosterTab({
             </div>
           )}
 
-          {/* Picks grid — grouped by year when multiple years are present */}
+          {/* Picks grid — grouped by year; current year shows exact pick, future years show round only */}
           {(picksState.kind === 'projected' || picksState.kind === 'actual') && (() => {
             const years = Array.from(new Set(picksState.picks.map(p => p.year))).sort((a, b) => a - b);
+            const currentYear = years[0];
             const multiYear = years.length > 1;
             return (
               <div style={{ padding: '12px 16px' }}>
                 {years.map((year, yi) => {
                   const yearPicks = picksState.picks.filter(p => p.year === year);
+                  const isCurrent = year === currentYear;
                   return (
                     <div key={year} style={{ marginBottom: multiYear && yi < years.length - 1 ? '16px' : 0 }}>
                       {multiYear && (
                         <div style={{
                           fontSize: '11px', fontWeight: '700', color: textSecondary,
                           textTransform: 'uppercase', letterSpacing: '0.06em',
-                          marginBottom: '8px',
-                          paddingBottom: '4px',
+                          marginBottom: '8px', paddingBottom: '4px',
                           borderBottom: `1px solid ${border}`,
                         }}>
                           {year} Picks
                         </div>
                       )}
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                        {yearPicks.map(pick => (
-                          <div key={`${year}-${pick.round}-${pick.pick}`} style={{
+                        {yearPicks.map(pick => isCurrent ? (
+                          // Current year: exact pick number + round + position
+                          <div key={`${year}-${pick.round}`} style={{
                             padding: '6px 12px', borderRadius: '7px', background: '#0f172a',
                             border: `1px solid ${picksState.kind === 'projected' ? '#334155' : '#1d4ed8'}`,
                             textAlign: 'center', minWidth: '72px',
@@ -709,6 +711,20 @@ export default function LeagueRosterTab({
                             </div>
                             <div style={{ fontSize: '10px', color: textSecondary }}>
                               Pick {pick.pick}
+                            </div>
+                          </div>
+                        ) : (
+                          // Future years: year + round only (pick position unknown)
+                          <div key={`${year}-${pick.round}`} style={{
+                            padding: '6px 12px', borderRadius: '7px', background: '#0f172a',
+                            border: '1px solid #1e3a5f',
+                            textAlign: 'center', minWidth: '72px',
+                          }}>
+                            <div style={{ fontSize: '10px', color: '#475569', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                              {year}
+                            </div>
+                            <div style={{ fontSize: '16px', fontWeight: '700', color: '#475569' }}>
+                              Rd {pick.round}
                             </div>
                           </div>
                         ))}
