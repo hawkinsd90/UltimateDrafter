@@ -34,10 +34,11 @@ interface RosterSlot {
 }
 
 interface DraftPick {
-  round:    number;
-  pick:     number;
-  overall:  number;
+  round:     number;
+  pick:      number;
+  overall:   number;
   draftName: string;
+  year:      number;
 }
 
 type PicksState =
@@ -163,9 +164,14 @@ export default function LeagueRosterTab({
       return;
     }
 
-    const leagueExt       = leagueSettings as (LeagueSettings & { default_draft_type?: string; default_rounds?: number }) | null;
-    const leagueDraftType = leagueExt?.default_draft_type ?? 'snake';
-    const leagueRounds    = leagueExt?.default_rounds ?? 15;
+    const leagueExt        = leagueSettings as (LeagueSettings & {
+      default_draft_type?: string; default_rounds?: number;
+      allow_future_picks?: boolean; future_pick_years?: number;
+    }) | null;
+    const leagueDraftType  = leagueExt?.default_draft_type ?? 'snake';
+    const leagueRounds     = leagueExt?.default_rounds ?? 15;
+    const allowFuturePicks = leagueExt?.allow_future_picks ?? false;
+    const futurePickYears  = leagueExt?.future_pick_years ?? 1;
 
     // 1. Check for an active/paused draft — use it as source of truth if found
     const { data: draftsData } = await supabase
@@ -203,7 +209,7 @@ export default function LeagueRosterTab({
         for (let round = 1; round <= rounds; round++) {
           const pick    = isSnake && round % 2 === 0 ? totalTeams + 1 - myPos : myPos;
           const overall = (round - 1) * totalTeams + pick;
-          picks.push({ round, pick, overall, draftName: draft.name ?? 'Draft' });
+          picks.push({ round, pick, overall, draftName: draft.name ?? 'Draft', year: new Date().getFullYear() });
         }
         setPicksState({ kind: 'actual', picks, draftName: draft.name ?? 'Draft' });
         return;
@@ -239,14 +245,19 @@ export default function LeagueRosterTab({
       return;
     }
 
+    const baseYear   = new Date().getFullYear();
     const totalTeams = totalMembers;
     const myPos      = myLeagueMember.draft_order;
     const isSnake    = leagueDraftType === 'snake';
     const picks: DraftPick[] = [];
-    for (let round = 1; round <= leagueRounds; round++) {
-      const pick    = isSnake && round % 2 === 0 ? totalTeams + 1 - myPos : myPos;
-      const overall = (round - 1) * totalTeams + pick;
-      picks.push({ round, pick, overall, draftName: 'Projected' });
+
+    const numYears = allowFuturePicks ? 1 + futurePickYears : 1;
+    for (let yearOffset = 0; yearOffset < numYears; yearOffset++) {
+      for (let round = 1; round <= leagueRounds; round++) {
+        const pick    = isSnake && round % 2 === 0 ? totalTeams + 1 - myPos : myPos;
+        const overall = (round - 1) * totalTeams + pick;
+        picks.push({ round, pick, overall, draftName: 'Projected', year: baseYear + yearOffset });
+      }
     }
     setPicksState({ kind: 'projected', picks });
   }, [leagueId, leagueSettings]);
@@ -630,7 +641,7 @@ export default function LeagueRosterTab({
           {/* Header */}
           <div style={{ padding: '12px 16px', borderBottom: `1px solid ${border}` }}>
             <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>
-              {picksState.kind === 'projected' ? 'Projected Current Draft Picks' : 'Draft Picks'}
+              {picksState.kind === 'projected' ? 'Draft Pick Assets' : 'Draft Picks'}
             </span>
             {(picksState.kind === 'projected' || picksState.kind === 'actual') && (
               <div style={{ marginTop: '3px', fontSize: '12px', color: textSecondary }}>
@@ -662,28 +673,52 @@ export default function LeagueRosterTab({
             </div>
           )}
 
-          {/* Picks grid */}
-          {(picksState.kind === 'projected' || picksState.kind === 'actual') && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '12px 16px' }}>
-              {picksState.picks.map(pick => (
-                <div key={`${pick.round}-${pick.pick}`} style={{
-                  padding: '6px 12px', borderRadius: '7px', background: '#0f172a',
-                  border: `1px solid ${picksState.kind === 'projected' ? '#334155' : '#1d4ed8'}`,
-                  textAlign: 'center', minWidth: '72px',
-                }}>
-                  <div style={{ fontSize: '10px', color: textSecondary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    Rd {pick.round}
-                  </div>
-                  <div style={{ fontSize: '16px', fontWeight: '700', color: picksState.kind === 'projected' ? textSecondary : textPrimary }}>
-                    #{pick.overall}
-                  </div>
-                  <div style={{ fontSize: '10px', color: textSecondary }}>
-                    Pick {pick.pick}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* Picks grid — grouped by year when multiple years are present */}
+          {(picksState.kind === 'projected' || picksState.kind === 'actual') && (() => {
+            const years = Array.from(new Set(picksState.picks.map(p => p.year))).sort((a, b) => a - b);
+            const multiYear = years.length > 1;
+            return (
+              <div style={{ padding: '12px 16px' }}>
+                {years.map((year, yi) => {
+                  const yearPicks = picksState.picks.filter(p => p.year === year);
+                  return (
+                    <div key={year} style={{ marginBottom: multiYear && yi < years.length - 1 ? '16px' : 0 }}>
+                      {multiYear && (
+                        <div style={{
+                          fontSize: '11px', fontWeight: '700', color: textSecondary,
+                          textTransform: 'uppercase', letterSpacing: '0.06em',
+                          marginBottom: '8px',
+                          paddingBottom: '4px',
+                          borderBottom: `1px solid ${border}`,
+                        }}>
+                          {year} Picks
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {yearPicks.map(pick => (
+                          <div key={`${year}-${pick.round}-${pick.pick}`} style={{
+                            padding: '6px 12px', borderRadius: '7px', background: '#0f172a',
+                            border: `1px solid ${picksState.kind === 'projected' ? '#334155' : '#1d4ed8'}`,
+                            textAlign: 'center', minWidth: '72px',
+                          }}>
+                            <div style={{ fontSize: '10px', color: textSecondary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                              Rd {pick.round}
+                            </div>
+                            <div style={{ fontSize: '16px', fontWeight: '700', color: picksState.kind === 'projected' ? textSecondary : textPrimary }}>
+                              #{pick.overall}
+                            </div>
+                            <div style={{ fontSize: '10px', color: textSecondary }}>
+                              Pick {pick.pick}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       )}
 
