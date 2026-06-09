@@ -254,8 +254,8 @@ export default function LeagueRosterTab({
     setActiveDraftId(relevantDraft?.id ?? null);
     setActiveDraftStatus(relevantDraft?.status ?? null);
 
-    // Use draft participant positions for pick display when an active draft exists
-    if (relevantDraft && relevantDraft.status !== 'completed') {
+    // Use draft participant positions for pick display for any draft (active or completed)
+    if (relevantDraft) {
       const [participantsRes, draftSettingsRes] = await Promise.all([
         supabase
           .from('draft_participants')
@@ -283,7 +283,8 @@ export default function LeagueRosterTab({
           const overall = (round - 1) * totalTeams + pick;
           picks.push({ round, pick, overall, draftName: relevantDraft.name ?? 'Draft', year: new Date().getFullYear() });
         }
-        setPicksState({ kind: 'actual', picks, draftName: relevantDraft.name ?? 'Draft' });
+        const draftLabel = relevantDraft.name ?? 'Draft';
+        setPicksState({ kind: 'actual', picks, draftName: draftLabel });
         return;
       }
     }
@@ -801,7 +802,9 @@ export default function LeagueRosterTab({
               <div style={{ marginTop: '3px', fontSize: '12px', color: textSecondary }}>
                 {picksState.kind === 'projected'
                   ? 'Based on current league draft order and league settings. Create a draft to lock these picks in.'
-                  : `Based on this draft's participant order and draft settings.`}
+                  : activeDraftStatus === 'completed'
+                    ? `Based on the completed draft's participant order and draft settings.`
+                    : `Based on this draft's participant order and draft settings.`}
               </div>
             )}
           </div>
