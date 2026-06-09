@@ -11,6 +11,7 @@ type LeagueSettings = Database['public']['Tables']['league_settings']['Row'];
 interface Props {
   leagueId:        string;
   userId:          string;
+  isLeagueOwner:   boolean;
   importedMembers: ImportedMember[];
   leagueMembers:   LeagueMember[];
   leagueSettings:  LeagueSettings | null;
@@ -18,7 +19,8 @@ interface Props {
 }
 
 interface RosterPlayer {
-  id:               string;  // external_roster_players.id
+  id:               string;  // league_roster_players.id (app path) or external_roster_players.id (fallback)
+  lrpId:            string | null; // league_roster_players.id; null in fallback path
   sportsPlayerId:   string | null;
   displayName:      string;
   fantasyPosition:  string | null;
@@ -43,12 +45,23 @@ interface DraftPick {
 
 type PicksState =
   | { kind: 'loading' }
-  | { kind: 'no_member' }           // member has no invitedUserId
-  | { kind: 'not_in_league' }       // invitedUserId has no league_members row
-  | { kind: 'no_draft_order' }      // member is in league but has no draft_order
-  | { kind: 'order_incomplete' }    // some other member is missing draft_order
+  | { kind: 'no_member' }
+  | { kind: 'not_in_league' }
+  | { kind: 'no_draft_order' }
+  | { kind: 'order_incomplete' }
   | { kind: 'projected'; picks: DraftPick[] }
   | { kind: 'actual';    picks: DraftPick[]; draftName: string };
+
+interface TransactionRow {
+  id:                   string;
+  transaction_type:     string;
+  actor_user_id:        string | null;
+  external_player_name: string | null;
+  external_position:    string | null;
+  metadata:             Record<string, unknown>;
+  created_at:           string;
+  league_imported_members: { team_name: string }[] | null;
+}
 
 const card          = '#1e293b';
 const border        = '#334155';
@@ -118,15 +131,24 @@ function assignPlayersToSlots(slots: RosterSlot[], orderedPlayers: RosterPlayer[
   });
 }
 
-// Movement group: starters each keep their slot label as a group (QB↔QB, RB↔RB, etc.),
-// bench is one free-swap pool. FLEX and OP are each their own group.
 function slotGroup(slot: RosterSlot): string {
   if (slot.section === 'bench') return 'BN';
   return slot.label;
 }
 
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1)  return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
 export default function LeagueRosterTab({
-  leagueId, userId, importedMembers, leagueMembers, leagueSettings, initialMemberId,
+  leagueId, userId, isLeagueOwner, importedMembers, leagueMembers, leagueSettings, initialMemberId,
 }: Props) {
   const joinedMembers = importedMembers.filter(m => m.invitedUserId !== null);
   const myTeam        = joinedMembers.find(m => m.invitedUserId === userId) ?? null;
@@ -137,16 +159,28 @@ export default function LeagueRosterTab({
   };
 
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(resolveDefault()?.id ?? null);
-  const [players, setPlayers]         = useState<RosterPlayer[]>([]);
-  const [localOrder, setLocalOrder]   = useState<string[]>([]);
-  const [loading, setLoading]         = useState(false);
-  const [rosterEmpty, setRosterEmpty] = useState(false);
-  const [fetchError, setFetchError]   = useState('');
-  const [picksState, setPicksState]   = useState<PicksState>({ kind: 'loading' });
+  const [players, setPlayers]                   = useState<RosterPlayer[]>([]);
+  const [localOrder, setLocalOrder]             = useState<string[]>([]);
+  const [loading, setLoading]                   = useState(false);
+  const [rosterEmpty, setRosterEmpty]           = useState(false);
+  const [fetchError, setFetchError]             = useState('');
+  const [picksState, setPicksState]             = useState<PicksState>({ kind: 'loading' });
+
+  // Active draft (pending/in_progress/paused) for this league
+  const [activeDraftId, setActiveDraftId]       = useState<string | null>(null);
+
+  // Drop flow
+  const [selectedRosterPlayer, setSelectedRosterPlayer] = useState<RosterPlayer | null>(null);
+  const [dropLoading, setDropLoading]           = useState(false);
+  const [dropError, setDropError]               = useState('');
+
+  // Recent Activity
+  const [transactions, setTransactions]         = useState<TransactionRow[]>([]);
 
   const { playerDetail, detailLoading, openPlayerDetail, closePlayerDetail } = usePlayerDetail('', userId, null);
 
   const selectedMember = joinedMembers.find(m => m.id === selectedMemberId) ?? null;
+  const isOwnTeam      = selectedMember?.invitedUserId === userId;
 
   useEffect(() => {
     if (initialMemberId) {
@@ -155,6 +189,23 @@ export default function LeagueRosterTab({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialMemberId]);
+
+  const loadTransactions = useCallback(async () => {
+    const { data } = await supabase
+      .from('league_roster_transactions')
+      .select(`
+        id, transaction_type, actor_user_id,
+        external_player_name, external_position,
+        metadata, created_at,
+        league_imported_members!imported_member_id(team_name)
+      `)
+      .eq('league_id', leagueId)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (data) setTransactions(data as TransactionRow[]);
+  }, [leagueId]);
+
+  useEffect(() => { loadTransactions(); }, [loadTransactions]);
 
   const loadDraftPicks = useCallback(async (member: ImportedMember) => {
     setPicksState({ kind: 'loading' });
@@ -173,7 +224,7 @@ export default function LeagueRosterTab({
     const allowFuturePicks = leagueExt?.allow_future_picks ?? false;
     const futurePickYears  = leagueExt?.future_pick_years ?? 1;
 
-    // 1. Check for an active/paused draft — use it as source of truth if found
+    // 1. Check for an active/paused draft
     const { data: draftsData } = await supabase
       .from('drafts')
       .select('id, name, draft_type, status')
@@ -182,18 +233,21 @@ export default function LeagueRosterTab({
       .order('created_at', { ascending: false })
       .limit(1);
 
-    if (draftsData && draftsData.length > 0) {
-      const draft = draftsData[0];
+    // Track active draft ID for drop flow
+    const activeDraft = draftsData?.[0] ?? null;
+    setActiveDraftId(activeDraft?.id ?? null);
+
+    if (activeDraft) {
       const [participantsRes, draftSettingsRes] = await Promise.all([
         supabase
           .from('draft_participants')
           .select('user_id, draft_position')
-          .eq('draft_id', draft.id)
+          .eq('draft_id', activeDraft.id)
           .order('draft_position', { ascending: true }),
         supabase
           .from('draft_settings')
           .select('num_rounds, draft_type')
-          .eq('draft_id', draft.id)
+          .eq('draft_id', activeDraft.id)
           .maybeSingle(),
       ]);
 
@@ -204,21 +258,19 @@ export default function LeagueRosterTab({
         const totalTeams = participants.length || 1;
         const myPos      = myParticipant.draft_position;
         const rounds     = draftSettingsRes.data?.num_rounds ?? leagueRounds;
-        const isSnake    = (draftSettingsRes.data?.draft_type ?? draft.draft_type ?? leagueDraftType) === 'snake';
+        const isSnake    = (draftSettingsRes.data?.draft_type ?? activeDraft.draft_type ?? leagueDraftType) === 'snake';
         const picks: DraftPick[] = [];
         for (let round = 1; round <= rounds; round++) {
           const pick    = isSnake && round % 2 === 0 ? totalTeams + 1 - myPos : myPos;
           const overall = (round - 1) * totalTeams + pick;
-          picks.push({ round, pick, overall, draftName: draft.name ?? 'Draft', year: new Date().getFullYear() });
+          picks.push({ round, pick, overall, draftName: activeDraft.name ?? 'Draft', year: new Date().getFullYear() });
         }
-        setPicksState({ kind: 'actual', picks, draftName: draft.name ?? 'Draft' });
+        setPicksState({ kind: 'actual', picks, draftName: activeDraft.name ?? 'Draft' });
         return;
       }
-      // Draft exists but user not yet a participant — fall through to projected
     }
 
-    // 2. No active draft (or user not in participants) — project from league_members.draft_order
-    // Fetch ALL members so we can count totalTeams accurately and detect incomplete order
+    // 2. No active draft — project from league_members.draft_order
     const { data: allMembers } = await supabase
       .from('league_members')
       .select('id, user_id, draft_order')
@@ -229,21 +281,9 @@ export default function LeagueRosterTab({
     const totalMembers   = members.length;
     const myLeagueMember = members.find(m => m.user_id === member.invitedUserId);
 
-    if (!myLeagueMember) {
-      setPicksState({ kind: 'not_in_league' });
-      return;
-    }
-
-    if (myLeagueMember.draft_order == null) {
-      setPicksState({ kind: 'no_draft_order' });
-      return;
-    }
-
-    const anyMissingOrder = members.some(m => m.draft_order == null);
-    if (anyMissingOrder) {
-      setPicksState({ kind: 'order_incomplete' });
-      return;
-    }
+    if (!myLeagueMember) { setPicksState({ kind: 'not_in_league' }); return; }
+    if (myLeagueMember.draft_order == null) { setPicksState({ kind: 'no_draft_order' }); return; }
+    if (members.some(m => m.draft_order == null)) { setPicksState({ kind: 'order_incomplete' }); return; }
 
     const baseYear   = new Date().getFullYear();
     const totalTeams = totalMembers;
@@ -311,6 +351,7 @@ export default function LeagueRosterTab({
         const detail = row.sports_player_id ? detailMap.get(row.sports_player_id) : null;
         return {
           id:               row.id,
+          lrpId:            row.id,  // app-owned path: id IS the lrpId
           sportsPlayerId:   row.sports_player_id ?? null,
           displayName:      detail?.display_name ?? row.external_player_name ?? 'Unknown',
           fantasyPosition:  detail?.fantasy_position ?? row.external_position ?? null,
@@ -320,11 +361,8 @@ export default function LeagueRosterTab({
         };
       });
 
-      // Preserve DB sort_order for app-owned rows — do not re-sort.
-      // Unresolved players are pushed to the end as a stable partition.
       const resolvedPlayers   = resolved.filter(p => !p.unresolved);
       const unresolvedPlayers = resolved.filter(p => p.unresolved);
-
       const ordered = [...resolvedPlayers, ...unresolvedPlayers];
       setPlayers(ordered);
       setLocalOrder(ordered.map(p => p.id));
@@ -401,6 +439,7 @@ export default function LeagueRosterTab({
       const detail = row.sports_player_id ? detailMap.get(row.sports_player_id) : null;
       return {
         id:               row.id,
+        lrpId:            null,  // fallback path: no app-owned row, drop not available
         sportsPlayerId:   row.sports_player_id ?? null,
         displayName:      detail?.display_name ?? row.external_player_name ?? 'Unknown',
         fantasyPosition:  detail?.fantasy_position ?? row.external_position ?? null,
@@ -434,7 +473,64 @@ export default function LeagueRosterTab({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMemberId, joinedMembers.length]);
 
-  // Swap the player in slotIndex with the nearest occupied slot in the same group, in direction dir.
+  // ── Drop flow ──────────────────────────────────────────────────────────────
+
+  function canDropPlayer(player: RosterPlayer): boolean {
+    if (!player.lrpId) return false;                   // fallback path
+    return isOwnTeam || isLeagueOwner;
+  }
+
+  function openPlayerDetailForRoster(player: RosterPlayer) {
+    if (!player.sportsPlayerId) return;
+    setSelectedRosterPlayer(player);
+    openPlayerDetail(player.sportsPlayerId);
+  }
+
+  function handleCloseDetail() {
+    setSelectedRosterPlayer(null);
+    setDropError('');
+    closePlayerDetail();
+  }
+
+  async function handleDropPlayer(player: RosterPlayer) {
+    if (!player.lrpId) return;
+
+    const isCommissionerDrop = isLeagueOwner && selectedMember?.invitedUserId !== userId;
+    const confirmMsg = isCommissionerDrop
+      ? `Commissioner Action: Drop ${player.displayName} from ${selectedMember?.teamName ?? 'this team'}?\n\nThis will remove them from the active roster and record a commissioner transaction.`
+      : `Drop ${player.displayName} from your roster?\n\nThis will remove them from your active roster and record a transaction.`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    setDropLoading(true);
+    setDropError('');
+
+    const { data, error } = await supabase.rpc('drop_league_roster_player', {
+      p_league_roster_player_id: player.lrpId,
+      p_draft_id:                activeDraftId ?? null,
+    });
+
+    setDropLoading(false);
+
+    if (error) {
+      setDropError(error.message ?? 'Failed to drop player.');
+      return;
+    }
+
+    const result = data as { success?: boolean } | null;
+    if (!result?.success) {
+      setDropError('Drop failed. Please try again.');
+      return;
+    }
+
+    // Success: close modal, reload roster + transactions
+    handleCloseDetail();
+    if (selectedMember) loadRoster(selectedMember);
+    loadTransactions();
+  }
+
+  // ── Slot ordering ──────────────────────────────────────────────────────────
+
   function movePlayerInGroup(playerId: string, dir: -1 | 1, slotIndex: number, allSlots: RosterSlot[], allAssignments: (RosterPlayer | null)[]) {
     const group = slotGroup(allSlots[slotIndex]);
     let targetSlotIdx = slotIndex + dir;
@@ -466,6 +562,8 @@ export default function LeagueRosterTab({
     return m.teamName + suffix;
   }
 
+  // ── Render ─────────────────────────────────────────────────────────────────
+
   if (joinedMembers.length === 0) {
     return (
       <div style={{ fontFamily: 'system-ui, sans-serif', color: textPrimary }}>
@@ -488,8 +586,12 @@ export default function LeagueRosterTab({
   const benchSlots     = emptySlots.filter(s => s.section === 'bench');
   const assignments    = players.length > 0 ? assignPlayersToSlots(emptySlots, orderedPlayers) : null;
   const unresolvedCount = players.filter(p => p.unresolved).length;
-  // Only allow movement on your own team
-  const isOwnTeam = selectedMember?.invitedUserId === userId;
+
+  const modalCanDrop = !!(
+    selectedRosterPlayer?.lrpId &&
+    !selectedRosterPlayer.unresolved &&
+    canDropPlayer(selectedRosterPlayer)
+  );
 
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', color: textPrimary }}>
@@ -527,12 +629,25 @@ export default function LeagueRosterTab({
           <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>
             {selectedMember?.teamName ?? 'Roster'}
           </span>
-          {selectedMember && (
-            <span style={{ fontSize: '12px', color: textSecondary }}>
-              Imported from {selectedMember.provider?.toUpperCase()}
-            </span>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {isLeagueOwner && selectedMember && selectedMember.invitedUserId !== userId && (
+              <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 8px', borderRadius: '9999px', background: 'rgba(251,191,36,0.12)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)' }}>
+                Commissioner View
+              </span>
+            )}
+            {selectedMember && (
+              <span style={{ fontSize: '12px', color: textSecondary }}>
+                Imported from {selectedMember.provider?.toUpperCase()}
+              </span>
+            )}
+          </div>
         </div>
+
+        {dropError && (
+          <div style={{ padding: '10px 16px', background: 'rgba(239,68,68,0.1)', borderBottom: `1px solid #ef4444`, fontSize: '13px', color: '#ef4444' }}>
+            {dropError}
+          </div>
+        )}
 
         {loading && (
           <div style={{ padding: '32px', textAlign: 'center', color: textSecondary, fontSize: '14px' }}>Loading roster...</div>
@@ -585,7 +700,9 @@ export default function LeagueRosterTab({
                   canMoveDown={canDown}
                   onMoveUp={() => player && movePlayerInGroup(player.id, -1, slotIdx, emptySlots, assignments)}
                   onMoveDown={() => player && movePlayerInGroup(player.id, 1, slotIdx, emptySlots, assignments)}
-                  onPlayerClick={player?.sportsPlayerId && !player?.unresolved ? () => openPlayerDetail(player.sportsPlayerId!) : undefined}
+                  onPlayerClick={player?.sportsPlayerId && !player?.unresolved ? () => openPlayerDetailForRoster(player) : undefined}
+                  canDropUnresolved={player?.unresolved ? canDropPlayer(player) : false}
+                  onDropUnresolved={player?.unresolved ? () => handleDropPlayer(player) : undefined}
                 />
               );
             })}
@@ -624,7 +741,9 @@ export default function LeagueRosterTab({
                       canMoveDown={canDown}
                       onMoveUp={() => player && movePlayerInGroup(player.id, -1, globalSlotIdx, emptySlots, assignments)}
                       onMoveDown={() => player && movePlayerInGroup(player.id, 1, globalSlotIdx, emptySlots, assignments)}
-                      onPlayerClick={player?.sportsPlayerId && !player?.unresolved ? () => openPlayerDetail(player.sportsPlayerId!) : undefined}
+                      onPlayerClick={player?.sportsPlayerId && !player?.unresolved ? () => openPlayerDetailForRoster(player) : undefined}
+                      canDropUnresolved={player?.unresolved ? canDropPlayer(player) : false}
+                      onDropUnresolved={player?.unresolved ? () => handleDropPlayer(player) : undefined}
                     />
                   );
                 })}
@@ -637,8 +756,6 @@ export default function LeagueRosterTab({
       {/* Draft Picks */}
       {!loading && selectedMember && picksState.kind !== 'loading' && picksState.kind !== 'no_member' && (
         <div style={{ marginTop: '16px', background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden' }}>
-
-          {/* Header */}
           <div style={{ padding: '12px 16px', borderBottom: `1px solid ${border}` }}>
             <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>
               {picksState.kind === 'projected' ? 'Draft Pick Assets' : 'Draft Picks'}
@@ -652,28 +769,16 @@ export default function LeagueRosterTab({
             )}
           </div>
 
-          {/* Not connected to a league member */}
           {picksState.kind === 'not_in_league' && (
-            <div style={{ padding: '20px 16px', color: textSecondary, fontSize: '13px' }}>
-              This team is not connected to a league member yet.
-            </div>
+            <div style={{ padding: '20px 16px', color: textSecondary, fontSize: '13px' }}>This team is not connected to a league member yet.</div>
           )}
-
-          {/* No draft order for this team */}
           {picksState.kind === 'no_draft_order' && (
-            <div style={{ padding: '20px 16px', color: textSecondary, fontSize: '13px' }}>
-              This team does not have a draft order position yet. The commissioner can set draft order from the Members tab.
-            </div>
+            <div style={{ padding: '20px 16px', color: textSecondary, fontSize: '13px' }}>This team does not have a draft order position yet. The commissioner can set draft order from the Members tab.</div>
           )}
-
-          {/* Some members are missing draft order */}
           {picksState.kind === 'order_incomplete' && (
-            <div style={{ padding: '20px 16px', color: textSecondary, fontSize: '13px' }}>
-              Draft order is incomplete. The commissioner can finish setting draft order from the Members tab.
-            </div>
+            <div style={{ padding: '20px 16px', color: textSecondary, fontSize: '13px' }}>Draft order is incomplete. The commissioner can finish setting draft order from the Members tab.</div>
           )}
 
-          {/* Picks grid — grouped by year; current year shows exact pick, future years show round only */}
           {(picksState.kind === 'projected' || picksState.kind === 'actual') && (() => {
             const years = Array.from(new Set(picksState.picks.map(p => p.year))).sort((a, b) => a - b);
             const currentYear = years[0];
@@ -686,46 +791,21 @@ export default function LeagueRosterTab({
                   return (
                     <div key={year} style={{ marginBottom: multiYear && yi < years.length - 1 ? '16px' : 0 }}>
                       {multiYear && (
-                        <div style={{
-                          fontSize: '11px', fontWeight: '700', color: textSecondary,
-                          textTransform: 'uppercase', letterSpacing: '0.06em',
-                          marginBottom: '8px', paddingBottom: '4px',
-                          borderBottom: `1px solid ${border}`,
-                        }}>
+                        <div style={{ fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px', paddingBottom: '4px', borderBottom: `1px solid ${border}` }}>
                           {year} Picks
                         </div>
                       )}
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                         {yearPicks.map(pick => isCurrent ? (
-                          // Current year: exact pick number + round + position
-                          <div key={`${year}-${pick.round}`} style={{
-                            padding: '6px 12px', borderRadius: '7px', background: '#0f172a',
-                            border: `1px solid ${picksState.kind === 'projected' ? '#334155' : '#1d4ed8'}`,
-                            textAlign: 'center', minWidth: '72px',
-                          }}>
-                            <div style={{ fontSize: '10px', color: textSecondary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                              Rd {pick.round}
-                            </div>
-                            <div style={{ fontSize: '16px', fontWeight: '700', color: picksState.kind === 'projected' ? textSecondary : textPrimary }}>
-                              #{pick.overall}
-                            </div>
-                            <div style={{ fontSize: '10px', color: textSecondary }}>
-                              Pick {pick.pick}
-                            </div>
+                          <div key={`${year}-${pick.round}`} style={{ padding: '6px 12px', borderRadius: '7px', background: '#0f172a', border: `1px solid ${picksState.kind === 'projected' ? '#334155' : '#1d4ed8'}`, textAlign: 'center', minWidth: '72px' }}>
+                            <div style={{ fontSize: '10px', color: textSecondary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Rd {pick.round}</div>
+                            <div style={{ fontSize: '16px', fontWeight: '700', color: picksState.kind === 'projected' ? textSecondary : textPrimary }}>#{pick.overall}</div>
+                            <div style={{ fontSize: '10px', color: textSecondary }}>Pick {pick.pick}</div>
                           </div>
                         ) : (
-                          // Future years: year + round only (pick position unknown)
-                          <div key={`${year}-${pick.round}`} style={{
-                            padding: '6px 12px', borderRadius: '7px', background: '#0f172a',
-                            border: '1px solid #1e3a5f',
-                            textAlign: 'center', minWidth: '72px',
-                          }}>
-                            <div style={{ fontSize: '10px', color: '#475569', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                              {year}
-                            </div>
-                            <div style={{ fontSize: '16px', fontWeight: '700', color: '#475569' }}>
-                              Rd {pick.round}
-                            </div>
+                          <div key={`${year}-${pick.round}`} style={{ padding: '6px 12px', borderRadius: '7px', background: '#0f172a', border: '1px solid #1e3a5f', textAlign: 'center', minWidth: '72px' }}>
+                            <div style={{ fontSize: '10px', color: '#475569', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{year}</div>
+                            <div style={{ fontSize: '16px', fontWeight: '700', color: '#475569' }}>Rd {pick.round}</div>
                           </div>
                         ))}
                       </div>
@@ -735,6 +815,66 @@ export default function LeagueRosterTab({
               </div>
             );
           })()}
+        </div>
+      )}
+
+      {/* Recent Activity */}
+      {transactions.length > 0 && (
+        <div style={{ marginTop: '16px', background: card, border: `1px solid ${border}`, borderRadius: '10px', overflow: 'hidden' }}>
+          <div style={{ padding: '12px 16px', borderBottom: `1px solid ${border}` }}>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>Recent Activity</span>
+          </div>
+          {transactions.map((tx, i) => {
+            const isMe    = tx.actor_user_id === userId;
+            const isComm  = tx.metadata?.commissioner_action === true;
+            const team    = (tx.league_imported_members?.[0])?.team_name ?? null;
+            const player  = tx.external_player_name ?? 'Unknown player';
+            const pos     = tx.external_position;
+            return (
+              <div
+                key={tx.id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  padding: '10px 16px',
+                  borderBottom: i < transactions.length - 1 ? `1px solid ${border}` : 'none',
+                }}
+              >
+                <div style={{
+                  width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
+                  background: tx.transaction_type === 'drop' ? 'rgba(239,68,68,0.15)' : 'rgba(59,130,246,0.15)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '12px',
+                  color: tx.transaction_type === 'drop' ? '#ef4444' : '#60a5fa',
+                  fontWeight: '700',
+                }}>
+                  {tx.transaction_type === 'drop' ? '↓' : '↑'}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '13px', fontWeight: '600', color: textPrimary }}>
+                    {player}
+                    {pos && (
+                      <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '4px', background: posColor(pos).bg, color: posColor(pos).text }}>
+                        {pos}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '12px', color: textSecondary, marginTop: '1px' }}>
+                    {tx.transaction_type === 'drop' ? 'Dropped' : tx.transaction_type}
+                    {team && ` from ${team}`}
+                    {isMe && ' · You'}
+                    {isComm && !isMe && (
+                      <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: '700', padding: '1px 6px', borderRadius: '4px', background: 'rgba(251,191,36,0.12)', color: '#fbbf24' }}>
+                        Commissioner
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div style={{ fontSize: '11px', color: '#475569', flexShrink: 0 }}>
+                  {timeAgo(tx.created_at)}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -750,16 +890,18 @@ export default function LeagueRosterTab({
       {/* Player detail modal */}
       <PlayerDetailModal
         detail={playerDetail}
-        loading={detailLoading}
+        loading={detailLoading || dropLoading}
         isOnBoard={false}
         isPicked={false}
         canPick={false}
         showBoardActions={false}
         sourceBadge="Imported"
+        canDrop={modalCanDrop}
+        onDrop={selectedRosterPlayer ? () => handleDropPlayer(selectedRosterPlayer) : undefined}
         onAdd={() => {}}
         onRemove={() => {}}
         onPick={() => {}}
-        onClose={closePlayerDetail}
+        onClose={handleCloseDetail}
       />
     </div>
   );
@@ -778,6 +920,7 @@ function SectionHeader({ label, border, textSecondary }: { label: string; border
 function PlayerSlotRow({
   slot, player, border, textPrimary, textSecondary, isLast,
   canMoveUp, canMoveDown, onMoveUp, onMoveDown, onPlayerClick,
+  canDropUnresolved, onDropUnresolved,
 }: {
   slot: RosterSlot;
   player: RosterPlayer | null;
@@ -789,13 +932,15 @@ function PlayerSlotRow({
   canMoveDown: boolean;
   onMoveUp: () => void;
   onMoveDown: () => void;
-  onPlayerClick?: (sportsPlayerId: string) => void;
+  onPlayerClick?: () => void;
+  canDropUnresolved?: boolean;
+  onDropUnresolved?: () => void;
 }) {
   const col = posColor(slot.label);
   const clickable = !!player && !player.unresolved && !!onPlayerClick;
   return (
     <div
-      onClick={() => clickable && onPlayerClick!(player!.id)}
+      onClick={() => clickable && onPlayerClick!()}
       style={{
         display: 'flex', alignItems: 'center', gap: '10px',
         padding: '9px 16px',
@@ -839,9 +984,26 @@ function PlayerSlotRow({
         )}
       </div>
       {player && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flexShrink: 0 }}>
-          <ArrowBtn enabled={canMoveUp} dir="up" onClick={e => { e.stopPropagation(); onMoveUp(); }} />
-          <ArrowBtn enabled={canMoveDown} dir="down" onClick={e => { e.stopPropagation(); onMoveDown(); }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+          {/* Drop button for unresolved players (resolved players use the modal) */}
+          {player.unresolved && canDropUnresolved && onDropUnresolved && (
+            <button
+              onClick={e => { e.stopPropagation(); onDropUnresolved(); }}
+              title="Drop player"
+              style={{
+                padding: '2px 8px', fontSize: '11px', fontWeight: '700',
+                background: 'rgba(239,68,68,0.1)', color: '#ef4444',
+                border: '1px solid rgba(239,68,68,0.4)', borderRadius: '4px',
+                cursor: 'pointer',
+              }}
+            >
+              Drop
+            </button>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <ArrowBtn enabled={canMoveUp} dir="up" onClick={e => { e.stopPropagation(); onMoveUp(); }} />
+            <ArrowBtn enabled={canMoveDown} dir="down" onClick={e => { e.stopPropagation(); onMoveDown(); }} />
+          </div>
         </div>
       )}
     </div>

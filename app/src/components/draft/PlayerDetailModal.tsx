@@ -62,6 +62,9 @@ export interface PlayerDetailModalProps {
   showBoardActions?: boolean;
   // Optional override badge shown in the header (e.g. 'Imported' from My Team)
   sourceBadge?: 'Drafted' | 'Imported' | null;
+  // Roster drop — only shown on the league roster tab for active players
+  canDrop?: boolean;
+  onDrop?: () => void;
   onAdd: (id: string) => void;
   onRemove: (rankingId: string) => void;
   onPick: (id: string) => void;
@@ -275,6 +278,8 @@ export default function PlayerDetailModal({
   detail, loading, isOnBoard, isPicked, canPick,
   showBoardActions = true,
   sourceBadge,
+  canDrop,
+  onDrop,
   onAdd, onRemove, onPick, onClose,
 }: PlayerDetailModalProps) {
   useEffect(() => { ensureStyles(); }, []);
@@ -440,6 +445,25 @@ export default function PlayerDetailModal({
                     Remove from Board
                   </button>
                 )}
+              </div>
+            )}
+
+            {/* Drop button — shown independently of board actions, only when canDrop */}
+            {canDrop && onDrop && (
+              <div style={{ marginBottom: '20px' }}>
+                <button
+                  className="player-detail-action-btn"
+                  onClick={onDrop}
+                  style={{
+                    ...btnBase,
+                    width: '100%',
+                    background: 'rgba(239,68,68,0.08)',
+                    color: '#ef4444',
+                    border: '1px solid #ef4444',
+                  }}
+                >
+                  Drop Player
+                </button>
               </div>
             )}
 

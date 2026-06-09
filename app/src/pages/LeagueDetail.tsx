@@ -254,6 +254,7 @@ export default function LeagueDetail() {
         <LeagueRosterTab
           leagueId={leagueId!}
           userId={userId}
+          isLeagueOwner={isOwner}
           importedMembers={importedMembers}
           leagueMembers={members}
           leagueSettings={leagueSettings}
