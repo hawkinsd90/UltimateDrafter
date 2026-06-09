@@ -166,8 +166,11 @@ export default function LeagueRosterTab({
   const [fetchError, setFetchError]             = useState('');
   const [picksState, setPicksState]             = useState<PicksState>({ kind: 'loading' });
 
-  // Active draft (pending/in_progress/paused) for this league
-  const [activeDraftId, setActiveDraftId]       = useState<string | null>(null);
+  // Most-relevant draft for this league — used for drop context.
+  // pending/in_progress/paused → during-draft drop (exclusion removed immediately)
+  // completed (no active draft) → post-draft cleanup drop (exclusion untouched)
+  const [activeDraftId, setActiveDraftId]         = useState<string | null>(null);
+  const [activeDraftStatus, setActiveDraftStatus] = useState<string | null>(null);
 
   // Drop flow
   const [selectedRosterPlayer, setSelectedRosterPlayer] = useState<RosterPlayer | null>(null);
@@ -224,8 +227,10 @@ export default function LeagueRosterTab({
     const allowFuturePicks = leagueExt?.allow_future_picks ?? false;
     const futurePickYears  = leagueExt?.future_pick_years ?? 1;
 
-    // 1. Check for an active/paused draft
-    const { data: draftsData } = await supabase
+    // 1. Find the most-relevant draft: active first, then most-recent completed.
+    //    Active draft is used for pick display AND for the drop exclusion context.
+    //    Completed draft (no active) is used only for the drop cleanup context.
+    const { data: activeDrafts } = await supabase
       .from('drafts')
       .select('id, name, draft_type, status')
       .eq('league_id', leagueId)
@@ -233,21 +238,34 @@ export default function LeagueRosterTab({
       .order('created_at', { ascending: false })
       .limit(1);
 
-    // Track active draft ID for drop flow
-    const activeDraft = draftsData?.[0] ?? null;
-    setActiveDraftId(activeDraft?.id ?? null);
+    let relevantDraft = activeDrafts?.[0] ?? null;
 
-    if (activeDraft) {
+    if (!relevantDraft) {
+      const { data: completedDrafts } = await supabase
+        .from('drafts')
+        .select('id, name, draft_type, status')
+        .eq('league_id', leagueId)
+        .eq('status', 'completed')
+        .order('created_at', { ascending: false })
+        .limit(1);
+      relevantDraft = completedDrafts?.[0] ?? null;
+    }
+
+    setActiveDraftId(relevantDraft?.id ?? null);
+    setActiveDraftStatus(relevantDraft?.status ?? null);
+
+    // Use draft participant positions for pick display when an active draft exists
+    if (relevantDraft && relevantDraft.status !== 'completed') {
       const [participantsRes, draftSettingsRes] = await Promise.all([
         supabase
           .from('draft_participants')
           .select('user_id, draft_position')
-          .eq('draft_id', activeDraft.id)
+          .eq('draft_id', relevantDraft.id)
           .order('draft_position', { ascending: true }),
         supabase
           .from('draft_settings')
           .select('num_rounds, draft_type')
-          .eq('draft_id', activeDraft.id)
+          .eq('draft_id', relevantDraft.id)
           .maybeSingle(),
       ]);
 
@@ -258,19 +276,21 @@ export default function LeagueRosterTab({
         const totalTeams = participants.length || 1;
         const myPos      = myParticipant.draft_position;
         const rounds     = draftSettingsRes.data?.num_rounds ?? leagueRounds;
-        const isSnake    = (draftSettingsRes.data?.draft_type ?? activeDraft.draft_type ?? leagueDraftType) === 'snake';
+        const isSnake    = (draftSettingsRes.data?.draft_type ?? relevantDraft.draft_type ?? leagueDraftType) === 'snake';
         const picks: DraftPick[] = [];
         for (let round = 1; round <= rounds; round++) {
           const pick    = isSnake && round % 2 === 0 ? totalTeams + 1 - myPos : myPos;
           const overall = (round - 1) * totalTeams + pick;
-          picks.push({ round, pick, overall, draftName: activeDraft.name ?? 'Draft', year: new Date().getFullYear() });
+          picks.push({ round, pick, overall, draftName: relevantDraft.name ?? 'Draft', year: new Date().getFullYear() });
         }
-        setPicksState({ kind: 'actual', picks, draftName: activeDraft.name ?? 'Draft' });
+        setPicksState({ kind: 'actual', picks, draftName: relevantDraft.name ?? 'Draft' });
         return;
       }
     }
 
-    // 2. No active draft — project from league_members.draft_order
+    // 2. No active draft (or member not in it) — project from league_members.draft_order.
+    //    Future years, if enabled, show generic round labels only (no exact pick numbers
+    //    because future draft order is not finalized).
     const { data: allMembers } = await supabase
       .from('league_members')
       .select('id, user_id, draft_order')
@@ -291,14 +311,22 @@ export default function LeagueRosterTab({
     const isSnake    = leagueDraftType === 'snake';
     const picks: DraftPick[] = [];
 
-    const numYears = allowFuturePicks ? 1 + futurePickYears : 1;
-    for (let yearOffset = 0; yearOffset < numYears; yearOffset++) {
-      for (let round = 1; round <= leagueRounds; round++) {
-        const pick    = isSnake && round % 2 === 0 ? totalTeams + 1 - myPos : myPos;
-        const overall = (round - 1) * totalTeams + pick;
-        picks.push({ round, pick, overall, draftName: 'Projected', year: baseYear + yearOffset });
+    // Current year: exact projected pick numbers
+    for (let round = 1; round <= leagueRounds; round++) {
+      const pick    = isSnake && round % 2 === 0 ? totalTeams + 1 - myPos : myPos;
+      const overall = (round - 1) * totalTeams + pick;
+      picks.push({ round, pick, overall, draftName: 'Projected', year: baseYear });
+    }
+
+    // Future years: generic read-only labels only (no exact numbers — order not finalized)
+    if (allowFuturePicks) {
+      for (let yo = 1; yo <= futurePickYears; yo++) {
+        for (let round = 1; round <= leagueRounds; round++) {
+          picks.push({ round, pick: 0, overall: 0, draftName: 'Future', year: baseYear + yo });
+        }
       }
     }
+
     setPicksState({ kind: 'projected', picks });
   }, [leagueId, leagueSettings]);
 
@@ -496,11 +524,20 @@ export default function LeagueRosterTab({
     if (!player.lrpId) return;
 
     const isCommissionerDrop = isLeagueOwner && selectedMember?.invitedUserId !== userId;
-    const confirmMsg = isCommissionerDrop
-      ? `Commissioner Action: Drop ${player.displayName} from ${selectedMember?.teamName ?? 'this team'}?\n\nThis will remove them from the active roster and record a commissioner transaction.`
-      : `Drop ${player.displayName} from your roster?\n\nThis will remove them from your active roster and record a transaction.`;
+    const isPostDraftCleanup = activeDraftStatus === 'completed';
+    const isDuringDraft      = activeDraftStatus === 'pending' || activeDraftStatus === 'in_progress' || activeDraftStatus === 'paused';
 
-    if (!window.confirm(confirmMsg)) return;
+    const contextNote = isPostDraftCleanup
+      ? 'This will remove the player from the active roster for roster cleanup/export prep. Draft history will not be changed.'
+      : isDuringDraft
+        ? 'This may make the player available in the draft pool if eligible.'
+        : 'This will remove the player from the active roster and record a transaction.';
+
+    const who = isCommissionerDrop
+      ? `Commissioner Action: Drop ${player.displayName} from ${selectedMember?.teamName ?? 'this team'}?`
+      : `Drop ${player.displayName} from your roster?`;
+
+    if (!window.confirm(`${who}\n\n${contextNote}`)) return;
 
     setDropLoading(true);
     setDropError('');
@@ -825,11 +862,12 @@ export default function LeagueRosterTab({
             <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>Recent Activity</span>
           </div>
           {transactions.map((tx, i) => {
-            const isMe    = tx.actor_user_id === userId;
-            const isComm  = tx.metadata?.commissioner_action === true;
-            const team    = (tx.league_imported_members?.[0])?.team_name ?? null;
-            const player  = tx.external_player_name ?? 'Unknown player';
-            const pos     = tx.external_position;
+            const isMe      = tx.actor_user_id === userId;
+            const isComm    = tx.metadata?.commissioner_action === true;
+            const isCleanup = tx.metadata?.post_draft_cleanup === true;
+            const team      = (tx.league_imported_members?.[0])?.team_name ?? null;
+            const player    = tx.external_player_name ?? 'Unknown player';
+            const pos       = tx.external_position;
             return (
               <div
                 key={tx.id}
@@ -862,6 +900,11 @@ export default function LeagueRosterTab({
                     {tx.transaction_type === 'drop' ? 'Dropped' : tx.transaction_type}
                     {team && ` from ${team}`}
                     {isMe && ' · You'}
+                    {isCleanup && (
+                      <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: '700', padding: '1px 6px', borderRadius: '4px', background: 'rgba(148,163,184,0.12)', color: '#94a3b8' }}>
+                        Cleanup
+                      </span>
+                    )}
                     {isComm && !isMe && (
                       <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: '700', padding: '1px 6px', borderRadius: '4px', background: 'rgba(251,191,36,0.12)', color: '#fbbf24' }}>
                         Commissioner
