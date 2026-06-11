@@ -193,7 +193,36 @@ export function usePlayerDetail(
     if (pickRes.error)        console.warn('[usePlayerDetail] pickRes:', pickRes.error.message);
     if (boardRes.error)       console.warn('[usePlayerDetail] boardRes:', boardRes.error.message);
 
-    const p = playerRes.data;
+    let p = playerRes.data as {
+      id: string; display_name: string; fantasy_position: string | null;
+      position?: string | null; status: string | null; injury_status: string | null;
+      team_abbr: string | null; team_name: string | null;
+      headshot_url?: string | null; years_exp?: number | null;
+    } | null;
+
+    // Player not in nfl_draft_player_pool (inactive/cut) — fall back to sports_players
+    if (!p) {
+      const { data: spFallback } = await supabase
+        .from('sports_players')
+        .select('id, display_name, fantasy_position, status, injury_status, team:sports_teams(abbreviation, full_name)')
+        .eq('id', sportsPlayerId)
+        .maybeSingle();
+      if (spFallback) {
+        const teamRaw = spFallback.team as unknown as { abbreviation: string | null; full_name: string | null } | null;
+        p = {
+          id:               spFallback.id,
+          display_name:     spFallback.display_name,
+          fantasy_position: spFallback.fantasy_position,
+          status:           spFallback.status,
+          injury_status:    spFallback.injury_status,
+          team_abbr:        teamRaw?.abbreviation ?? null,
+          team_name:        teamRaw?.full_name ?? null,
+          headshot_url:     null,
+          years_exp:        null,
+        };
+      }
+    }
+
     if (!p) {
       setDetailLoading(false);
       return;
