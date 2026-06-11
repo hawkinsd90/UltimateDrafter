@@ -162,15 +162,17 @@ export function usePlayerDetail(
 
       // 7. Draft pick for this player in this draft
       // Columns: pick_number (overall), round, pick_in_round
-      supabase
-        .from('draft_picks')
-        .select('pick_number, round, pick_in_round, participant:draft_participants(team_name)')
-        .eq('draft_id', draftId)
-        .eq('player_id', sportsPlayerId)
-        .maybeSingle(),
+      draftId
+        ? supabase
+            .from('draft_picks')
+            .select('pick_number, round, pick_in_round, participant:draft_participants(team_name)')
+            .eq('draft_id', draftId)
+            .eq('player_id', sportsPlayerId)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
 
       // 8. Board ranking for current user/draft/player
-      userId
+      draftId && userId
         ? supabase
             .from('draft_board_rankings')
             .select('id, rank')
