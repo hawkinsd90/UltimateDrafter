@@ -7,8 +7,11 @@ import { usePlayerDetail } from '../../hooks/draft/usePlayerDetail';
 import { useRosterData } from '../../hooks/league/useRosterData';
 import type { RosterPlayer } from '../../hooks/league/useRosterData';
 import { useTransactions } from '../../hooks/league/useTransactions';
+import { useTrades } from '../../hooks/league/useTrades';
 import RosterPicksCard from './RosterPicksCard';
 import RecentActivityCard from './RecentActivityCard';
+import PendingTradesCard from './PendingTradesCard';
+import TradeProposalDrawer from './TradeProposalDrawer';
 import { SectionHeader, PlayerSlotRow, EmptyRosterShell } from './RosterSlotRow';
 import { buildEmptySlots, assignPlayersToSlots, slotGroup } from '../../utils/rosterSlots';
 import type { RosterSlot } from '../../utils/rosterSlots';
@@ -46,6 +49,7 @@ export default function LeagueRosterTab({
   };
 
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(resolveDefault()?.id ?? null);
+  const [tradeDrawerOpen,  setTradeDrawerOpen]   = useState(false);
 
   const {
     players, localOrder, setLocalOrder,
@@ -54,7 +58,9 @@ export default function LeagueRosterTab({
     loadRoster,
   } = useRosterData(leagueId, leagueSettings);
 
-  const { transactions, loadTransactions } = useTransactions(leagueId);
+  const { activity, loadTransactions } = useTransactions(leagueId);
+
+  const { pending: pendingTrades, recent: recentTrades, loadTrades } = useTrades(leagueId, userId, isLeagueOwner);
 
   // Drop flow
   const [selectedRosterPlayer, setSelectedRosterPlayer] = useState<RosterPlayer | null>(null);
@@ -157,6 +163,14 @@ export default function LeagueRosterTab({
     loadTransactions();
   }
 
+  function handleTradeAction(didAccept: boolean) {
+    loadTrades();
+    if (didAccept) {
+      if (selectedMember) loadRoster(selectedMember);
+      loadTransactions();
+    }
+  }
+
   // ── Slot ordering ──────────────────────────────────────────────────────────
 
   function movePlayerInGroup(playerId: string, dir: -1 | 1, slotIndex: number, allSlots: RosterSlot[], allAssignments: (RosterPlayer | null)[]) {
@@ -221,6 +235,9 @@ export default function LeagueRosterTab({
     canDropPlayer(selectedRosterPlayer)
   );
 
+  // Only show Propose Trade when viewing own team and there are other joined members
+  const canProposeTrade = isOwnTeam && joinedMembers.filter(m => m.invitedUserId !== userId).length > 0 && !!myTeam;
+
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', color: textPrimary }}>
 
@@ -262,6 +279,19 @@ export default function LeagueRosterTab({
               <span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 8px', borderRadius: '9999px', background: 'rgba(251,191,36,0.12)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)' }}>
                 Commissioner View
               </span>
+            )}
+            {canProposeTrade && (
+              <button
+                onClick={() => setTradeDrawerOpen(true)}
+                style={{
+                  padding: '5px 14px', borderRadius: '9999px', fontSize: '13px', fontWeight: '600',
+                  cursor: 'pointer', border: `1px solid ${blue}`,
+                  background: 'rgba(59,130,246,0.12)', color: '#93c5fd',
+                  transition: 'all 0.1s',
+                }}
+              >
+                Propose Trade
+              </button>
             )}
             {selectedMember && (
               <span style={{ fontSize: '12px', color: textSecondary }}>
@@ -379,7 +409,16 @@ export default function LeagueRosterTab({
         <RosterPicksCard picksState={picksState} activeDraftStatus={activeDraftStatus} />
       )}
 
-      <RecentActivityCard transactions={transactions} userId={userId} />
+      <PendingTradesCard
+        leagueId={leagueId}
+        userId={userId}
+        isLeagueOwner={isLeagueOwner}
+        pending={pendingTrades}
+        recent={recentTrades}
+        onTradeAction={handleTradeAction}
+      />
+
+      <RecentActivityCard activity={activity} userId={userId} />
 
       {!selectedMember && !loading && (
         <div style={{ marginTop: '16px', background: card, border: `1px solid ${border}`, borderRadius: '10px', padding: '24px', textAlign: 'center' }}>
@@ -413,6 +452,22 @@ export default function LeagueRosterTab({
           onCancel={handleCancel}
         />
       )}
+
+      <TradeProposalDrawer
+        open={tradeDrawerOpen}
+        leagueId={leagueId}
+        userId={userId}
+        myMember={myTeam}
+        joinedMembers={joinedMembers}
+        leagueMembers={leagueMembers}
+        myRoster={players}
+        leagueSettings={leagueSettings}
+        onClose={() => setTradeDrawerOpen(false)}
+        onProposalSent={() => {
+          setTradeDrawerOpen(false);
+          loadTrades();
+        }}
+      />
     </div>
   );
 }
