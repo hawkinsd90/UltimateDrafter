@@ -71,9 +71,9 @@ export function PlayerSlotRow({
                 </span>
               )}
             </div>
-            {(player.teamAbbr || player.fantasyPosition) && (
+            {player.fantasyPosition && (
               <div style={{ fontSize: '11px', color: textSecondary, marginTop: '1px' }}>
-                {[player.fantasyPosition, player.teamAbbr].filter(Boolean).join(' · ')}
+                {player.fantasyPosition} · {player.teamAbbr ?? 'FA'}
               </div>
             )}
           </>

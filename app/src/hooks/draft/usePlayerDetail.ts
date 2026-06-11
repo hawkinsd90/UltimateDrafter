@@ -67,6 +67,7 @@ export type PlayerDetail = {
   lastSeasonRanking: PlayerDetailRanking | null;
   // Stats
   stats: PlayerSeasonStats | null;
+  statsSeason: number | null;
   // Board / draft state
   boardRankingId: string | null;
   boardRank: number | null;
@@ -150,14 +151,16 @@ export function usePlayerDetail(
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
 
-      // 6. 2025 regular season stats (Sleeper is the stats provider)
+      // 6. Most recent regular season stats — try 2025 first, fall back to 2024
       supabase
         .from('player_season_stats')
         .select('season, stat_type, games, passing_yards, passing_tds, passing_ints, rushing_yards, rushing_tds, receptions, receiving_yards, receiving_tds, fumbles_lost, fg_made_0_39, fg_made_40_49, fg_made_50_plus, fg_missed, xp_made, xp_missed, sacks, def_interceptions, fumble_recoveries, def_tds, safeties, blocks')
         .eq('sports_player_id', sportsPlayerId)
-        .eq('season', 2025)
         .eq('stat_type', 'regular_season')
         .eq('provider', 'sleeper')
+        .in('season', [2025, 2024])
+        .order('season', { ascending: false })
+        .limit(1)
         .maybeSingle(),
 
       // 7. Draft pick for this player in this draft
@@ -335,6 +338,7 @@ export function usePlayerDetail(
       sleeperRanking,
       lastSeasonRanking,
       stats,
+      statsSeason: statsRaw?.season ?? null,
       boardRankingId: boardRaw?.id ?? null,
       boardRank: boardRaw?.rank ?? null,
       draftPickRound: pickRaw?.round ?? null,

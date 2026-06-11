@@ -381,7 +381,7 @@ export default function PlayerDetailModal({
                   {detail.jersey_number ? `#${detail.jersey_number} ` : ''}{detail.display_name}
                 </div>
                 <div style={{ fontSize: '13px', color: dt.textSecondary, marginTop: '3px' }}>
-                  {detail.team_name ?? detail.team_abbr ?? 'Unknown Team'}
+                  {detail.team_name ?? (detail.team_abbr ? detail.team_abbr : 'Free Agent')}
                   {' · '}
                   <span style={{ padding: '1px 5px', borderRadius: '3px', fontSize: '11px', fontWeight: '700', background: positionBadgeBg(detail.fantasy_position), color: positionBadgeColor(detail.fantasy_position) }}>
                     {detail.fantasy_position ?? detail.nfl_position ?? '—'}
@@ -406,6 +406,11 @@ export default function PlayerDetailModal({
               {!effectiveBadge && isOnBoard && (
                 <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 8px', borderRadius: '4px', background: '#064e3b', color: '#6ee7b7' }}>
                   On Board{detail.boardRank != null ? ` — Rank #${detail.boardRank}` : ''}
+                </span>
+              )}
+              {!detail.team_abbr && !detail.team_name && (
+                <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 8px', borderRadius: '4px', background: '#1c2840', color: '#93c5fd', border: '1px solid #1e3a5f' }}>
+                  Free Agent
                 </span>
               )}
               {injuryLabel && injuryColor && (
@@ -523,8 +528,8 @@ export default function PlayerDetailModal({
               </Section>
             )}
 
-            {/* 2025 season stats */}
-            <Section title="2025 Season Stats">
+            {/* Season stats */}
+            <Section title={detail.statsSeason ? `${detail.statsSeason} Season Stats` : '2025 Season Stats'}>
               {detail.stats ? (
                 <StatsSection stats={detail.stats} position={detail.fantasy_position} />
               ) : (
