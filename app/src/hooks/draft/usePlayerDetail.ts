@@ -207,11 +207,11 @@ export function usePlayerDetail(
     if (!p) {
       const { data: spFallback } = await supabase
         .from('sports_players')
-        .select('id, display_name, fantasy_position, status, injury_status, team:sports_teams(abbreviation, full_name)')
+        .select('id, display_name, fantasy_position, status, injury_status, team:sports_teams(abbreviation, name)')
         .eq('id', sportsPlayerId)
         .maybeSingle();
       if (spFallback) {
-        const teamRaw = spFallback.team as unknown as { abbreviation: string | null; full_name: string | null } | null;
+        const teamRaw = spFallback.team as unknown as { abbreviation: string | null; name: string | null } | null;
         p = {
           id:               spFallback.id,
           display_name:     spFallback.display_name,
@@ -219,7 +219,7 @@ export function usePlayerDetail(
           status:           spFallback.status,
           injury_status:    spFallback.injury_status,
           team_abbr:        teamRaw?.abbreviation ?? null,
-          team_name:        teamRaw?.full_name ?? null,
+          team_name:        teamRaw?.name ?? null,
           headshot_url:     null,
           years_exp:        null,
         };
