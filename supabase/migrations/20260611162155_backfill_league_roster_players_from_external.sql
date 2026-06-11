@@ -6,6 +6,7 @@
 INSERT INTO league_roster_players (
   league_id,
   imported_member_id,
+  user_id,
   external_roster_player_id,
   sports_player_id,
   external_player_name,
@@ -17,6 +18,7 @@ INSERT INTO league_roster_players (
 SELECT
   lim.league_id,
   lim.id                     AS imported_member_id,
+  lim.invited_user_id        AS user_id,
   erp.id                     AS external_roster_player_id,
   erp.sports_player_id,
   erp.external_player_name,
