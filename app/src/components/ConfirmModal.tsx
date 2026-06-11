@@ -22,10 +22,13 @@ export default function ConfirmModal({
   useEffect(() => {
     cancelRef.current?.focus();
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onCancel();
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onCancel();
+      }
     }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
   }, [onCancel]);
 
   return (

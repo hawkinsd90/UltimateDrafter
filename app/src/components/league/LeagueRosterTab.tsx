@@ -120,7 +120,7 @@ export default function LeagueRosterTab({
         : 'This will remove the player from the active roster and record a transaction.';
 
     const title = isCommissionerDrop
-      ? `Commissioner Action: Drop ${player.displayName}?`
+      ? `Commissioner Action: Drop ${player.displayName} from ${selectedMember?.teamName ?? 'this team'}?`
       : `Drop ${player.displayName}?`;
 
     const ok = await confirm({
