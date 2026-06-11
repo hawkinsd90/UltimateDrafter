@@ -10,6 +10,8 @@ import LeagueRosterTab from '../components/league/LeagueRosterTab';
 import LeagueImportPanel from '../components/league/LeagueImportPanel';
 import type { ImportedMember } from '../components/league/ImportedLeaguematesPanel';
 import type { Database } from '../types/supabase';
+import ConfirmModal from '../components/ConfirmModal';
+import { useConfirm } from '../hooks/useConfirm';
 
 type League = Database['public']['Tables']['leagues']['Row'];
 type LeagueSettings = Database['public']['Tables']['league_settings']['Row'];
@@ -36,6 +38,8 @@ export default function LeagueDetail() {
   const [importedMembers, setImportedMembers] = useState<ImportedMember[]>([]);
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState('');
+
+  const { confirm, pending: confirmPending, handleConfirm, handleCancel } = useConfirm();
 
   const tabParam = searchParams.get('tab') as Tab | null;
   // Derive active tab directly from the URL — no duplicate state.
@@ -137,14 +141,26 @@ export default function LeagueDetail() {
   }
 
   async function deleteDraft(draftId: string, draftName: string) {
-    if (!window.confirm(`Delete draft "${draftName}"? This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: `Delete "${draftName}"?`,
+      message: 'This cannot be undone. All picks and settings for this draft will be permanently removed.',
+      confirmLabel: 'Delete Draft',
+      danger: true,
+    });
+    if (!ok) return;
     await supabase.from('drafts').delete().eq('id', draftId);
     await loadLeagueData();
   }
 
   async function handleDeleteLeague() {
     if (!league) return;
-    if (!window.confirm(`Delete league "${league.name}"?\n\nAll data will be preserved but the league will no longer be visible. This cannot be undone.`)) return;
+    const ok = await confirm({
+      title: `Delete "${league.name}"?`,
+      message: 'All data will be preserved but the league will no longer be visible. This cannot be undone.',
+      confirmLabel: 'Delete League',
+      danger: true,
+    });
+    if (!ok) return;
     await supabase.from('leagues').update({ is_active: false }).eq('id', league.id);
     navigate('/leagues');
   }
@@ -192,6 +208,7 @@ export default function LeagueDetail() {
   const safeActiveTab: Tab = activeTab === 'roster' && !hasImport ? 'drafts' : activeTab;
 
   return (
+    <>
     <div style={{ padding: '40px', fontFamily: 'system-ui, sans-serif', maxWidth: '1200px', margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', gap: '12px', flexWrap: 'nowrap', minWidth: 0 }}>
         <Link to="/leagues" style={{ color: '#2563eb', textDecoration: 'none' }}>← Back to Leagues</Link>
@@ -297,5 +314,14 @@ export default function LeagueDetail() {
         </>
       )}
     </div>
+
+      {confirmPending && (
+        <ConfirmModal
+          {...confirmPending.options}
+          onConfirm={handleConfirm}
+          onCancel={handleCancel}
+        />
+      )}
+    </>
   );
 }

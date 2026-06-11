@@ -12,6 +12,8 @@ import RecentActivityCard from './RecentActivityCard';
 import { SectionHeader, PlayerSlotRow, EmptyRosterShell } from './RosterSlotRow';
 import { buildEmptySlots, assignPlayersToSlots, slotGroup } from '../../utils/rosterSlots';
 import type { RosterSlot } from '../../utils/rosterSlots';
+import ConfirmModal from '../ConfirmModal';
+import { useConfirm } from '../../hooks/useConfirm';
 
 type LeagueMember   = Database['public']['Tables']['league_members']['Row'];
 type LeagueSettings = Database['public']['Tables']['league_settings']['Row'];
@@ -60,6 +62,8 @@ export default function LeagueRosterTab({
   const [dropError, setDropError]                       = useState('');
 
   const { playerDetail, detailLoading, openPlayerDetail, closePlayerDetail } = usePlayerDetail('', userId, null);
+
+  const { confirm, pending: confirmPending, handleConfirm, handleCancel } = useConfirm();
 
   const selectedMember = joinedMembers.find(m => m.id === selectedMemberId) ?? null;
   const isOwnTeam      = selectedMember?.invitedUserId === userId;
@@ -115,11 +119,17 @@ export default function LeagueRosterTab({
         ? 'This may make the player available in the draft pool if eligible.'
         : 'This will remove the player from the active roster and record a transaction.';
 
-    const who = isCommissionerDrop
-      ? `Commissioner Action: Drop ${player.displayName} from ${selectedMember?.teamName ?? 'this team'}?`
-      : `Drop ${player.displayName} from your roster?`;
+    const title = isCommissionerDrop
+      ? `Commissioner Action: Drop ${player.displayName}?`
+      : `Drop ${player.displayName}?`;
 
-    if (!window.confirm(`${who}\n\n${contextNote}`)) return;
+    const ok = await confirm({
+      title,
+      message: contextNote,
+      confirmLabel: 'Drop Player',
+      danger: true,
+    });
+    if (!ok) return;
 
     setDropLoading(true);
     setDropError('');
@@ -395,6 +405,14 @@ export default function LeagueRosterTab({
         onPick={() => {}}
         onClose={handleCloseDetail}
       />
+
+      {confirmPending && (
+        <ConfirmModal
+          {...confirmPending.options}
+          onConfirm={handleConfirm}
+          onCancel={handleCancel}
+        />
+      )}
     </div>
   );
 }
