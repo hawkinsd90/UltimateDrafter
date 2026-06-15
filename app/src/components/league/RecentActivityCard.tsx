@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { posColor } from '../../utils/positionColors';
 import { timeAgo } from '../../utils/time';
 import type { ActivityItem, TransactionRow, TradeGroup } from '../../hooks/league/useTransactions';
@@ -69,36 +70,95 @@ function DropRow({ tx, userId, isLast }: { tx: TransactionRow; userId: string; i
 }
 
 function TradeGroupRow({ group, isLast }: { group: TradeGroup; isLast: boolean }) {
-  // Build human-readable "Team A sent X for Y from Team B"
   const rows = group.rows;
   if (rows.length === 0) return null;
 
-  // Identify the two teams from metadata
-  const firstRow = rows[0];
-  const fromTeam = (firstRow.metadata?.from_team as string) ?? null;
-  const toTeam   = (firstRow.metadata?.to_team   as string) ?? null;
-  const isComm   = rows.some(r => r.metadata?.commissioner_action === true);
+  const isComm = rows.some(r => r.metadata?.commissioner_action === true);
 
-  // Players moving from->to
-  const sentPlayers     = rows.map(r => {
-    const name = (r.metadata?.player_name as string) ?? r.external_player_name ?? 'Unknown';
-    const pos  = (r.metadata?.position   as string) ?? r.external_position ?? null;
-    return { name, pos };
-  });
+  // Build a map of team → players they sent (i.e. players that left that team)
+  // Each transaction row represents one player moving from from_team to to_team.
+  // We want to display: "Team A sent X and Y to Team B for Z."
+  // Collect unique team pairs and group players per "from → to" direction.
+  const teamGroups = new Map<string, { fromTeam: string; toTeam: string; players: Array<{ name: string; pos: string | null }> }>();
 
-  // Build description: "Team A sent X and Y to Team B"
-  const playerList = sentPlayers.map((p, i) => {
-    const c = posColor(p.pos);
-    return (
-      <span key={i}>
-        {i > 0 && (i === sentPlayers.length - 1 ? ' and ' : ', ')}
-        <span style={{ fontWeight: '700', color: textPrimary }}>{p.name}</span>
-        {p.pos && (
-          <span style={{ marginLeft: '3px', fontSize: '10px', fontWeight: '700', padding: '1px 4px', borderRadius: '3px', background: c.bg, color: c.text }}>{p.pos}</span>
-        )}
-      </span>
+  for (const r of rows) {
+    const fromTeam = (r.metadata?.from_team as string) ?? 'Unknown';
+    const toTeam   = (r.metadata?.to_team   as string) ?? 'Unknown';
+    const key = `${fromTeam}|||${toTeam}`;
+    if (!teamGroups.has(key)) teamGroups.set(key, { fromTeam, toTeam, players: [] });
+    teamGroups.get(key)!.players.push({
+      name: (r.metadata?.player_name as string) ?? r.external_player_name ?? 'Unknown',
+      pos:  (r.metadata?.position   as string) ?? r.external_position ?? null,
+    });
+  }
+
+  const groups = Array.from(teamGroups.values());
+
+  // Build "Team A sent X to Team B for Y" when there are exactly two directions.
+  // For more complex cases, fall back to listing each direction separately.
+  let summary: ReactNode;
+
+  if (groups.length === 2) {
+    const [a, b] = groups;
+    const aList = a.players.map((p, i) => {
+      const c = posColor(p.pos);
+      return (
+        <span key={i}>
+          {i > 0 && (i === a.players.length - 1 ? ' and ' : ', ')}
+          <span style={{ fontWeight: '700', color: textPrimary }}>{p.name}</span>
+          {p.pos && <span style={{ marginLeft: '3px', fontSize: '10px', fontWeight: '700', padding: '1px 4px', borderRadius: '3px', background: c.bg, color: c.text }}>{p.pos}</span>}
+        </span>
+      );
+    });
+    const bList = b.players.map((p, i) => {
+      const c = posColor(p.pos);
+      return (
+        <span key={i}>
+          {i > 0 && (i === b.players.length - 1 ? ' and ' : ', ')}
+          <span style={{ fontWeight: '700', color: textPrimary }}>{p.name}</span>
+          {p.pos && <span style={{ marginLeft: '3px', fontSize: '10px', fontWeight: '700', padding: '1px 4px', borderRadius: '3px', background: c.bg, color: c.text }}>{p.pos}</span>}
+        </span>
+      );
+    });
+    summary = (
+      <>
+        <span style={{ fontWeight: '700' }}>Trade accepted: </span>
+        <span style={{ color: textSecondary }}>{a.fromTeam} </span>
+        sent {aList}
+        <span style={{ color: textSecondary }}> to {a.toTeam}</span>
+        {' for '}
+        {bList}
+      </>
     );
-  });
+  } else {
+    // Fallback: list each direction as its own line
+    summary = (
+      <>
+        <span style={{ fontWeight: '700' }}>Trade accepted: </span>
+        {groups.map((g, gi) => {
+          const list = g.players.map((p, i) => {
+            const c = posColor(p.pos);
+            return (
+              <span key={i}>
+                {i > 0 && ', '}
+                <span style={{ fontWeight: '700', color: textPrimary }}>{p.name}</span>
+                {p.pos && <span style={{ marginLeft: '3px', fontSize: '10px', fontWeight: '700', padding: '1px 4px', borderRadius: '3px', background: c.bg, color: c.text }}>{p.pos}</span>}
+              </span>
+            );
+          });
+          return (
+            <span key={gi}>
+              {gi > 0 && '; '}
+              <span style={{ color: textSecondary }}>{g.fromTeam}</span>
+              {' sent '}
+              {list}
+              <span style={{ color: textSecondary }}> to {g.toTeam}</span>
+            </span>
+          );
+        })}
+      </>
+    );
+  }
 
   return (
     <div
@@ -118,10 +178,7 @@ function TradeGroupRow({ group, isLast }: { group: TradeGroup; isLast: boolean }
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: '13px', color: textPrimary, lineHeight: '1.4' }}>
-          <span style={{ fontWeight: '700' }}>Trade accepted: </span>
-          {fromTeam && <span style={{ color: textSecondary }}>{fromTeam} </span>}
-          sent {playerList}
-          {toTeam && <> to <span style={{ color: textSecondary, fontWeight: '600' }}>{toTeam}</span></>}
+          {summary}
           {isComm && (
             <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: '700', padding: '1px 6px', borderRadius: '4px', background: 'rgba(251,191,36,0.12)', color: '#fbbf24' }}>
               Commissioner

@@ -17,6 +17,7 @@ export interface TradeProposal {
   proposer_member_id:  string;
   proposer_user_id:    string;
   receiver_member_id:  string;
+  receiver_user_id:    string | null;  // resolved from league_members
   status:              'pending' | 'accepted' | 'rejected' | 'canceled' | 'expired';
   resolved_by_user_id: string | null;
   commissioner_action: boolean;
@@ -85,6 +86,11 @@ export function useTrades(leagueId: string, userId: string, _isLeagueOwner: bool
       .select('id, invited_user_id, team_name')
       .eq('league_id', leagueId);
 
+    const userIdByMemberId = new Map<string, string | null>();
+    for (const lm of memberRows ?? []) {
+      userIdByMemberId.set(lm.id, lm.user_id ?? null);
+    }
+
     const teamNameByMemberId = new Map<string, string>();
     for (const lm of memberRows ?? []) {
       const imp = (importedRows ?? []).find(im => im.invited_user_id === lm.user_id);
@@ -93,7 +99,8 @@ export function useTrades(leagueId: string, userId: string, _isLeagueOwner: bool
 
     const proposals: TradeProposal[] = data.map(row => ({
       ...row,
-      players: (row.league_trade_proposal_players ?? []) as TradeProposalPlayer[],
+      players:            (row.league_trade_proposal_players ?? []) as TradeProposalPlayer[],
+      receiver_user_id:   userIdByMemberId.get(row.receiver_member_id) ?? null,
       proposer_team_name: teamNameByMemberId.get(row.proposer_member_id) ?? null,
       receiver_team_name: teamNameByMemberId.get(row.receiver_member_id) ?? null,
     }));
@@ -110,15 +117,7 @@ export function useTrades(leagueId: string, userId: string, _isLeagueOwner: bool
   }
 
   function isMyReceiving(p: TradeProposal): boolean {
-    // Check by member id — find the receiver member's user_id
-    // We loaded member rows; the simplest check is via proposal fields
-    return !isMyProposal(p) && pending.concat(recent).some(
-      x => x.id === p.id
-    ) && (
-      // If receiver_member_id corresponds to current user's team —
-      // we rely on the proposer_user_id being different from userId
-      p.proposer_user_id !== userId
-    );
+    return p.receiver_user_id === userId;
   }
 
   return {

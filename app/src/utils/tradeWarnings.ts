@@ -16,16 +16,21 @@ export function computeTradeWarnings(
   const warnings: string[] = [];
   if (!leagueSettings) return warnings;
 
+  // Use only explicit max fields, not starter slot counts.
+  // roster_qb / roster_rb / etc. are lineup slots, not roster maximums.
+  // Only warn when a dedicated max field exists and would be exceeded.
   const s = leagueSettings as LeagueSettings & {
-    roster_qb?: number; roster_rb?: number; roster_wr?: number;
-    roster_te?: number; roster_k?: number;  roster_dst?: number;
-    roster_flex?: number; roster_op?: number; bench?: number;
+    max_qb?:         number;
+    max_rb?:         number;
+    max_wr?:         number;
+    max_te?:         number;
+    max_k?:          number;
+    max_dst?:        number;
     max_roster_size?: number;
   };
 
   function simulate(roster: TradeWarningPlayer[], give: TradeWarningPlayer[], take: TradeWarningPlayer[]) {
-    const after = roster.filter(p => !give.includes(p)).concat(take);
-    return after;
+    return roster.filter(p => !give.includes(p)).concat(take);
   }
 
   function countPos(roster: TradeWarningPlayer[], pos: string) {
@@ -35,34 +40,32 @@ export function computeTradeWarnings(
   const afterProposer = simulate(proposerRoster, sending, receiving);
   const afterReceiver = simulate(receiverRoster, receiving, sending);
 
-  const posLimits: Array<{ pos: string; limit: number | undefined }> = [
-    { pos: 'QB',  limit: s.roster_qb },
-    { pos: 'RB',  limit: s.roster_rb },
-    { pos: 'WR',  limit: s.roster_wr },
-    { pos: 'TE',  limit: s.roster_te },
-    { pos: 'K',   limit: s.roster_k  },
-    { pos: 'DST', limit: s.roster_dst },
+  const posLimits: Array<{ pos: string; max: number | undefined }> = [
+    { pos: 'QB',  max: s.max_qb  },
+    { pos: 'RB',  max: s.max_rb  },
+    { pos: 'WR',  max: s.max_wr  },
+    { pos: 'TE',  max: s.max_te  },
+    { pos: 'K',   max: s.max_k   },
+    { pos: 'DST', max: s.max_dst },
   ];
-
-  const maxRoster = s.max_roster_size;
 
   const proposerTeam = 'Your team';
   const receiverTeam = 'Trade partner';
 
-  for (const { pos, limit } of posLimits) {
-    if (!limit) continue;
+  for (const { pos, max } of posLimits) {
+    if (!max) continue;
     const pc = countPos(afterProposer, pos);
-    if (pc > limit) warnings.push(`This trade may put ${proposerTeam} over the ${pos} limit (${pc} ${pos}, max ${limit})`);
+    if (pc > max) warnings.push(`This trade may put ${proposerTeam} over the ${pos} limit (${pc} ${pos}, max ${max})`);
     const rc = countPos(afterReceiver, pos);
-    if (rc > limit) warnings.push(`This trade may put ${receiverTeam} over the ${pos} limit (${rc} ${pos}, max ${limit})`);
+    if (rc > max) warnings.push(`This trade may put ${receiverTeam} over the ${pos} limit (${rc} ${pos}, max ${max})`);
   }
 
-  if (maxRoster) {
-    if (afterProposer.length > maxRoster) {
-      warnings.push(`This trade may leave ${proposerTeam} over total roster size (${afterProposer.length} players, max ${maxRoster})`);
+  if (s.max_roster_size) {
+    if (afterProposer.length > s.max_roster_size) {
+      warnings.push(`This trade may leave ${proposerTeam} over total roster size (${afterProposer.length} players, max ${s.max_roster_size})`);
     }
-    if (afterReceiver.length > maxRoster) {
-      warnings.push(`This trade may leave ${receiverTeam} over total roster size (${afterReceiver.length} players, max ${maxRoster})`);
+    if (afterReceiver.length > s.max_roster_size) {
+      warnings.push(`This trade may leave ${receiverTeam} over total roster size (${afterReceiver.length} players, max ${s.max_roster_size})`);
     }
   }
 

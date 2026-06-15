@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { posColor } from '../../utils/positionColors';
-import { timeAgo } from '../../utils/time';
+import { timeAgo, timeUntil } from '../../utils/time';
 import type { TradeProposal } from '../../hooks/league/useTrades';
 import { useTradeProposal } from '../../hooks/league/useTradeProposal';
 import { useConfirm } from '../../hooks/useConfirm';
@@ -49,8 +49,9 @@ function TradeRow({ proposal, userId, isLeagueOwner, onAction }: {
   const [localError, setLocalError] = useState('');
 
   const isProposer  = proposal.proposer_user_id === userId;
-  const isReceiver  = !isProposer;
-  const canCancel   = isProposer || isLeagueOwner;
+  const isReceiver  = proposal.receiver_user_id  === userId;
+  // Commissioner can cancel but cannot accept/reject on behalf of anyone
+  const canCancel   = isProposer || (isLeagueOwner && !isReceiver);
 
   const sendPlayers    = proposal.players.filter(p => p.direction === 'send');
   const receivePlayers = proposal.players.filter(p => p.direction === 'receive');
@@ -162,7 +163,7 @@ function TradeRow({ proposal, userId, isLeagueOwner, onAction }: {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end', flexShrink: 0 }}>
           <div style={{ fontSize: '11px', color: '#475569' }}>
-            {timeAgo(proposal.created_at)} · expires {timeAgo(proposal.expires_at)}
+            {timeAgo(proposal.created_at)} · {timeUntil(proposal.expires_at)}
           </div>
           <div style={{ display: 'flex', gap: '6px' }}>
             {isReceiver && (
@@ -223,8 +224,14 @@ function TradeRow({ proposal, userId, isLeagueOwner, onAction }: {
 }
 
 export default function PendingTradesCard({ leagueId: _leagueId, userId, isLeagueOwner, pending, recent, onTradeAction }: Props) {
-  const myPending     = pending.filter(p => p.proposer_user_id === userId || p.proposer_user_id !== userId);
-  const hasPending    = myPending.length > 0;
+  // Only show pending trades where this user is proposer, receiver, or commissioner.
+  // Other league members see trades in Recent Activity (after resolution) only.
+  const myPending  = pending.filter(p =>
+    p.proposer_user_id === userId ||
+    p.receiver_user_id === userId ||
+    isLeagueOwner
+  );
+  const hasPending = myPending.length > 0;
   const [showRecent, setShowRecent] = useState(false);
 
   if (!hasPending && recent.length === 0) return null;
