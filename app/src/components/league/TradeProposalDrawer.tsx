@@ -149,8 +149,8 @@ export default function TradeProposalDrawer({
   const partnerMember = joinedMembers.find(m => m.id === partnerMemberId) ?? null;
   const partnerLeagueMember = leagueMembers.find(lm => lm.user_id === partnerMember?.invitedUserId) ?? null;
 
-  const sendablePlayers    = myRoster.filter(p => !p.unresolved);
-  const receivablePlayers  = partnerRoster?.players.filter(p => !p.unresolved) ?? [];
+  const sendablePlayers    = myRoster.filter(p => !p.unresolved && !!p.lrpId);
+  const receivablePlayers  = partnerRoster?.players.filter(p => !p.unresolved && !!p.lrpId) ?? [];
   const selectedSend       = sendablePlayers.filter(p => sendIds.has(p.id));
   const selectedReceive    = receivablePlayers.filter(p => receiveIds.has(p.id));
 
@@ -239,7 +239,7 @@ export default function TradeProposalDrawer({
     if (receiveIds.size === 0) {
       if (partnerRoster?.loadError) {
         setStepError('Partner roster failed to load. Try going back and reselecting the partner.');
-      } else if (receivablePlayers.length === 0 && (partnerRoster?.rosterEmpty || !partnerRoster)) {
+      } else if (receivablePlayers.length === 0) {
         setStepError('No resolved tradeable players found for this team.');
       } else {
         setStepError('Select at least one player to receive.');
@@ -399,9 +399,9 @@ export default function TradeProposalDrawer({
                         disabled={false}
                       />
                     ))}
-                    {partnerRoster!.players.some(p => p.unresolved) && (
+                    {partnerRoster!.players.some(p => p.unresolved || !p.lrpId) && (
                       <p style={{ fontSize: '11px', color: textSecondary, marginTop: '8px', fontStyle: 'italic' }}>
-                        {partnerRoster!.players.filter(p => p.unresolved).length} unresolved player(s) hidden from trade selection.
+                        {partnerRoster!.players.filter(p => p.unresolved || !p.lrpId).length} player(s) without a tradeable roster record hidden from trade selection.
                       </p>
                     )}
                   </>
