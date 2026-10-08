@@ -6,6 +6,7 @@ import PlayerDetailModal from '../draft/PlayerDetailModal';
 import { usePlayerDetail } from '../../hooks/draft/usePlayerDetail';
 import { useRosterData } from '../../hooks/league/useRosterData';
 import type { RosterPlayer } from '../../hooks/league/useRosterData';
+import { loadTeamRoster } from '../../utils/loadRoster';
 import { useTransactions } from '../../hooks/league/useTransactions';
 import { useTrades } from '../../hooks/league/useTrades';
 import RosterPicksCard from './RosterPicksCard';
@@ -50,6 +51,8 @@ export default function LeagueRosterTab({
 
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(resolveDefault()?.id ?? null);
   const [tradeDrawerOpen,  setTradeDrawerOpen]   = useState(false);
+  const [tradePartnerId,   setTradePartnerId]    = useState<string | null>(null);
+  const [myTradeRoster,    setMyTradeRoster]     = useState<RosterPlayer[]>([]);
 
   const {
     players, localOrder, setLocalOrder,
@@ -92,6 +95,14 @@ export default function LeagueRosterTab({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMemberId, joinedMembers.length]);
+
+  // Load my own roster for the trade drawer when viewing another team
+  useEffect(() => {
+    if (tradeDrawerOpen && myTeam && !isOwnTeam) {
+      loadTeamRoster(myTeam, leagueId).then(result => setMyTradeRoster(result.players));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tradeDrawerOpen]);
 
   // ── Drop flow ──────────────────────────────────────────────────────────────
 
@@ -235,8 +246,9 @@ export default function LeagueRosterTab({
     canDropPlayer(selectedRosterPlayer)
   );
 
-  // Only show Propose Trade when viewing own team and there are other joined members
-  const canProposeTrade = isOwnTeam && joinedMembers.filter(m => m.invitedUserId !== userId).length > 0 && !!myTeam;
+  // Show Propose Trade when viewing own team or another claimed team, as long as there are other joined members and I have a team
+  const canProposeTrade = !!myTeam && joinedMembers.filter(m => m.invitedUserId !== userId).length > 0;
+  const viewingOtherTeam = !isOwnTeam && !!selectedMember && selectedMember.invitedUserId !== null;
 
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', color: textPrimary }}>
@@ -282,7 +294,10 @@ export default function LeagueRosterTab({
             )}
             {canProposeTrade && (
               <button
-                onClick={() => setTradeDrawerOpen(true)}
+                onClick={() => {
+                  setTradePartnerId(viewingOtherTeam ? selectedMember!.id : null);
+                  setTradeDrawerOpen(true);
+                }}
                 style={{
                   padding: '5px 14px', borderRadius: '9999px', fontSize: '13px', fontWeight: '600',
                   cursor: 'pointer', border: `1px solid ${blue}`,
@@ -290,7 +305,7 @@ export default function LeagueRosterTab({
                   transition: 'all 0.1s',
                 }}
               >
-                Propose Trade
+                {viewingOtherTeam ? `Propose Trade with ${selectedMember?.teamName}` : 'Propose Trade'}
               </button>
             )}
             {selectedMember && (
@@ -460,8 +475,9 @@ export default function LeagueRosterTab({
         myMember={myTeam}
         joinedMembers={joinedMembers}
         leagueMembers={leagueMembers}
-        myRoster={players}
+        myRoster={isOwnTeam ? players : myTradeRoster}
         leagueSettings={leagueSettings}
+        preselectedPartnerId={tradePartnerId}
         onClose={() => setTradeDrawerOpen(false)}
         onProposalSent={() => {
           setTradeDrawerOpen(false);

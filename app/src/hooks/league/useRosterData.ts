@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 import type { ImportedMember } from '../../components/league/ImportedLeaguematesPanel';
 import type { Database } from '../../types/supabase';
-import { POS_PRIORITY } from '../../utils/rosterSlots';
+import { loadTeamRoster } from '../../utils/loadRoster';
 
 type LeagueSettings = Database['public']['Tables']['league_settings']['Row'];
 
@@ -164,152 +164,12 @@ export function useRosterData(leagueId: string, leagueSettings: LeagueSettings |
 
     loadDraftPicks(member);
 
-    const { data: appRows, error: appErr } = await supabase
-      .from('league_roster_players')
-      .select('id, sports_player_id, external_player_name, external_position, sort_order')
-      .eq('imported_member_id', member.id)
-      .eq('roster_status', 'active')
-      .order('sort_order', { ascending: true });
+    const result = await loadTeamRoster(member, leagueId);
 
-    if (!appErr && appRows && appRows.length > 0) {
-      const resolvedIds = appRows.filter(r => r.sports_player_id).map(r => r.sports_player_id as string);
-      const detailMap   = new Map<string, { display_name: string; fantasy_position: string | null; team_abbr: string | null }>();
-
-      if (resolvedIds.length > 0) {
-        const { data: poolRows } = await supabase
-          .from('nfl_draft_player_pool')
-          .select('id, display_name, fantasy_position, team_abbr')
-          .in('id', resolvedIds);
-        for (const sp of poolRows ?? []) {
-          detailMap.set(sp.id, { display_name: sp.display_name, fantasy_position: sp.fantasy_position, team_abbr: sp.team_abbr });
-        }
-        const missingIds = resolvedIds.filter(id => !detailMap.has(id));
-        if (missingIds.length > 0) {
-          const { data: spRows } = await supabase
-            .from('sports_players')
-            .select('id, display_name, fantasy_position, team:sports_teams(abbreviation)')
-            .in('id', missingIds);
-          for (const sp of spRows ?? []) {
-            detailMap.set(sp.id, {
-              display_name:     sp.display_name,
-              fantasy_position: sp.fantasy_position,
-              team_abbr:        (sp.team as unknown as { abbreviation: string | null } | null)?.abbreviation ?? null,
-            });
-          }
-        }
-      }
-
-      const resolved: RosterPlayer[] = appRows.map(row => {
-        const detail = row.sports_player_id ? detailMap.get(row.sports_player_id) : null;
-        return {
-          id:               row.id,
-          lrpId:            row.id,
-          sportsPlayerId:   row.sports_player_id ?? null,
-          displayName:      detail?.display_name ?? row.external_player_name ?? 'Unknown',
-          fantasyPosition:  detail?.fantasy_position ?? row.external_position ?? null,
-          teamAbbr:         detail?.team_abbr ?? null,
-          resolutionStatus: row.sports_player_id ? 'matched' : 'unresolved',
-          unresolved:       !row.sports_player_id,
-        };
-      });
-
-      const resolvedPlayers   = resolved.filter(p => !p.unresolved);
-      const unresolvedPlayers = resolved.filter(p => p.unresolved);
-      const ordered = [...resolvedPlayers, ...unresolvedPlayers];
-      setPlayers(ordered);
-      setLocalOrder(ordered.map(p => p.id));
-      setLoading(false);
-      return;
-    }
-
-    if (!member.externalTeamId || !member.externalLeagueId) {
-      setRosterEmpty(true);
-      setLoading(false);
-      return;
-    }
-
-    const { data: links, error: linksErr } = await supabase
-      .from('external_league_links')
-      .select('id, provider, external_league_id, import_status')
-      .eq('league_id', leagueId);
-
-    if (linksErr) { setFetchError('Could not load import data.'); setLoading(false); return; }
-
-    const matchingLink = (links ?? []).find(
-      l => l.provider === member.provider && l.external_league_id === member.externalLeagueId
-    );
-    if (!matchingLink) { setRosterEmpty(true); setLoading(false); return; }
-
-    const { data: teamRow, error: teamErr } = await supabase
-      .from('external_league_teams')
-      .select('link_id, external_team_id, mapping_status')
-      .eq('link_id', matchingLink.id)
-      .eq('external_team_id', member.externalTeamId)
-      .maybeSingle();
-
-    if (teamErr) { setFetchError('Could not load team data.'); setLoading(false); return; }
-    if (!teamRow) { setRosterEmpty(true); setLoading(false); return; }
-
-    const { data: rosterRows, error: rosterErr } = await supabase
-      .from('external_roster_players')
-      .select('id, external_player_name, external_position, sports_player_id, resolution_status')
-      .eq('link_id', teamRow.link_id)
-      .eq('external_team_id', teamRow.external_team_id);
-
-    if (rosterErr) { setFetchError('Could not load roster players.'); setLoading(false); return; }
-    if (!rosterRows || rosterRows.length === 0) { setRosterEmpty(true); setLoading(false); return; }
-
-    const resolvedIds = rosterRows.filter(r => r.sports_player_id).map(r => r.sports_player_id as string);
-    const detailMap   = new Map<string, { display_name: string; fantasy_position: string | null; team_abbr: string | null }>();
-
-    if (resolvedIds.length > 0) {
-      const { data: poolRows } = await supabase
-        .from('nfl_draft_player_pool')
-        .select('id, display_name, fantasy_position, team_abbr')
-        .in('id', resolvedIds);
-      for (const sp of poolRows ?? []) {
-        detailMap.set(sp.id, { display_name: sp.display_name, fantasy_position: sp.fantasy_position, team_abbr: sp.team_abbr });
-      }
-      const missingIds = resolvedIds.filter(id => !detailMap.has(id));
-      if (missingIds.length > 0) {
-        const { data: spRows } = await supabase
-          .from('sports_players')
-          .select('id, display_name, fantasy_position, team:sports_teams(abbreviation)')
-          .in('id', missingIds);
-        for (const sp of spRows ?? []) {
-          detailMap.set(sp.id, {
-            display_name:     sp.display_name,
-            fantasy_position: sp.fantasy_position,
-            team_abbr:        (sp.team as unknown as { abbreviation: string | null } | null)?.abbreviation ?? null,
-          });
-        }
-      }
-    }
-
-    const resolved: RosterPlayer[] = rosterRows.map(row => {
-      const detail = row.sports_player_id ? detailMap.get(row.sports_player_id) : null;
-      return {
-        id:               row.id,
-        lrpId:            null,
-        sportsPlayerId:   row.sports_player_id ?? null,
-        displayName:      detail?.display_name ?? row.external_player_name ?? 'Unknown',
-        fantasyPosition:  detail?.fantasy_position ?? row.external_position ?? null,
-        teamAbbr:         detail?.team_abbr ?? null,
-        resolutionStatus: row.resolution_status,
-        unresolved:       !row.sports_player_id,
-      };
-    });
-
-    resolved.sort((a, b) => {
-      if (a.unresolved !== b.unresolved) return a.unresolved ? 1 : -1;
-      const ai = POS_PRIORITY.indexOf(a.fantasyPosition ?? '');
-      const bi = POS_PRIORITY.indexOf(b.fantasyPosition ?? '');
-      if (ai !== bi) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-      return a.displayName.localeCompare(b.displayName);
-    });
-
-    setPlayers(resolved);
-    setLocalOrder(resolved.map(p => p.id));
+    setPlayers(result.players);
+    setLocalOrder(result.players.map(p => p.id));
+    setRosterEmpty(result.rosterEmpty);
+    setFetchError(result.error);
     setLoading(false);
   }, [leagueId, loadDraftPicks]);
 

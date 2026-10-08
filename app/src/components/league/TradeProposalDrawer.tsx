@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../../lib/supabase';
 import type { ImportedMember } from './ImportedLeaguematesPanel';
 import type { RosterPlayer } from '../../hooks/league/useRosterData';
 import type { Database } from '../../types/supabase';
 import { posColor } from '../../utils/positionColors';
 import { computeTradeWarnings } from '../../utils/tradeWarnings';
+import { loadTeamRoster } from '../../utils/loadRoster';
 import { useTradeProposal } from '../../hooks/league/useTradeProposal';
 import { useConfirm } from '../../hooks/useConfirm';
 import ConfirmModal from '../ConfirmModal';
@@ -21,11 +21,14 @@ const textSecondary = '#94a3b8';
 const blue          = '#3b82f6';
 const amber         = '#f59e0b';
 const green         = '#22c55e';
+const red           = '#f87171';
 
 interface PartnerRoster {
-  memberId: string;
-  players:  RosterPlayer[];
-  loading:  boolean;
+  memberId:    string;
+  players:     RosterPlayer[];
+  loading:     boolean;
+  loadError:   string;
+  rosterEmpty: boolean;
 }
 
 interface Props {
@@ -37,6 +40,7 @@ interface Props {
   leagueMembers:   LeagueMember[];
   myRoster:        RosterPlayer[];
   leagueSettings:  LeagueSettings | null;
+  preselectedPartnerId?: string | null;
   onClose:         () => void;
   onProposalSent:  () => void;
 }
@@ -79,9 +83,55 @@ function PlayerSelectRow({
   );
 }
 
+function PartnerRow({
+  member, claimedMember, active, onSelect,
+}: {
+  member: ImportedMember;
+  claimedMember: LeagueMember | null;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  const providerBadge = member.provider?.toUpperCase() ?? null;
+  return (
+    <button
+      onClick={onSelect}
+      style={{
+        display: 'flex', flexDirection: 'column', gap: '3px',
+        width: '100%', padding: '10px 14px', marginBottom: '6px',
+        background: active ? 'rgba(59,130,246,0.12)' : card,
+        border: `1px solid ${active ? blue : border}`,
+        borderRadius: '8px', cursor: 'pointer', textAlign: 'left',
+        transition: 'background 0.1s, border-color 0.1s',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+        <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>{member.teamName}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+          {providerBadge && (
+            <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: 'rgba(148,163,184,0.15)', color: textSecondary, letterSpacing: '0.04em' }}>
+              {providerBadge}
+            </span>
+          )}
+          {active && <span style={{ color: blue, fontSize: '14px', fontWeight: '700' }}>✓</span>}
+        </div>
+      </div>
+      {claimedMember && (
+        <div style={{ fontSize: '11px', color: textSecondary }}>
+          Claimed by: {claimedMember.display_name ?? claimedMember.phone_e164 ?? 'unknown'}
+        </div>
+      )}
+      {member.externalOwnerName && member.externalOwnerName !== member.teamName && (
+        <div style={{ fontSize: '11px', color: textSecondary }}>
+          Imported owner: {member.externalOwnerName}
+        </div>
+      )}
+    </button>
+  );
+}
+
 export default function TradeProposalDrawer({
   open, leagueId, userId, myMember, joinedMembers, leagueMembers,
-  myRoster, leagueSettings, onClose, onProposalSent,
+  myRoster, leagueSettings, preselectedPartnerId, onClose, onProposalSent,
 }: Props) {
   const [step,             setStep]             = useState<Step>('partner');
   const [partnerMemberId,  setPartnerMemberId]  = useState<string | null>(null);
@@ -110,46 +160,24 @@ export default function TradeProposalDrawer({
     leagueSettings,
   );
 
-  const loadPartnerRoster = useCallback(async (memberId: string) => {
-    setPartnerRoster({ memberId, players: [], loading: true });
-    const { data } = await supabase
-      .from('league_roster_players')
-      .select('id, sports_player_id, external_player_name, external_position, sort_order')
-      .eq('imported_member_id', memberId)
-      .eq('roster_status', 'active')
-      .order('sort_order', { ascending: true });
+  const leagueSettingsExt = leagueSettings as (LeagueSettings & {
+    allow_pick_trades?: boolean; allow_future_pick_trades?: boolean;
+  }) | null;
+  const pickTradesEnabled = leagueSettingsExt?.allow_pick_trades ?? false;
 
-    const appRows = data ?? [];
-    const resolvedIds = appRows.filter(r => r.sports_player_id).map(r => r.sports_player_id as string);
-    const detailMap = new Map<string, { display_name: string; fantasy_position: string | null; team_abbr: string | null }>();
-
-    if (resolvedIds.length > 0) {
-      const { data: poolRows } = await supabase
-        .from('nfl_draft_player_pool')
-        .select('id, display_name, fantasy_position, team_abbr')
-        .in('id', resolvedIds);
-      for (const sp of poolRows ?? []) {
-        detailMap.set(sp.id, { display_name: sp.display_name, fantasy_position: sp.fantasy_position, team_abbr: sp.team_abbr });
-      }
-    }
-
-    const players: RosterPlayer[] = appRows.map(row => {
-      const detail = row.sports_player_id ? detailMap.get(row.sports_player_id) : null;
-      return {
-        id:               row.id,
-        lrpId:            row.id,
-        sportsPlayerId:   row.sports_player_id ?? null,
-        displayName:      detail?.display_name ?? row.external_player_name ?? 'Unknown',
-        fantasyPosition:  detail?.fantasy_position ?? row.external_position ?? null,
-        teamAbbr:         detail?.team_abbr ?? null,
-        resolutionStatus: row.sports_player_id ? 'matched' : 'unresolved',
-        unresolved:       !row.sports_player_id,
-      };
+  const loadPartnerRoster = useCallback(async (member: ImportedMember) => {
+    setPartnerRoster({ memberId: member.id, players: [], loading: true, loadError: '', rosterEmpty: false });
+    const result = await loadTeamRoster(member, leagueId);
+    setPartnerRoster({
+      memberId:    member.id,
+      players:     result.players,
+      loading:     false,
+      loadError:   result.error,
+      rosterEmpty: result.rosterEmpty,
     });
+  }, [leagueId]);
 
-    setPartnerRoster({ memberId, players, loading: false });
-  }, []);
-
+  // When drawer opens, handle preselected partner
   useEffect(() => {
     if (!open) {
       setStep('partner');
@@ -160,15 +188,27 @@ export default function TradeProposalDrawer({
       setMessage('');
       setStepError('');
       clearError();
+      return;
+    }
+
+    if (preselectedPartnerId) {
+      const partner = joinedMembers.find(m => m.id === preselectedPartnerId && m.invitedUserId !== userId);
+      if (partner) {
+        setPartnerMemberId(partner.id);
+        setSendIds(new Set());
+        setReceiveIds(new Set());
+        setStep('players');
+        loadPartnerRoster(partner);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  function handleSelectPartner(memberId: string) {
-    setPartnerMemberId(memberId);
+  function handleSelectPartner(member: ImportedMember) {
+    setPartnerMemberId(member.id);
     setSendIds(new Set());
     setReceiveIds(new Set());
-    loadPartnerRoster(memberId);
+    loadPartnerRoster(member);
   }
 
   function toggleSend(playerId: string) {
@@ -196,7 +236,16 @@ export default function TradeProposalDrawer({
   function goToReview() {
     setStepError('');
     if (sendIds.size === 0) { setStepError('Select at least one player to send.'); return; }
-    if (receiveIds.size === 0) { setStepError('Select at least one player to receive.'); return; }
+    if (receiveIds.size === 0) {
+      if (partnerRoster?.loadError) {
+        setStepError('Partner roster failed to load. Try going back and reselecting the partner.');
+      } else if (receivablePlayers.length === 0 && (partnerRoster?.rosterEmpty || !partnerRoster)) {
+        setStepError('No resolved tradeable players found for this team.');
+      } else {
+        setStepError('Select at least one player to receive.');
+      }
+      return;
+    }
     setStep('review');
   }
 
@@ -220,8 +269,8 @@ export default function TradeProposalDrawer({
     });
     if (!ok) return;
 
-    const sendLrpIds    = selectedSend.map(p => p.lrpId!);
-    const receiveLrpIds = selectedReceive.map(p => p.lrpId!);
+    const sendLrpIds    = selectedSend.map(p => p.lrpId!).filter(Boolean);
+    const receiveLrpIds = selectedReceive.map(p => p.lrpId!).filter(Boolean);
 
     const proposalId = await createProposal({
       leagueId,
@@ -271,7 +320,7 @@ export default function TradeProposalDrawer({
         <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
           {/* Error display */}
           {(stepError || rpcError) && (
-            <div style={{ marginBottom: '14px', padding: '10px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', fontSize: '13px', color: '#f87171' }}>
+            <div style={{ marginBottom: '14px', padding: '10px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', fontSize: '13px', color: red }}>
               {stepError || rpcError}
             </div>
           )}
@@ -287,22 +336,15 @@ export default function TradeProposalDrawer({
               )}
               {partners.map(m => {
                 const active = m.id === partnerMemberId;
+                const claimedMember = leagueMembers.find(lm => lm.user_id === m.invitedUserId) ?? null;
                 return (
-                  <button
+                  <PartnerRow
                     key={m.id}
-                    onClick={() => handleSelectPartner(m.id)}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      width: '100%', padding: '12px 14px', marginBottom: '6px',
-                      background: active ? 'rgba(59,130,246,0.12)' : card,
-                      border: `1px solid ${active ? blue : border}`,
-                      borderRadius: '8px', cursor: 'pointer', textAlign: 'left',
-                      transition: 'background 0.1s, border-color 0.1s',
-                    }}
-                  >
-                    <span style={{ fontSize: '14px', fontWeight: '600', color: textPrimary }}>{m.teamName}</span>
-                    {active && <span style={{ color: blue, fontSize: '14px', fontWeight: '700' }}>✓</span>}
-                  </button>
+                    member={m}
+                    claimedMember={claimedMember}
+                    active={active}
+                    onSelect={() => handleSelectPartner(m)}
+                  />
                 );
               })}
             </>
@@ -313,7 +355,7 @@ export default function TradeProposalDrawer({
             <>
               <div style={{ marginBottom: '20px' }}>
                 <div style={{ fontSize: '12px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>
-                  Your players to send
+                  Your players to send ({myMember?.teamName ?? 'Your team'})
                 </div>
                 {sendablePlayers.length === 0 && (
                   <p style={{ color: textSecondary, fontSize: '13px' }}>No resolved players on your roster.</p>
@@ -336,19 +378,41 @@ export default function TradeProposalDrawer({
                 {partnerRoster?.loading && (
                   <p style={{ color: textSecondary, fontSize: '13px' }}>Loading roster...</p>
                 )}
-                {!partnerRoster?.loading && receivablePlayers.length === 0 && (
-                  <p style={{ color: textSecondary, fontSize: '13px' }}>No resolved players on their roster.</p>
+                {!partnerRoster?.loading && partnerRoster?.loadError && (
+                  <div style={{ padding: '10px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', fontSize: '13px', color: red, marginBottom: '8px' }}>
+                    Failed to load roster: {partnerRoster.loadError}
+                  </div>
                 )}
-                {!partnerRoster?.loading && receivablePlayers.map(p => (
-                  <PlayerSelectRow
-                    key={p.id}
-                    player={p}
-                    selected={receiveIds.has(p.id)}
-                    onToggle={() => toggleReceive(p.id)}
-                    disabled={false}
-                  />
-                ))}
+                {!partnerRoster?.loading && !partnerRoster?.loadError && receivablePlayers.length === 0 && (
+                  <p style={{ color: textSecondary, fontSize: '13px' }}>
+                    No resolved tradeable players found for this team.
+                  </p>
+                )}
+                {!partnerRoster?.loading && !partnerRoster?.loadError && receivablePlayers.length > 0 && (
+                  <>
+                    {receivablePlayers.map(p => (
+                      <PlayerSelectRow
+                        key={p.id}
+                        player={p}
+                        selected={receiveIds.has(p.id)}
+                        onToggle={() => toggleReceive(p.id)}
+                        disabled={false}
+                      />
+                    ))}
+                    {partnerRoster!.players.some(p => p.unresolved) && (
+                      <p style={{ fontSize: '11px', color: textSecondary, marginTop: '8px', fontStyle: 'italic' }}>
+                        {partnerRoster!.players.filter(p => p.unresolved).length} unresolved player(s) hidden from trade selection.
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
+
+              {pickTradesEnabled && (
+                <div style={{ marginTop: '16px', padding: '10px 12px', background: 'rgba(245,158,11,0.08)', border: `1px solid rgba(245,158,11,0.2)`, borderRadius: '8px', fontSize: '12px', color: amber }}>
+                  Pick trading is enabled for this league, but pick assets are not included in this player trade phase yet.
+                </div>
+              )}
             </>
           )}
 
@@ -397,6 +461,12 @@ export default function TradeProposalDrawer({
                   <div style={{ fontSize: '11px', color: textSecondary, marginTop: '6px' }}>
                     Warnings do not block trade submission.
                   </div>
+                </div>
+              )}
+
+              {pickTradesEnabled && (
+                <div style={{ marginBottom: '16px', padding: '10px 12px', background: 'rgba(245,158,11,0.08)', border: `1px solid rgba(245,158,11,0.2)`, borderRadius: '8px', fontSize: '12px', color: amber }}>
+                  Pick trading is enabled for this league, but pick assets are not included in this player trade phase yet.
                 </div>
               )}
 
