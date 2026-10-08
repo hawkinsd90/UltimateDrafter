@@ -104,6 +104,24 @@ export default function LeagueRosterTab({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tradeDrawerOpen]);
 
+  useEffect(() => {
+    const channel = supabase
+      .channel(`league-roster-${leagueId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'league_roster_players', filter: `league_id=eq.${leagueId}` },
+        () => {
+          if (selectedMember) loadRoster(selectedMember);
+          loadTransactions();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [leagueId, selectedMember, loadRoster, loadTransactions]);
+
   // ── Drop flow ──────────────────────────────────────────────────────────────
 
   function canDropPlayer(player: RosterPlayer): boolean {
