@@ -105,7 +105,10 @@ function PartnerRow({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-        <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>{member.teamName}</span>
+        <span style={{ fontSize: '14px', fontWeight: '700', color: textPrimary }}>
+          <span style={{ color: textSecondary, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.06em', marginRight: '6px' }}>Team name</span>
+          {member.teamName}
+        </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
           {providerBadge && (
             <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: 'rgba(148,163,184,0.15)', color: textSecondary, letterSpacing: '0.04em' }}>
