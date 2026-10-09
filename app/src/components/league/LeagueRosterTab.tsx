@@ -57,7 +57,7 @@ export default function LeagueRosterTab({
   const {
     players, localOrder, setLocalOrder,
     loading, rosterEmpty, fetchError,
-    picksState, activeDraftId, activeDraftStatus,
+    picksState, picksError, activeDraftId, activeDraftStatus,
     loadRoster,
   } = useRosterData(leagueId, leagueSettings);
 
@@ -390,7 +390,7 @@ export default function LeagueRosterTab({
           <EmptyRosterShell starterSlots={starterSlots} benchSlots={benchSlots} />
         )}
 
-        {!loading && !fetchError && players.length > 0 && assignments && (
+      {!loading && !fetchError && players.length > 0 && assignments && (
           <>
             {unresolvedCount > 0 && (
               <div style={{ padding: '8px 16px', background: '#1c2840', borderBottom: `1px solid ${border}`, fontSize: '12px', color: '#93c5fd' }}>
@@ -496,6 +496,12 @@ export default function LeagueRosterTab({
           </>
         )}
       </div>
+
+      {picksError && (
+        <div style={{ marginTop: '16px', padding: '10px 16px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '8px', fontSize: '13px', color: '#fbbf24' }}>
+          {picksError}
+        </div>
+      )}
 
       {!loading && selectedMember && (
         <RosterPicksCard picksState={picksState} activeDraftStatus={activeDraftStatus} />

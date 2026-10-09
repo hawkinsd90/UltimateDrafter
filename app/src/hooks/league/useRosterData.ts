@@ -51,19 +51,61 @@ export async function loadTradeablePickAssets(
   leagueId: string,
   memberId: string,
 ): Promise<DraftPickAsset[]> {
-  const { data: assets, error: assetsErr } = await supabase
-    .from('league_draft_pick_assets')
-    .select('id, league_id, season_year, round_number, original_member_id, current_member_id, status')
-    .eq('league_id', leagueId)
-    .eq('current_member_id', memberId)
-    .eq('status', 'available')
-    .order('season_year', { ascending: true })
-    .order('round_number', { ascending: true });
+  // Fetch league settings to determine eligibility client-side.
+  // The server RPC remains authoritative — this is a UI filter only.
+  const [assetsRes, settingsRes, leagueRes] = await Promise.all([
+    supabase
+      .from('league_draft_pick_assets')
+      .select('id, league_id, season_year, round_number, original_member_id, current_member_id, status')
+      .eq('league_id', leagueId)
+      .eq('current_member_id', memberId)
+      .eq('status', 'available')
+      .order('season_year', { ascending: true })
+      .order('round_number', { ascending: true }),
+    supabase
+      .from('league_settings')
+      .select('allow_pick_trades, allow_future_picks, future_pick_years, default_rounds')
+      .eq('league_id', leagueId)
+      .maybeSingle(),
+    supabase
+      .from('leagues')
+      .select('season')
+      .eq('id', leagueId)
+      .maybeSingle(),
+  ]);
 
-  if (assetsErr || !assets) return [];
+  if (assetsRes.error || !assetsRes.data) return [];
+
+  const settings = settingsRes.data as {
+    allow_pick_trades: boolean | null;
+    allow_future_picks: boolean | null;
+    future_pick_years: number | null;
+    default_rounds: number | null;
+  } | null;
+
+  if (!settings?.allow_pick_trades || !settings?.allow_future_picks) return [];
+
+  const baseYear = leagueRes.data?.season
+    ? parseLeagueBaseYear(leagueRes.data.season)
+    : null;
+  if (baseYear === null) return [];
+
+  const futureYears = settings.future_pick_years ?? 1;
+  const maxYear = baseYear + futureYears;
+  const maxRounds = settings.default_rounds ?? 15;
+
+  // Client-side eligibility filter — server RPC is authoritative on submit
+  const eligible = assetsRes.data.filter(a =>
+    a.season_year > baseYear &&
+    a.season_year <= maxYear &&
+    a.round_number >= 1 &&
+    a.round_number <= maxRounds,
+  );
+
+  if (eligible.length === 0) return [];
 
   const memberIds = new Set<string>();
-  for (const a of assets) {
+  for (const a of eligible) {
     memberIds.add(a.original_member_id);
     memberIds.add(a.current_member_id);
   }
@@ -84,7 +126,7 @@ export async function loadTradeablePickAssets(
     if (imp) teamNameByMemberId.set(lm.id, imp.team_name);
   }
 
-  return assets.map(a => ({
+  return eligible.map(a => ({
     id:                a.id,
     leagueId:          a.league_id,
     seasonYear:        a.season_year,
@@ -100,7 +142,7 @@ export async function loadTradeablePickAssets(
 export async function loadAllPickAssets(
   leagueId: string,
   memberId: string,
-): Promise<DraftPickAsset[]> {
+): Promise<{ assets: DraftPickAsset[]; error: string | null }> {
   const { data: assets, error: assetsErr } = await supabase
     .from('league_draft_pick_assets')
     .select('id, league_id, season_year, round_number, original_member_id, current_member_id, status')
@@ -109,7 +151,14 @@ export async function loadAllPickAssets(
     .order('season_year', { ascending: true })
     .order('round_number', { ascending: true });
 
-  if (assetsErr || !assets) return [];
+  if (assetsErr) {
+    return { assets: [], error: assetsErr.message };
+  }
+  if (!assets) {
+    return { assets: [], error: null };
+  }
+
+  if (assets.length === 0) return { assets: [], error: null };
 
   const memberIds = new Set<string>();
   for (const a of assets) {
@@ -133,17 +182,20 @@ export async function loadAllPickAssets(
     if (imp) teamNameByMemberId.set(lm.id, imp.team_name);
   }
 
-  return assets.map(a => ({
-    id:                a.id,
-    leagueId:          a.league_id,
-    seasonYear:        a.season_year,
-    roundNumber:       a.round_number,
-    originalMemberId:  a.original_member_id,
-    currentMemberId:   a.current_member_id,
-    status:            a.status as 'available' | 'used',
-    originalTeamName:  teamNameByMemberId.get(a.original_member_id) ?? null,
-    currentTeamName:   teamNameByMemberId.get(a.current_member_id) ?? null,
-  }));
+  return {
+    assets: assets.map(a => ({
+      id:                a.id,
+      leagueId:          a.league_id,
+      seasonYear:        a.season_year,
+      roundNumber:       a.round_number,
+      originalMemberId:  a.original_member_id,
+      currentMemberId:   a.current_member_id,
+      status:            a.status as 'available' | 'used',
+      originalTeamName:  teamNameByMemberId.get(a.original_member_id) ?? null,
+      currentTeamName:   teamNameByMemberId.get(a.current_member_id) ?? null,
+    })),
+    error: null,
+  };
 }
 
 export function useRosterData(leagueId: string, leagueSettings: LeagueSettings | null) {
@@ -153,6 +205,7 @@ export function useRosterData(leagueId: string, leagueSettings: LeagueSettings |
   const [rosterEmpty, setRosterEmpty]       = useState(false);
   const [fetchError, setFetchError]         = useState('');
   const [picksState, setPicksState]         = useState<PicksState>({ kind: 'loading' });
+  const [picksError, setPicksError]         = useState('');
   const [activeDraftId, setActiveDraftId]   = useState<string | null>(null);
   const [activeDraftStatus, setActiveDraftStatus] = useState<string | null>(null);
 
@@ -197,9 +250,16 @@ export function useRosterData(leagueId: string, leagueSettings: LeagueSettings |
     let pickAssets: DraftPickAsset[] = [];
     if (allowFuturePicks && myLeagueMemberRow?.id) {
       if (baseYear !== null) {
-        await supabase.rpc('ensure_league_future_pick_assets', { p_league_id: leagueId });
+        const { error: ensureErr } = await supabase.rpc('ensure_league_future_pick_assets', { p_league_id: leagueId });
+        if (ensureErr) {
+          setPicksError('Could not generate future pick assets: ' + ensureErr.message);
+        }
       }
-      pickAssets = await loadAllPickAssets(leagueId, myLeagueMemberRow.id);
+      const result = await loadAllPickAssets(leagueId, myLeagueMemberRow.id);
+      pickAssets = result.assets;
+      if (result.error) {
+        setPicksError('Could not load future pick assets: ' + result.error);
+      }
     }
 
     const { data: activeDrafts } = await supabase
@@ -293,6 +353,7 @@ export function useRosterData(leagueId: string, leagueSettings: LeagueSettings |
     setLocalOrder([]);
     setRosterEmpty(false);
     setFetchError('');
+    setPicksError('');
 
     loadDraftPicks(member);
 
@@ -312,6 +373,7 @@ export function useRosterData(leagueId: string, leagueSettings: LeagueSettings |
     rosterEmpty,
     fetchError,
     picksState,
+    picksError,
     activeDraftId,
     activeDraftStatus,
     loadRoster,
