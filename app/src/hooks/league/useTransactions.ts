@@ -85,7 +85,9 @@ export function useTransactions(leagueId: string) {
       if (pr.trade_proposal_id) proposalIds.add(pr.trade_proposal_id);
     }
 
-    // Fetch ALL siblings for those proposal IDs that weren't in the initial window
+    // Fetch ALL siblings for those proposal IDs that weren't in the initial window.
+    // Use explicit limit(1000) to stay within Supabase's default row cap while
+    // guaranteeing complete sibling rows for the displayed trade groups.
     if (proposalIds.size > 0) {
       const ids = Array.from(proposalIds);
       const [siblingPlayerRes, siblingPickRes] = await Promise.all([
@@ -100,7 +102,8 @@ export function useTransactions(leagueId: string) {
           `)
           .eq('league_id', leagueId)
           .in('trade_proposal_id', ids)
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .limit(1000),
         supabase
           .from('league_draft_pick_transactions')
           .select(`
@@ -111,31 +114,38 @@ export function useTransactions(leagueId: string) {
           `)
           .eq('league_id', leagueId)
           .in('trade_proposal_id', ids)
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .limit(1000),
       ]);
 
-      const siblingRows = (siblingPlayerRes.data as TransactionRow[]) ?? [];
-      const siblingPickRows = (siblingPickRes.data as PickTransactionRow[]) ?? [];
+      // If sibling queries fail, proceed with initial rows only — do not treat
+      // errors as empty success.
+      if (siblingPlayerRes.error || siblingPickRes.error) {
+        console.error('Sibling transaction query failed:', siblingPlayerRes.error, siblingPickRes.error);
+      } else {
+        const siblingRows = (siblingPlayerRes.data as TransactionRow[]) ?? [];
+        const siblingPickRows = (siblingPickRes.data as PickTransactionRow[]) ?? [];
 
-      // Merge: keep initial rows plus any siblings not already present
-      const seenIds = new Set<string>(rows.map(r => r.id));
-      for (const sr of siblingRows) {
-        if (!seenIds.has(sr.id)) {
-          rows.push(sr);
-          seenIds.add(sr.id);
+        // Merge: keep initial rows plus any siblings not already present
+        const seenIds = new Set<string>(rows.map(r => r.id));
+        for (const sr of siblingRows) {
+          if (!seenIds.has(sr.id)) {
+            rows.push(sr);
+            seenIds.add(sr.id);
+          }
         }
-      }
-      const seenPickIds = new Set<string>(pickRows.map(p => p.id));
-      for (const spr of siblingPickRows) {
-        if (!seenPickIds.has(spr.id)) {
-          pickRows.push(spr);
-          seenPickIds.add(spr.id);
+        const seenPickIds = new Set<string>(pickRows.map(p => p.id));
+        for (const spr of siblingPickRows) {
+          if (!seenPickIds.has(spr.id)) {
+            pickRows.push(spr);
+            seenPickIds.add(spr.id);
+          }
         }
-      }
 
-      // Re-sort by created_at descending after merge
-      rows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      pickRows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        // Re-sort by created_at descending after merge
+        rows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        pickRows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      }
     }
 
     setTransactions(rows);
