@@ -58,7 +58,7 @@ export function useTransactions(leagueId: string) {
         `)
         .eq('league_id', leagueId)
         .order('created_at', { ascending: false })
-        .limit(30),
+        .limit(100),
       supabase
         .from('league_draft_pick_transactions')
         .select(`
@@ -69,7 +69,7 @@ export function useTransactions(leagueId: string) {
         `)
         .eq('league_id', leagueId)
         .order('created_at', { ascending: false })
-        .limit(30),
+        .limit(100),
     ]);
 
     const rows = (playerRes.data as TransactionRow[]) ?? [];
@@ -99,7 +99,7 @@ export function useTransactions(leagueId: string) {
       }
     }
 
-    // Also add pick-only trade groups that have no player rows
+    // Also add pick-only trade groups that have no player rows (exclude rejects)
     for (const pr of pickRows) {
       if (pr.trade_proposal_id && !seenProposalIds.has(pr.trade_proposal_id) && pr.metadata?.action !== 'reject') {
         seenProposalIds.add(pr.trade_proposal_id);

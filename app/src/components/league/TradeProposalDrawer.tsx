@@ -4,6 +4,7 @@ import type { RosterPlayer, DraftPickAsset } from '../../hooks/league/useRosterD
 import type { Database } from '../../types/supabase';
 import { posColor } from '../../utils/positionColors';
 import { computeTradeWarnings } from '../../utils/tradeWarnings';
+import { formatPickLabel } from '../../utils/pickLabel';
 import { loadTeamRoster } from '../../utils/loadRoster';
 import { loadTradeablePickAssets } from '../../hooks/league/useRosterData';
 import { useTradeProposal } from '../../hooks/league/useTradeProposal';
@@ -47,10 +48,6 @@ interface Props {
 }
 
 type Step = 'partner' | 'players' | 'review';
-
-function formatPickLabel(seasonYear: number, roundNumber: number): string {
-  return `${seasonYear} Round ${roundNumber}`;
-}
 
 function PlayerSelectRow({
   player, selected, onToggle, disabled,
@@ -111,13 +108,8 @@ function PickSelectRow({
         PICK
       </span>
       <span style={{ fontSize: '13px', fontWeight: '600', color: textPrimary, flex: 1, minWidth: 0 }}>
-        {formatPickLabel(pick.seasonYear, pick.roundNumber)}
+        {formatPickLabel(pick.seasonYear, pick.roundNumber, pick.originalTeamName)}
       </span>
-      {pick.originalTeamName && pick.originalTeamName !== pick.currentTeamName && (
-        <span style={{ fontSize: '10px', color: textSecondary, flexShrink: 0 }}>
-          from {pick.originalTeamName}
-        </span>
-      )}
       {selected && (
         <span style={{ color: blue, fontSize: '14px', fontWeight: '700', flexShrink: 0 }}>✓</span>
       )}
@@ -596,10 +588,7 @@ export default function TradeProposalDrawer({
                   {selectedSendPicks.map(pick => (
                     <div key={pick.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                       <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: 'rgba(168,85,247,0.15)', color: '#c084fc' }}>PICK</span>
-                      <span style={{ fontSize: '13px', color: textPrimary, fontWeight: '600' }}>{formatPickLabel(pick.seasonYear, pick.roundNumber)}</span>
-                      {pick.originalTeamName && pick.originalTeamName !== pick.currentTeamName && (
-                        <span style={{ fontSize: '11px', color: textSecondary }}>from {pick.originalTeamName}</span>
-                      )}
+                      <span style={{ fontSize: '13px', color: textPrimary, fontWeight: '600' }}>{formatPickLabel(pick.seasonYear, pick.roundNumber, pick.originalTeamName)}</span>
                     </div>
                   ))}
                 </div>
@@ -620,10 +609,7 @@ export default function TradeProposalDrawer({
                   {selectedRecvPicks.map(pick => (
                     <div key={pick.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                       <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: 'rgba(168,85,247,0.15)', color: '#c084fc' }}>PICK</span>
-                      <span style={{ fontSize: '13px', color: textPrimary, fontWeight: '600' }}>{formatPickLabel(pick.seasonYear, pick.roundNumber)}</span>
-                      {pick.originalTeamName && pick.originalTeamName !== pick.currentTeamName && (
-                        <span style={{ fontSize: '11px', color: textSecondary }}>from {pick.originalTeamName}</span>
-                      )}
+                      <span style={{ fontSize: '13px', color: textPrimary, fontWeight: '600' }}>{formatPickLabel(pick.seasonYear, pick.roundNumber, pick.originalTeamName)}</span>
                     </div>
                   ))}
                 </div>

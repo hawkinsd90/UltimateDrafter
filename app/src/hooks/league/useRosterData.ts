@@ -105,7 +105,7 @@ export async function loadAllPickAssets(
     .from('league_draft_pick_assets')
     .select('id, league_id, season_year, round_number, original_member_id, current_member_id, status')
     .eq('league_id', leagueId)
-    .eq('original_member_id', memberId)
+    .eq('current_member_id', memberId)
     .order('season_year', { ascending: true })
     .order('round_number', { ascending: true });
 
@@ -167,7 +167,6 @@ export function useRosterData(leagueId: string, leagueSettings: LeagueSettings |
     const leagueDraftType  = leagueSettings?.default_draft_type ?? 'snake';
     const leagueRounds     = leagueSettings?.default_rounds ?? 15;
     const allowFuturePicks = leagueSettings?.allow_future_picks ?? false;
-    const futurePickYears  = leagueSettings?.future_pick_years ?? 1;
 
     // Fetch league season to derive base year
     const { data: leagueRow } = await supabase
@@ -177,8 +176,14 @@ export function useRosterData(leagueId: string, leagueSettings: LeagueSettings |
       .maybeSingle();
 
     const baseYear = leagueRow?.season
-      ? parseLeagueBaseYear(leagueRow.season) ?? new Date().getFullYear()
-      : new Date().getFullYear();
+      ? parseLeagueBaseYear(leagueRow.season)
+      : null;
+
+    if (baseYear === null) {
+      setPicksState({ kind: 'not_in_league' });
+      setFetchError(`Cannot parse league season "${leagueRow?.season ?? ''}". Expected format like "2026-27" or "2026".`);
+      return;
+    }
 
     // Resolve the member's league_member_id for pick-asset queries
     const { data: myLeagueMemberRow } = await supabase
@@ -188,9 +193,12 @@ export function useRosterData(leagueId: string, leagueSettings: LeagueSettings |
       .eq('user_id', member.invitedUserId)
       .maybeSingle();
 
-    // Load pick assets owned by this member (if future picks enabled)
+    // Ensure pick assets exist for this league before loading (if future picks enabled)
     let pickAssets: DraftPickAsset[] = [];
     if (allowFuturePicks && myLeagueMemberRow?.id) {
+      if (baseYear !== null) {
+        await supabase.rpc('ensure_league_future_pick_assets', { p_league_id: leagueId });
+      }
       pickAssets = await loadAllPickAssets(leagueId, myLeagueMemberRow.id);
     }
 
@@ -274,14 +282,6 @@ export function useRosterData(leagueId: string, leagueSettings: LeagueSettings |
       const pick    = isSnake && round % 2 === 0 ? totalTeams + 1 - myPos : myPos;
       const overall = (round - 1) * totalTeams + pick;
       picks.push({ round, pick, overall, draftName: 'Projected', year: baseYear });
-    }
-
-    if (allowFuturePicks) {
-      for (let yo = 1; yo <= futurePickYears; yo++) {
-        for (let round = 1; round <= leagueRounds; round++) {
-          picks.push({ round, pick: 0, overall: 0, draftName: 'Future', year: baseYear + yo });
-        }
-      }
     }
 
     setPicksState({ kind: 'projected', picks, pickAssets });

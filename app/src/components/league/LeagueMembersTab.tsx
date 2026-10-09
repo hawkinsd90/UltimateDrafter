@@ -286,8 +286,10 @@ export default function LeagueMembersTab({
 
   async function handleRemoveMember(memberId: string) {
     const memberToRemove = members.find(m => m.id === memberId);
-    const { error } = await supabase.from('league_members').delete().eq('id', memberId);
+    const { data, error } = await supabase.rpc('safe_remove_league_member', { p_member_id: memberId });
     if (error) { setBannerError('Failed to remove member: ' + error.message); return; }
+    const result = data as { success?: boolean } | null;
+    if (!result?.success) { setBannerError('Failed to remove member. They may have traded draft picks that require resolution.'); return; }
     if (memberToRemove?.user_id) {
       await supabase.from('league_imported_members')
         .update({ invited_user_id: null, invite_id: null })

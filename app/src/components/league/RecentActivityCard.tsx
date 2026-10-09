@@ -3,6 +3,7 @@ import { posColor } from '../../utils/positionColors';
 import { timeAgo } from '../../utils/time';
 import type { ActivityItem, TransactionRow, TradeGroup } from '../../hooks/league/useTransactions';
 import { isTradeGroup } from '../../hooks/league/useTransactions';
+import { formatPickLabel } from '../../utils/pickLabel';
 
 const card          = '#1e293b';
 const border        = '#334155';
@@ -103,10 +104,12 @@ function TradeGroupRow({ group, isLast }: { group: TradeGroup; isLast: boolean }
     const fromTeam = (pr.metadata?.from_team as string) ?? 'Unknown';
     const toTeam   = (pr.metadata?.to_team   as string) ?? 'Unknown';
     const pickLabel = (pr.metadata?.pick_label as string) ?? `${pr.season_year} Round ${pr.round_number}`;
+    const origTeam  = (pr.metadata?.original_team as string) ?? null;
+    const fullLabel = origTeam ? formatPickLabel(pr.season_year, pr.round_number, origTeam) : pickLabel;
     moves.push({
       fromTeam,
       toTeam,
-      name: pickLabel,
+      name: fullLabel,
       pos: null,
       isPick: true,
     });

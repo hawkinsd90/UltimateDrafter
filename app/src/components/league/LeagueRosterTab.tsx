@@ -115,12 +115,37 @@ export default function LeagueRosterTab({
           loadTransactions();
         },
       )
-      .subscribe();
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'league_draft_pick_assets', filter: `league_id=eq.${leagueId}` },
+        () => {
+          if (selectedMember) loadRoster(selectedMember);
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'league_draft_pick_transactions', filter: `league_id=eq.${leagueId}` },
+        () => {
+          loadTransactions();
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'league_trade_proposals', filter: `league_id=eq.${leagueId}` },
+        () => {
+          loadTrades();
+        },
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error('Realtime subscription error for league roster channel:', status);
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [leagueId, selectedMember, loadRoster, loadTransactions]);
+  }, [leagueId, selectedMember, loadRoster, loadTransactions, loadTrades]);
 
   // ── Drop flow ──────────────────────────────────────────────────────────────
 
@@ -269,7 +294,11 @@ export default function LeagueRosterTab({
   );
 
   // Show Propose Trade when viewing own team or another claimed team, as long as there are other joined members and I have a team
-  const canProposeTrade = !!myTeam && joinedMembers.filter(m => m.invitedUserId !== userId).length > 0;
+  const allowPlayerTrades  = leagueSettings?.allow_trades ?? false;
+  const allowPickTrades    = leagueSettings?.allow_pick_trades ?? false;
+  const allowFuturePicks   = allowPickTrades && (leagueSettings?.allow_future_picks ?? false);
+  const anyTradesEnabled   = allowPlayerTrades || allowFuturePicks;
+  const canProposeTrade    = !!myTeam && anyTradesEnabled && joinedMembers.filter(m => m.invitedUserId !== userId).length > 0;
   const viewingOtherTeam = !isOwnTeam && !!selectedMember && selectedMember.invitedUserId !== null;
 
   return (
@@ -329,6 +358,11 @@ export default function LeagueRosterTab({
               >
                 {viewingOtherTeam ? `Propose Trade with ${selectedMember?.teamName}` : 'Propose Trade'}
               </button>
+            )}
+            {!canProposeTrade && !!myTeam && joinedMembers.filter(m => m.invitedUserId !== userId).length > 0 && !anyTradesEnabled && (
+              <span style={{ fontSize: '11px', color: textSecondary, fontStyle: 'italic' }}>
+                Trading is disabled in league settings
+              </span>
             )}
             {selectedMember && (
               <span style={{ fontSize: '12px', color: textSecondary }}>

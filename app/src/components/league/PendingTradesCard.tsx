@@ -5,6 +5,7 @@ import type { TradeProposal, TradeProposalPick } from '../../hooks/league/useTra
 import { useTradeProposal } from '../../hooks/league/useTradeProposal';
 import { useConfirm } from '../../hooks/useConfirm';
 import ConfirmModal from '../ConfirmModal';
+import { formatPickLabel } from '../../utils/pickLabel';
 
 const card          = '#1e293b';
 const border        = '#334155';
@@ -14,10 +15,6 @@ const amber         = '#fbbf24';
 const green         = '#22c55e';
 const red           = '#ef4444';
 const blue          = '#3b82f6';
-
-function formatPickLabel(seasonYear: number, roundNumber: number): string {
-  return `${seasonYear} Round ${roundNumber}`;
-}
 
 interface Props {
   leagueId:      string;
@@ -45,7 +42,7 @@ function PlayerPill({ name, pos }: { name: string; pos: string | null }) {
 function PickPill({ pick }: { pick: TradeProposalPick }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginRight: '4px', marginBottom: '4px' }}>
-      <span style={{ fontSize: '12px', color: textPrimary, fontWeight: '600' }}>{formatPickLabel(pick.snapshot_season_year, pick.snapshot_round_number)}</span>
+      <span style={{ fontSize: '12px', color: textPrimary, fontWeight: '600' }}>{formatPickLabel(pick.snapshot_season_year, pick.snapshot_round_number, pick.snapshot_original_team_name)}</span>
       <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '4px', background: 'rgba(168,85,247,0.15)', color: '#c084fc' }}>
         PICK
       </span>
@@ -74,11 +71,11 @@ function TradeRow({ proposal, userId, isLeagueOwner, onAction }: {
 
   const sendSummary    = [
     ...sendPlayers.map(p => p.snapshot_player_name),
-    ...sendPicks.map(p => formatPickLabel(p.snapshot_season_year, p.snapshot_round_number)),
+    ...sendPicks.map(p => formatPickLabel(p.snapshot_season_year, p.snapshot_round_number, p.snapshot_original_team_name)),
   ];
   const receiveSummary = [
     ...receivePlayers.map(p => p.snapshot_player_name),
-    ...receivePicks.map(p => formatPickLabel(p.snapshot_season_year, p.snapshot_round_number)),
+    ...receivePicks.map(p => formatPickLabel(p.snapshot_season_year, p.snapshot_round_number, p.snapshot_original_team_name)),
   ];
 
   async function handleAccept() {
@@ -306,11 +303,11 @@ export default function PendingTradesCard({ leagueId: _leagueId, userId, isLeagu
         const receivePicks   = p.picks.filter(pl => pl.direction === 'receive');
         const sendSummary    = [
           ...sendPlayers.map(pl => pl.snapshot_player_name),
-          ...sendPicks.map(pl => formatPickLabel(pl.snapshot_season_year, pl.snapshot_round_number)),
+          ...sendPicks.map(pl => formatPickLabel(pl.snapshot_season_year, pl.snapshot_round_number, pl.snapshot_original_team_name)),
         ];
         const receiveSummary = [
           ...receivePlayers.map(pl => pl.snapshot_player_name),
-          ...receivePicks.map(pl => formatPickLabel(pl.snapshot_season_year, pl.snapshot_round_number)),
+          ...receivePicks.map(pl => formatPickLabel(pl.snapshot_season_year, pl.snapshot_round_number, pl.snapshot_original_team_name)),
         ];
         const statusColor = p.status === 'accepted' ? green : p.status === 'rejected' ? red : textSecondary;
         return (

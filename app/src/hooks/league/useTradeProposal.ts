@@ -60,9 +60,9 @@ export function useTradeProposal() {
       return false;
     }
 
-    const result = data as { success?: boolean } | null;
+    const result = data as { success?: boolean; error?: string } | null;
     if (!result?.success) {
-      setError('Failed to accept trade.');
+      setError(result?.error ?? 'Failed to accept trade.');
       return false;
     }
 

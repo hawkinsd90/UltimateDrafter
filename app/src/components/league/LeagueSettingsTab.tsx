@@ -42,28 +42,12 @@ type FormData = {
   max_dst: number | null;
 };
 
-type ExtLeagueSettings = LeagueSettings & {
-  roster_op?: number;
-  roster_limits_enabled?: boolean;
-  max_qb?: number | null;
-  max_rb?: number | null;
-  max_wr?: number | null;
-  max_te?: number | null;
-  max_k?: number | null;
-  max_dst?: number | null;
-  allow_future_picks?: boolean;
-  future_pick_years?: number;
-  default_draft_type?: string;
-  default_rounds?: number;
-};
-
 function settingsToForm(s: LeagueSettings): FormData {
-  const ext = s as ExtLeagueSettings;
   return {
     draft_format: s.draft_format,
     pick_timer_seconds: s.pick_timer_seconds,
-    default_draft_type: ext.default_draft_type ?? 'snake',
-    default_rounds: ext.default_rounds ?? 15,
+    default_draft_type: s.default_draft_type ?? 'snake',
+    default_rounds: s.default_rounds ?? 15,
     allow_pauses: s.allow_pauses,
     drafting_hours_enabled: s.drafting_hours_enabled,
     drafting_hours_start: s.drafting_hours_start || '',
@@ -75,19 +59,19 @@ function settingsToForm(s: LeagueSettings): FormData {
     roster_flex: s.roster_flex,
     roster_k: s.roster_k,
     roster_dst: s.roster_dst,
-    roster_op: ext.roster_op ?? 0,
+    roster_op: s.roster_op ?? 0,
     bench: s.bench,
     allow_trades: s.allow_trades,
     allow_pick_trades: s.allow_pick_trades,
-    allow_future_picks: ext.allow_future_picks ?? false,
-    future_pick_years: ext.future_pick_years ?? 1,
-    roster_limits_enabled: ext.roster_limits_enabled ?? false,
-    max_qb:  ext.max_qb  ?? null,
-    max_rb:  ext.max_rb  ?? null,
-    max_wr:  ext.max_wr  ?? null,
-    max_te:  ext.max_te  ?? null,
-    max_k:   ext.max_k   ?? null,
-    max_dst: ext.max_dst ?? null,
+    allow_future_picks: s.allow_future_picks ?? false,
+    future_pick_years: s.future_pick_years ?? 1,
+    roster_limits_enabled: s.roster_limits_enabled ?? false,
+    max_qb:  s.max_qb  ?? null,
+    max_rb:  s.max_rb  ?? null,
+    max_wr:  s.max_wr  ?? null,
+    max_te:  s.max_te  ?? null,
+    max_k:   s.max_k   ?? null,
+    max_dst: s.max_dst ?? null,
   };
 }
 
@@ -146,10 +130,18 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
       if (error) {
         setMessage('Error updating settings: ' + error.message);
       } else {
+        let ensureError = '';
         if (formData.allow_future_picks) {
-          await supabase.rpc('ensure_league_future_pick_assets', { p_league_id: leagueId });
+          const { error: ensureErr } = await supabase.rpc('ensure_league_future_pick_assets', { p_league_id: leagueId });
+          if (ensureErr) {
+            ensureError = ensureErr.message ?? 'Unknown error generating pick assets';
+          }
         }
-        setMessage('Settings updated successfully');
+        if (ensureError) {
+          setMessage('Settings saved, but pick asset generation failed: ' + ensureError + '. You can retry by saving settings again.');
+        } else {
+          setMessage('Settings updated successfully');
+        }
         onSaved();
       }
     } catch {
@@ -179,8 +171,8 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               <div><strong>Draft Format:</strong> {leagueSettings.draft_format}</div>
               <div><strong>Pick Timer:</strong> {leagueSettings.pick_timer_seconds === 0 ? 'Unlimited' : `${leagueSettings.pick_timer_seconds} seconds`}</div>
-              <div><strong>Default Draft Type:</strong> {(leagueSettings as ExtLeagueSettings).default_draft_type ?? 'snake'}</div>
-              <div><strong>Default Rounds:</strong> {(leagueSettings as ExtLeagueSettings).default_rounds ?? 15}</div>
+              <div><strong>Default Draft Type:</strong> {leagueSettings.default_draft_type ?? 'snake'}</div>
+              <div><strong>Default Rounds:</strong> {leagueSettings.default_rounds ?? 15}</div>
               <div><strong>Allow Pauses:</strong> {leagueSettings.allow_pauses ? 'Yes' : 'No'}</div>
               <div><strong>Drafting Hours:</strong> {leagueSettings.drafting_hours_enabled ? `${leagueSettings.drafting_hours_start} - ${leagueSettings.drafting_hours_end}` : 'Not restricted'}</div>
             </div>
@@ -190,7 +182,7 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               <div><strong>Allow Trades:</strong> {leagueSettings.allow_trades ? 'Yes' : 'No'}</div>
               <div><strong>Allow Pick Trades:</strong> {leagueSettings.allow_pick_trades ? 'Yes' : 'No'}</div>
-              <div><strong>Allow Future Pick Trades:</strong> {(leagueSettings as ExtLeagueSettings).allow_future_picks ? `Yes (${(leagueSettings as ExtLeagueSettings).future_pick_years ?? 1} year${((leagueSettings as ExtLeagueSettings).future_pick_years ?? 1) !== 1 ? 's' : ''})` : 'No'}</div>
+              <div><strong>Allow Future Pick Trades:</strong> {leagueSettings.allow_future_picks ? `Yes (${leagueSettings.future_pick_years ?? 1} year${(leagueSettings.future_pick_years ?? 1) !== 1 ? 's' : ''})` : 'No'}</div>
             </div>
           </div>
         </div>
@@ -202,7 +194,7 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
             ))}
           </div>
         </div>
-        {(leagueSettings as ExtLeagueSettings).roster_limits_enabled && (
+        {leagueSettings.roster_limits_enabled && (
           <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '24px' }}>
             <h3 style={{ marginTop: '0' }}>Roster Limits</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
@@ -213,8 +205,8 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
                 { key: 'max_te',  label: 'Max TE' },
                 { key: 'max_k',   label: 'Max K' },
                 { key: 'max_dst', label: 'Max DST' },
-              ] as { key: keyof ExtLeagueSettings; label: string }[]).map(({ key, label }) => {
-                const val = (leagueSettings as ExtLeagueSettings)[key];
+              ] as { key: keyof LeagueSettings; label: string }[]).map(({ key, label }) => {
+                const val = leagueSettings[key];
                 return <div key={key}><strong>{label}:</strong> {val == null ? 'No limit' : String(val)}</div>;
               })}
             </div>

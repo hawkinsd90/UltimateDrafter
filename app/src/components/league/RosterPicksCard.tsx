@@ -10,7 +10,7 @@ interface Props {
   activeDraftStatus: string | null;
 }
 
-function PickAssetRow({ asset, isOwned }: { asset: DraftPickAsset; isOwned: boolean }) {
+function PickAssetRow({ asset }: { asset: DraftPickAsset }) {
   const isUsed = asset.status === 'used';
   const wasTraded = asset.originalTeamName !== asset.currentTeamName;
 
@@ -19,25 +19,23 @@ function PickAssetRow({ asset, isOwned }: { asset: DraftPickAsset; isOwned: bool
       padding: '6px 12px',
       borderRadius: '7px',
       background: '#0f172a',
-      border: `1px solid ${isUsed ? '#475569' : isOwned ? '#6366f1' : '#1e3a5f'}`,
+      border: `1px solid ${isUsed ? '#475569' : '#6366f1'}`,
       textAlign: 'center',
-      minWidth: '96px',
+      minWidth: '110px',
       opacity: isUsed ? 0.5 : 1,
     }}>
       <div style={{ fontSize: '10px', color: textSecondary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
         {asset.seasonYear}
       </div>
-      <div style={{ fontSize: '16px', fontWeight: '700', color: isUsed ? '#475569' : isOwned ? textPrimary : '#7891ad' }}>
+      <div style={{ fontSize: '16px', fontWeight: '700', color: isUsed ? '#475569' : textPrimary }}>
         Rd {asset.roundNumber}
       </div>
       <div style={{ fontSize: '9px', color: textSecondary, marginTop: '2px' }}>
-        {isUsed ? 'Used' : isOwned ? 'Tradeable' : `Owned by ${asset.currentTeamName ?? 'other'}`}
+        {isUsed ? 'Used' : 'Tradeable'}
       </div>
-      {wasTraded && !isUsed && (
-        <div style={{ fontSize: '9px', color: '#6366f1', marginTop: '1px' }}>
-          from {asset.originalTeamName ?? 'original'}
-        </div>
-      )}
+      <div style={{ fontSize: '9px', color: wasTraded ? '#6366f1' : textSecondary, marginTop: '1px' }}>
+        originally {asset.originalTeamName ?? 'original'}
+      </div>
     </div>
   );
 }
@@ -76,44 +74,33 @@ export default function RosterPicksCard({ picksState, activeDraftStatus }: Props
 
       {(picksState.kind === 'projected' || picksState.kind === 'actual') && (() => {
         const years       = Array.from(new Set(picksState.picks.map(p => p.year))).sort((a, b) => a - b);
-        const currentYear = years[0];
-        const multiYear   = years.length > 1;
         return (
           <div style={{ padding: '12px 16px' }}>
-            {years.map((year, yi) => {
+            {/* Current-season picks — calculated from draft order */}
+            {years.map(year => {
               const yearPicks = picksState.picks.filter(p => p.year === year);
-              const isCurrent = year === currentYear;
               return (
-                <div key={year} style={{ marginBottom: multiYear && yi < years.length - 1 ? '16px' : 0 }}>
-                  {multiYear && (
-                    <div style={{ fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px', paddingBottom: '4px', borderBottom: `1px solid ${border}` }}>
-                      {year} Picks
-                    </div>
-                  )}
+                <div key={year} style={{ marginBottom: '16px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px', paddingBottom: '4px', borderBottom: `1px solid ${border}` }}>
+                    {year} Picks
+                  </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                    {yearPicks.map(pick => isCurrent ? (
+                    {yearPicks.map(pick => (
                       <div key={`${year}-${pick.round}`} style={{ padding: '6px 12px', borderRadius: '7px', background: '#0f172a', border: `1px solid ${picksState.kind === 'projected' ? '#334155' : '#1d4ed8'}`, textAlign: 'center', minWidth: '72px' }}>
                         <div style={{ fontSize: '10px', color: textSecondary, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Rd {pick.round}</div>
                         <div style={{ fontSize: '16px', fontWeight: '700', color: picksState.kind === 'projected' ? textSecondary : textPrimary }}>#{pick.overall}</div>
                         <div style={{ fontSize: '10px', color: textSecondary }}>Pick {pick.pick}</div>
                       </div>
-                    ) : (
-                      <div key={`${year}-${pick.round}`} style={{ padding: '6px 12px', borderRadius: '7px', background: '#0f172a', border: '1px solid #1e3a5f', textAlign: 'center', minWidth: '72px' }}>
-                        <div style={{ fontSize: '10px', color: '#475569', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{year}</div>
-                        <div style={{ fontSize: '16px', fontWeight: '700', color: '#475569' }}>Rd {pick.round}</div>
-                      </div>
                     ))}
                   </div>
-                  {isCurrent && (
-                    <div style={{ fontSize: '10px', color: textSecondary, marginTop: '6px', fontStyle: 'italic' }}>
-                      Current-season picks cannot be traded yet.
-                    </div>
-                  )}
+                  <div style={{ fontSize: '10px', color: textSecondary, marginTop: '6px', fontStyle: 'italic' }}>
+                    Current-season picks cannot be traded yet.
+                  </div>
                 </div>
               );
             })}
 
-            {/* Owned pick assets section */}
+            {/* Future pick assets — database-backed ownership */}
             {pickAssets.length > 0 && (
               <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: `1px solid ${border}` }}>
                 <div style={{ fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>
@@ -129,7 +116,6 @@ export default function RosterPicksCard({ picksState, activeDraftStatus }: Props
                           <PickAssetRow
                             key={asset.id}
                             asset={asset}
-                            isOwned={asset.status === 'available' && asset.originalTeamName === asset.currentTeamName}
                           />
                         ))}
                       </div>
