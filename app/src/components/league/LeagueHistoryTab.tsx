@@ -286,7 +286,7 @@ function StandingsTable({ teams }: { teams: SeasonTeam[] }) {
               style={{ borderBottom: '1px solid #f3f4f6' }}
             >
               <td style={{ padding: '8px 12px' }}>
-                {t.is_champion && <span style={{ fontSize: '16px' }}></span>}
+                {t.is_champion && <span style={{ fontSize: '16px', marginRight: '4px' }}>&#127942;</span>}
                 {t.final_standing ?? '-'}
               </td>
               <td style={{ padding: '8px 12px', fontWeight: t.is_champion ? '600' : '400' }}>
@@ -347,6 +347,7 @@ function HistoryImportModal({
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
         body: JSON.stringify({
           provider,
@@ -397,6 +398,7 @@ function HistoryImportModal({
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`,
+          'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
         },
         body: JSON.stringify({
           leagueId,
