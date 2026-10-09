@@ -1,18 +1,22 @@
 // Persists a normalized historical season into the database.
 //
 // Safe re-import strategy:
-//   1. Find existing season by (league_id, season_year)
-//   2. Create an import_run record at the start
-//   3. Save managers (auto-match by provider owner ID, never auto-merge by name)
-//   4. Save season teams (delete + re-insert for this season only)
-//   5. Save matchups (delete + re-insert for this season only)
-//   6. Save draft + picks (delete + re-insert for this season only)
-//   7. Update season import_status and import_run status
+//   1. Create an import_run record at the start
+//   2. Call the save_historical_season RPC function which performs the entire
+//      season replacement atomically in a single Postgres transaction
+//   3. If the RPC succeeds, update import_run to "success" or "partial"
+//   4. If the RPC fails, the transaction rolls back — previous data is preserved
 //
 // Manager identity corrections are preserved through re-imports:
 //   - Managers are matched only by exact provider owner ID (never by name)
 //   - Existing managers and aliases are never deleted or merged
 //   - New owner IDs create new managers + aliases
+//
+// Transaction safety:
+//   The save_historical_season function deletes existing child rows and inserts
+//   new ones within a single BEGIN/END block. If any insert fails, the entire
+//   transaction (including the deletes) rolls back. Previous season data is
+//   never left in a partially destroyed state.
 
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import type {
@@ -28,18 +32,11 @@ export interface SaveHistoryInput {
   adminClient: SupabaseClient;
 }
 
-interface ManagerMatchResult {
-  managerId: string;
-  aliasId: string;
-  isNew: boolean;
-}
-
 export async function saveHistoricalSeason(
   input: SaveHistoryInput
 ): Promise<HistoricalImportSummary> {
   const { leagueId, externalLinkId, normalized, callerUserId, adminClient } = input;
-  const { seasonYear, externalLeagueId, teams, matchups, draft, completeness } = normalized;
-  const warnings: string[] = [...normalized.warnings];
+  const { seasonYear, externalLeagueId } = normalized;
 
   // ── 1. Create import run ────────────────────────────────────────────────────
   const { data: importRun, error: runErr } = await adminClient
@@ -63,244 +60,84 @@ export async function saveHistoricalSeason(
   const importRunId = importRun.id;
 
   try {
-    // ── 2. Upsert season ──────────────────────────────────────────────────────
-    const { data: existingSeason } = await adminClient
-      .from("league_history_seasons")
-      .select("id")
-      .eq("league_id", leagueId)
-      .eq("season_year", seasonYear)
-      .maybeSingle();
-
-    const seasonPayload = {
-      league_id: leagueId,
-      external_link_id: externalLinkId,
-      season_year: seasonYear,
-      external_league_id: externalLeagueId,
-      display_name: normalized.displayName,
-      num_teams: normalized.numTeams,
-      scoring_type: normalized.scoringType,
-      raw_settings: normalized.rawSettings,
-      raw_scoring: normalized.rawScoring,
-      import_status: "complete",
-      import_completeness: completeness,
-      import_errors: warnings,
-      imported_at: new Date().toISOString(),
-      imported_by: callerUserId,
-      updated_at: new Date().toISOString(),
-    };
-
-    let seasonId: string;
-
-    if (existingSeason) {
-      const { data: updated, error: updErr } = await adminClient
-        .from("league_history_seasons")
-        .update(seasonPayload)
-        .eq("id", existingSeason.id)
-        .select("id")
-        .single();
-      if (updErr || !updated) throw new Error("Failed to update season: " + (updErr?.message ?? "unknown"));
-      seasonId = updated.id;
-    } else {
-      const { data: created, error: insErr } = await adminClient
-        .from("league_history_seasons")
-        .insert(seasonPayload)
-        .select("id")
-        .single();
-      if (insErr || !created) throw new Error("Failed to create season: " + (insErr?.message ?? "unknown"));
-      seasonId = created.id;
-    }
-
-    // ── 3. Match managers by provider owner ID ────────────────────────────────
-    const { results: managerResults, managersCreated, managersMatched } = await matchManagers(
-      adminClient,
-      leagueId,
-      normalized.provider,
-      teams,
-      warnings
-    );
-
-    // Build owner_id → managerId map
-    const ownerToManager = new Map<string, ManagerMatchResult>();
-    for (const [ownerId, result] of managerResults) {
-      ownerToManager.set(ownerId, result);
-    }
-
-    // ── 4. Save season teams ──────────────────────────────────────────────────
-    // Delete existing teams for this season only (cascade deletes team_managers)
-    await adminClient
-      .from("league_history_season_teams")
-      .delete()
-      .eq("season_id", seasonId);
-
-    const teamRows = teams.map((t) => {
-      const primaryResult = t.primaryOwner ? ownerToManager.get(t.primaryOwner) : null;
-      const primaryManagerId = primaryResult?.managerId ?? null;
-      return {
-        season_id: seasonId,
-        league_id: leagueId,
-        external_team_id: t.externalTeamId,
-        team_name: t.teamName,
-        team_abbrev: t.teamAbbrev,
-        primary_manager_id: primaryManagerId,
+    // ── 2. Build JSONB payload for the atomic RPC ──────────────────────────────
+    const payload = {
+      displayName: normalized.displayName,
+      numTeams: normalized.numTeams,
+      scoringType: normalized.scoringType,
+      rawSettings: normalized.rawSettings,
+      rawScoring: normalized.rawScoring,
+      completeness: normalized.completeness,
+      warnings: normalized.warnings,
+      teams: normalized.teams.map((t) => ({
+        externalTeamId: t.externalTeamId,
+        teamName: t.teamName,
+        teamAbbrev: t.teamAbbrev,
+        owners: t.owners,
+        primaryOwner: t.primaryOwner,
         wins: t.wins,
         losses: t.losses,
         ties: t.ties,
-        points_for: t.pointsFor,
-        points_against: t.pointsAgainst,
-        playoff_seed: t.playoffSeed,
-        final_standing: t.finalStanding,
-        is_champion: t.finalStanding === 1,
-        is_runner_up: t.finalStanding === 2,
+        pointsFor: t.pointsFor,
+        pointsAgainst: t.pointsAgainst,
+        playoffSeed: t.playoffSeed,
+        finalStanding: t.finalStanding,
         eliminated: t.eliminated,
-        elimination_period: t.eliminationPeriod,
-        raw_team_data: t.rawTeamData,
-      };
-    });
+        eliminationPeriod: t.eliminationPeriod,
+        rawTeamData: t.rawTeamData,
+      })),
+      matchups: normalized.matchups.map((m) => ({
+        sourceMatchupId: m.sourceMatchupId,
+        matchupPeriod: m.matchupPeriod,
+        classification: m.classification,
+        homeTeamId: m.homeTeamId,
+        awayTeamId: m.awayTeamId,
+        homeScore: m.homeScore,
+        awayScore: m.awayScore,
+        winner: m.winner,
+        rawMatchupData: m.rawMatchupData,
+      })),
+      draft: normalized.draft ? {
+        draftType: normalized.draft.draftType,
+        numRounds: normalized.draft.numRounds,
+        numPicks: normalized.draft.numPicks,
+        completedAt: normalized.draft.completedAt,
+        picks: normalized.draft.picks.map((p) => ({
+          overallPickNumber: p.overallPickNumber,
+          roundNumber: p.roundNumber,
+          roundPickNumber: p.roundPickNumber,
+          teamId: p.teamId,
+          externalPlayerId: p.externalPlayerId,
+          playerName: p.playerName,
+          isKeeper: p.isKeeper,
+          auctionBidAmount: p.auctionBidAmount,
+          rawPickData: p.rawPickData,
+        })),
+        rawDraftDetail: normalized.draft.rawDraftDetail,
+      } : null,
+    };
 
-    if (teamRows.length > 0) {
-      const { error: teamInsErr } = await adminClient
-        .from("league_history_season_teams")
-        .insert(teamRows);
-      if (teamInsErr) throw new Error("Failed to insert season teams: " + teamInsErr.message);
+    // ── 3. Call atomic save function ───────────────────────────────────────────
+    const { data: result, error: rpcErr } = await adminClient
+      .rpc("save_historical_season", {
+        p_league_id: leagueId,
+        p_season_year: seasonYear,
+        p_data: payload,
+        p_caller_user_id: callerUserId,
+        p_external_link_id: externalLinkId,
+        p_provider: normalized.provider,
+        p_external_league_id: externalLeagueId,
+      });
+
+    if (rpcErr || !result) {
+      throw new Error("Atomic save failed: " + (rpcErr?.message ?? "no result returned"));
     }
 
-    // Fetch inserted teams to get UUIDs for FK references
-    const { data: insertedTeams } = await adminClient
-      .from("league_history_season_teams")
-      .select("id, external_team_id")
-      .eq("season_id", seasonId);
+    const summary = result as Record<string, unknown>;
+    const seasonId = summary.seasonId as string;
+    const warnings = (Array.isArray(summary.warnings) ? summary.warnings : []) as string[];
 
-    const teamIdMap = new Map<string, string>();
-    for (const t of insertedTeams ?? []) {
-      teamIdMap.set(t.external_team_id as string, t.id as string);
-    }
-
-    // ── 5. Save team_managers (co-manager associations) ───────────────────────
-    const teamManagerRows: Record<string, unknown>[] = [];
-    for (const t of teams) {
-      const seasonTeamId = teamIdMap.get(t.externalTeamId);
-      if (!seasonTeamId) continue;
-
-      for (const ownerId of t.owners) {
-        const result = ownerToManager.get(ownerId);
-        if (!result) continue;
-        const isPrimary = ownerId === t.primaryOwner;
-        teamManagerRows.push({
-          season_team_id: seasonTeamId,
-          manager_id: result.managerId,
-          role: isPrimary ? "primary" : "co_manager",
-        });
-      }
-    }
-
-    if (teamManagerRows.length > 0) {
-      const { error: tmErr } = await adminClient
-        .from("league_history_team_managers")
-        .upsert(teamManagerRows, {
-          onConflict: "season_team_id,manager_id",
-          ignoreDuplicates: true,
-        });
-      if (tmErr) warnings.push("Could not save some team_manager associations: " + tmErr.message);
-    }
-
-    // ── 6. Save matchups ──────────────────────────────────────────────────────
-    await adminClient
-      .from("league_history_matchups")
-      .delete()
-      .eq("season_id", seasonId);
-
-    const matchupRows = matchups.map((m) => ({
-      season_id: seasonId,
-      league_id: leagueId,
-      source_matchup_id: m.sourceMatchupId,
-      matchup_period: m.matchupPeriod,
-      classification: m.classification,
-      home_team_id: m.homeTeamId ? (teamIdMap.get(m.homeTeamId) ?? null) : null,
-      away_team_id: m.awayTeamId ? (teamIdMap.get(m.awayTeamId) ?? null) : null,
-      home_score: m.homeScore,
-      away_score: m.awayScore,
-      winner: m.winner,
-      raw_matchup_data: m.rawMatchupData,
-    }));
-
-    if (matchupRows.length > 0) {
-      const BATCH = 200;
-      for (let i = 0; i < matchupRows.length; i += BATCH) {
-        const batch = matchupRows.slice(i, i + BATCH);
-        const { error: mErr } = await adminClient
-          .from("league_history_matchups")
-          .insert(batch);
-        if (mErr) throw new Error(`Failed to insert matchups (batch ${i}): ${mErr.message}`);
-      }
-    }
-
-    // ── 7. Save draft + picks ─────────────────────────────────────────────────
-    let draftPicksImported = 0;
-
-    if (draft) {
-      await adminClient
-        .from("league_history_drafts")
-        .delete()
-        .eq("season_id", seasonId);
-
-      const draftRow = {
-        season_id: seasonId,
-        league_id: leagueId,
-        draft_type: draft.draftType,
-        num_rounds: draft.numRounds,
-        num_picks: draft.numPicks,
-        completed_at: draft.completedAt
-          ? new Date(draft.completedAt).toISOString()
-          : null,
-        raw_draft_detail: draft.rawDraftDetail,
-      };
-
-      const { data: insertedDraft, error: dErr } = await adminClient
-        .from("league_history_drafts")
-        .insert(draftRow)
-        .select("id")
-        .single();
-
-      if (dErr || !insertedDraft) {
-        warnings.push("Failed to save draft: " + (dErr?.message ?? "unknown"));
-      } else {
-        const draftId = insertedDraft.id;
-
-        const pickRows = draft.picks.map((p) => ({
-          draft_id: draftId,
-          season_id: seasonId,
-          league_id: leagueId,
-          overall_pick_number: p.overallPickNumber,
-          round_number: p.roundNumber,
-          round_pick_number: p.roundPickNumber,
-          team_id: p.teamId ? (teamIdMap.get(p.teamId) ?? null) : null,
-          external_team_id: p.teamId || null,
-          external_player_id: p.externalPlayerId,
-          player_name: p.playerName || null,
-          player_position: null,
-          is_keeper: p.isKeeper,
-          auction_bid_amount: p.auctionBidAmount,
-          raw_pick_data: p.rawPickData,
-        }));
-
-        if (pickRows.length > 0) {
-          const BATCH = 200;
-          for (let i = 0; i < pickRows.length; i += BATCH) {
-            const batch = pickRows.slice(i, i + BATCH);
-            const { error: pErr } = await adminClient
-              .from("league_history_draft_picks")
-              .insert(batch);
-            if (pErr) {
-              warnings.push(`Failed to insert some draft picks (batch ${i}): ${pErr.message}`);
-              break;
-            }
-          }
-          draftPicksImported = pickRows.length;
-        }
-      }
-    }
-
-    // ── 8. Update import run ──────────────────────────────────────────────────
+    // ── 4. Update import run ───────────────────────────────────────────────────
     const runStatus = warnings.length > 0 ? "partial" : "success";
 
     await adminClient
@@ -309,11 +146,11 @@ export async function saveHistoricalSeason(
         status: runStatus,
         season_id: seasonId,
         diagnostics: {
-          teamsImported: teamRows.length,
-          matchupsImported: matchupRows.length,
-          draftPicksImported,
-          managersMatched,
-          managersCreated,
+          teamsImported: summary.teamsImported,
+          matchupsImported: summary.matchupsImported,
+          draftPicksImported: summary.draftPicksImported,
+          managersMatched: summary.managersMatched,
+          managersCreated: summary.managersCreated,
           warnings,
         },
         completed_at: new Date().toISOString(),
@@ -324,13 +161,13 @@ export async function saveHistoricalSeason(
       success: true,
       seasonId,
       seasonYear,
-      displayName: normalized.displayName,
-      teamsImported: teamRows.length,
-      matchupsImported: matchupRows.length,
-      draftPicksImported,
-      managersMatched,
-      managersCreated,
-      completeness,
+      displayName: summary.displayName as string,
+      teamsImported: summary.teamsImported as number,
+      matchupsImported: summary.matchupsImported as number,
+      draftPicksImported: summary.draftPicksImported as number,
+      managersMatched: summary.managersMatched as number,
+      managersCreated: summary.managersCreated as number,
+      completeness: normalized.completeness,
       warnings,
     };
 
@@ -345,102 +182,4 @@ export async function saveHistoricalSeason(
       .eq("id", importRunId);
     throw err;
   }
-}
-
-// ── Manager matching ──────────────────────────────────────────────────────────
-// Match ESPN owner GUIDs to existing league_history_managers via aliases.
-// If no match is found, create a new manager + alias.
-// Never auto-merge by name — only by exact provider owner ID.
-async function matchManagers(
-  adminClient: SupabaseClient,
-  leagueId: string,
-  provider: string,
-  teams: { owners: string[]; primaryOwner: string | null }[],
-  warnings: string[]
-): Promise<{ results: Map<string, ManagerMatchResult>; managersCreated: number; managersMatched: number }> {
-  const allOwnerIds = new Set<string>();
-  for (const t of teams) {
-    for (const o of t.owners) {
-      allOwnerIds.add(o);
-    }
-  }
-
-  const results = new Map<string, ManagerMatchResult>();
-  let managersCreated = 0;
-  let managersMatched = 0;
-
-  if (allOwnerIds.size === 0) return { results, managersCreated, managersMatched };
-
-  // Load existing managers for this league
-  const { data: existingManagers } = await adminClient
-    .from("league_history_managers")
-    .select("id, display_name")
-    .eq("league_id", leagueId);
-
-  const managerIds = (existingManagers ?? []).map((m) => m.id as string);
-
-  // Query existing aliases for these managers + provider
-  let existingAliases: { id: string; manager_id: string; external_owner_id: string }[] = [];
-  if (managerIds.length > 0) {
-    const { data: aliases } = await adminClient
-      .from("league_history_manager_aliases")
-      .select("id, manager_id, external_owner_id")
-      .eq("provider", provider)
-      .in("manager_id", managerIds);
-
-    existingAliases = (aliases ?? []) as { id: string; manager_id: string; external_owner_id: string }[];
-  }
-
-  const aliasByOwnerId = new Map<string, { aliasId: string; managerId: string }>();
-  for (const a of existingAliases) {
-    aliasByOwnerId.set(a.external_owner_id, { aliasId: a.id, managerId: a.manager_id });
-  }
-
-  for (const ownerId of allOwnerIds) {
-    const existing = aliasByOwnerId.get(ownerId);
-    if (existing) {
-      results.set(ownerId, {
-        managerId: existing.managerId,
-        aliasId: existing.aliasId,
-        isNew: false,
-      });
-      managersMatched++;
-      continue;
-    }
-
-    // No match — create new manager + alias
-    const { data: newManager, error: mErr } = await adminClient
-      .from("league_history_managers")
-      .insert({ league_id: leagueId, display_name: ownerId })
-      .select("id")
-      .single();
-
-    if (mErr || !newManager) {
-      warnings.push("Failed to create manager for owner " + ownerId + ": " + (mErr?.message ?? "unknown"));
-      continue;
-    }
-
-    const { data: newAlias, error: aErr } = await adminClient
-      .from("league_history_manager_aliases")
-      .insert({
-        manager_id: newManager.id,
-        provider,
-        external_owner_id: ownerId,
-        display_name: ownerId,
-        match_method: "auto_id",
-        match_confidence: 1.0,
-      })
-      .select("id")
-      .single();
-
-    if (aErr || !newAlias) {
-      warnings.push("Failed to create alias for owner " + ownerId + ": " + (aErr?.message ?? "unknown"));
-      continue;
-    }
-
-    results.set(ownerId, { managerId: newManager.id, aliasId: newAlias.id, isNew: true });
-    managersCreated++;
-  }
-
-  return { results, managersCreated, managersMatched };
 }

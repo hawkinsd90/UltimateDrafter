@@ -81,6 +81,9 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── Find external_league_links entry for this league ─────────────────────
+    // The externalLeagueId from the request must match the league's linked
+    // external league for the given provider. This prevents an owner from
+    // importing data from a different external league into their league.
     const { data: link } = await adminClient
       .from("external_league_links")
       .select("id, provider, external_league_id")
@@ -89,7 +92,15 @@ Deno.serve(async (req: Request) => {
       .is("draft_id", null)
       .maybeSingle();
 
-    const externalLinkId = link?.id ?? null;
+    if (!link) {
+      return jsonResponse({ error: "No external league link found for this league." }, 404);
+    }
+
+    if (link.external_league_id !== externalLeagueId) {
+      return jsonResponse({ error: "External league ID does not match this league's link." }, 403);
+    }
+
+    const externalLinkId = link.id;
 
     console.log(JSON.stringify({
       event: "history_import_start",

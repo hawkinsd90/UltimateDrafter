@@ -258,10 +258,12 @@ function normalizeEspnHistoricalResponse(
     return Math.max(max, period);
   }, 0);
 
-  // Identify the champion team (final_standing === 1) to classify the championship game.
-  // The final period has multiple placement matchups; only the one involving the
-  // champion team is the actual championship game.
+  // Identify champion (rankCalculatedFinal = 1) and runner-up (rankCalculatedFinal = 2).
+  // The championship game is the matchup in the last playoff period that contains
+  // BOTH the champion and the runner-up. This is the only reliable indicator —
+  // ESPN does not label brackets or championship games explicitly.
   const championTeamId = teams.find((t) => t.finalStanding === 1)?.externalTeamId ?? null;
+  const runnerUpTeamId = teams.find((t) => t.finalStanding === 2)?.externalTeamId ?? null;
 
   for (const m of scheduleRaw) {
     if (typeof m !== "object" || m === null) continue;
@@ -291,17 +293,21 @@ function normalizeEspnHistoricalResponse(
     // Classify: periods > matchupPeriodCount are playoff
     let classification: MatchupClassification = "regular";
     if (matchupPeriod > matchupPeriodCount) {
-      if (matchupPeriod === lastMatchupPeriod && homeScore !== null && awayScore !== null) {
-        // Only the matchup involving the champion team is the championship game.
-        // The rest are consolation/placement matchups in the final period.
-        if (championTeamId && (homeTeamId === championTeamId || awayTeamId === championTeamId)) {
-          classification = "championship";
-        } else {
-          classification = "consolation";
-        }
-      } else if (awayTeamId === null) {
+      if (awayTeamId === null) {
         classification = "bye";
+      } else if (
+        matchupPeriod === lastMatchupPeriod &&
+        championTeamId && runnerUpTeamId &&
+        homeTeamId && awayTeamId &&
+        ((homeTeamId === championTeamId && awayTeamId === runnerUpTeamId) ||
+         (homeTeamId === runnerUpTeamId && awayTeamId === championTeamId))
+      ) {
+        // Championship game: the final-period matchup with both rank=1 and rank=2.
+        classification = "championship";
       } else {
+        // All other playoff matchups (including final-period placement games).
+        // ESPN does not label consolation vs winners-bracket, so "playoff" is
+        // the safe generic classification.
         classification = "playoff";
       }
     }
