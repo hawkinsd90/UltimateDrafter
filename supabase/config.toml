@@ -1,0 +1,47 @@
+[functions.process-notifications]
+verify_jwt = false
+
+[functions.seed-players]
+verify_jwt = false
+
+[functions.process-notifications-outbox]
+verify_jwt = false
+
+[functions.enqueue-notification]
+verify_jwt = true
+
+[functions.start-phone-verification]
+verify_jwt = true
+
+[functions.verify-phone-code]
+verify_jwt = true
+
+[functions.telnyx-delivery-webhook]
+verify_jwt = false
+
+[functions.import-nfl-rosters]
+verify_jwt = true
+
+[functions.import-external-league]
+verify_jwt = true
+
+[functions.sync-player-season-stats]
+verify_jwt = true
+
+[functions.sync-espn-rankings]
+verify_jwt = true
+
+[functions.preview-external-league]
+verify_jwt = true
+
+[functions.send-invite-sms]
+verify_jwt = true
+
+[functions.send-invite-email]
+verify_jwt = true
+
+[functions.fetch-league-standings]
+verify_jwt = true
+
+[functions.import-league-history]
+verify_jwt = true

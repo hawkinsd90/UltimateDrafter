@@ -7,6 +7,7 @@ import LeagueDraftsTab from '../components/league/LeagueDraftsTab';
 import LeagueMembersTab from '../components/league/LeagueMembersTab';
 import LeagueSettingsTab from '../components/league/LeagueSettingsTab';
 import LeagueRosterTab from '../components/league/LeagueRosterTab';
+import LeagueHistoryTab from '../components/league/LeagueHistoryTab';
 import LeagueImportPanel from '../components/league/LeagueImportPanel';
 import type { ImportedMember } from '../components/league/ImportedLeaguematesPanel';
 import type { Database } from '../types/supabase';
@@ -19,9 +20,9 @@ type Draft = Database['public']['Tables']['drafts']['Row'];
 type LeagueMember = Database['public']['Tables']['league_members']['Row'];
 type LeagueInvite = Database['public']['Tables']['league_invites']['Row'];
 
-type Tab = 'drafts' | 'members' | 'roster' | 'settings';
-const ALL_TABS: Tab[] = ['drafts', 'members', 'roster', 'settings'];
-const BASE_TABS: Tab[] = ['drafts', 'members', 'settings'];
+type Tab = 'drafts' | 'members' | 'roster' | 'history' | 'settings';
+const ALL_TABS: Tab[] = ['drafts', 'members', 'roster', 'history', 'settings'];
+const BASE_TABS: Tab[] = ['drafts', 'members', 'history', 'settings'];
 
 export default function LeagueDetail() {
   const { leagueId }                        = useParams<{ leagueId: string }>();
@@ -173,7 +174,7 @@ export default function LeagueDetail() {
   const hasImport = importedMembers.length > 0;
   // Visible tabs: always show drafts/members/settings; only show roster if an import exists
   const visibleTabs: Tab[] = hasImport
-    ? ['drafts', 'members', 'roster', 'settings']
+    ? ['drafts', 'members', 'roster', 'history', 'settings']
     : BASE_TABS;
 
   if (isLoadingAuth) {
@@ -205,7 +206,7 @@ export default function LeagueDetail() {
   }
 
   // If the user landed on ?tab=roster but no import exists, redirect to drafts
-  const safeActiveTab: Tab = activeTab === 'roster' && !hasImport ? 'drafts' : activeTab;
+  const safeActiveTab: Tab = (activeTab === 'roster' && !hasImport) ? 'drafts' : activeTab;
 
   return (
     <>
@@ -276,6 +277,13 @@ export default function LeagueDetail() {
           leagueMembers={members}
           leagueSettings={leagueSettings}
           initialMemberId={searchParams.get('member')}
+        />
+      )}
+
+      {safeActiveTab === 'history' && (
+        <LeagueHistoryTab
+          leagueId={leagueId!}
+          isOwner={isOwner}
         />
       )}
 
