@@ -256,6 +256,10 @@ export default function LeagueRosterTab({
   const starterSlots   = emptySlots.filter(s => s.section === 'starters');
   const benchSlots     = emptySlots.filter(s => s.section === 'bench');
   const assignments    = players.length > 0 ? assignPlayersToSlots(emptySlots, orderedPlayers) : null;
+  const assignedPlayerIds = new Set(
+    (assignments ?? []).filter((player): player is RosterPlayer => player !== null).map(player => player.id),
+  );
+  const overflowPlayers = orderedPlayers.filter(player => !assignedPlayerIds.has(player.id));
   const unresolvedCount = players.filter(p => p.unresolved).length;
 
   const modalCanDrop = !!(
@@ -432,6 +436,27 @@ export default function LeagueRosterTab({
                     />
                   );
                 })}
+              </>
+            )}
+
+            {overflowPlayers.length > 0 && (
+              <>
+                <SectionHeader label="Other Rostered Players" />
+                {overflowPlayers.map((player, i) => (
+                  <PlayerSlotRow
+                    key={`overflow-${player.id}`}
+                    slot={{ label: player.fantasyPosition ?? 'BN', displayLabel: player.fantasyPosition ?? 'BN', section: 'bench' }}
+                    player={player}
+                    isLast={i === overflowPlayers.length - 1}
+                    canMoveUp={false}
+                    canMoveDown={false}
+                    onMoveUp={() => {}}
+                    onMoveDown={() => {}}
+                    onPlayerClick={player.sportsPlayerId && !player.unresolved ? () => openPlayerDetailForRoster(player) : undefined}
+                    canDropUnresolved={player.unresolved ? canDropPlayer(player) : false}
+                    onDropUnresolved={player.unresolved ? () => handleDropPlayer(player) : undefined}
+                  />
+                ))}
               </>
             )}
           </>
