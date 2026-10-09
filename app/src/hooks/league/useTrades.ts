@@ -11,13 +11,23 @@ export interface TradeProposalPlayer {
   snapshot_team_name:      string | null;
 }
 
+export interface TradeProposalPick {
+  id:                          string;
+  direction:                   'send' | 'receive';
+  pick_asset_id:               string;
+  snapshot_season_year:        number;
+  snapshot_round_number:       number;
+  snapshot_original_member_id: string | null;
+  snapshot_original_team_name: string | null;
+}
+
 export interface TradeProposal {
   id:                  string;
   league_id:           string;
   proposer_member_id:  string;
   proposer_user_id:    string;
   receiver_member_id:  string;
-  receiver_user_id:    string | null;  // resolved from league_members
+  receiver_user_id:    string | null;
   status:              'pending' | 'accepted' | 'rejected' | 'canceled' | 'expired';
   resolved_by_user_id: string | null;
   commissioner_action: boolean;
@@ -27,6 +37,7 @@ export interface TradeProposal {
   created_at:          string;
   updated_at:          string;
   players:             TradeProposalPlayer[];
+  picks:               TradeProposalPick[];
   proposer_team_name:  string | null;
   receiver_team_name:  string | null;
 }
@@ -51,6 +62,11 @@ export function useTrades(leagueId: string, userId: string, _isLeagueOwner: bool
         league_trade_proposal_players (
           id, direction, league_roster_player_id, sports_player_id,
           snapshot_player_name, snapshot_position, snapshot_team_name
+        ),
+        league_trade_proposal_picks (
+          id, direction, pick_asset_id,
+          snapshot_season_year, snapshot_round_number,
+          snapshot_original_member_id, snapshot_original_team_name
         )
       `)
       .eq('league_id', leagueId)
@@ -100,6 +116,7 @@ export function useTrades(leagueId: string, userId: string, _isLeagueOwner: bool
     const proposals: TradeProposal[] = data.map(row => ({
       ...row,
       players:            (row.league_trade_proposal_players ?? []) as TradeProposalPlayer[],
+      picks:              (row.league_trade_proposal_picks ?? []) as TradeProposalPick[],
       receiver_user_id:   userIdByMemberId.get(row.receiver_member_id) ?? null,
       proposer_team_name: teamNameByMemberId.get(row.proposer_member_id) ?? null,
       receiver_team_name: teamNameByMemberId.get(row.receiver_member_id) ?? null,

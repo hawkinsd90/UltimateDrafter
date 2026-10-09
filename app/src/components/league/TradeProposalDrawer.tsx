@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { ImportedMember } from './ImportedLeaguematesPanel';
-import type { RosterPlayer } from '../../hooks/league/useRosterData';
+import type { RosterPlayer, DraftPickAsset } from '../../hooks/league/useRosterData';
 import type { Database } from '../../types/supabase';
 import { posColor } from '../../utils/positionColors';
 import { computeTradeWarnings } from '../../utils/tradeWarnings';
 import { loadTeamRoster } from '../../utils/loadRoster';
+import { loadTradeablePickAssets } from '../../hooks/league/useRosterData';
 import { useTradeProposal } from '../../hooks/league/useTradeProposal';
 import { useConfirm } from '../../hooks/useConfirm';
 import ConfirmModal from '../ConfirmModal';
@@ -47,6 +48,10 @@ interface Props {
 
 type Step = 'partner' | 'players' | 'review';
 
+function formatPickLabel(seasonYear: number, roundNumber: number): string {
+  return `${seasonYear} Round ${roundNumber}`;
+}
+
 function PlayerSelectRow({
   player, selected, onToggle, disabled,
 }: {
@@ -75,6 +80,43 @@ function PlayerSelectRow({
       </span>
       {player.teamAbbr && (
         <span style={{ fontSize: '11px', color: textSecondary, flexShrink: 0 }}>{player.teamAbbr}</span>
+      )}
+      {selected && (
+        <span style={{ color: blue, fontSize: '14px', fontWeight: '700', flexShrink: 0 }}>✓</span>
+      )}
+    </button>
+  );
+}
+
+function PickSelectRow({
+  pick, selected, onToggle, disabled,
+}: {
+  pick: DraftPickAsset; selected: boolean; onToggle: () => void; disabled: boolean;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      disabled={disabled}
+      style={{
+        display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px',
+        background: selected ? 'rgba(59,130,246,0.12)' : 'transparent',
+        border: `1px solid ${selected ? blue : border}`,
+        borderRadius: '8px', cursor: disabled ? 'not-allowed' : 'pointer',
+        width: '100%', textAlign: 'left', marginBottom: '4px',
+        opacity: disabled ? 0.45 : 1,
+        transition: 'background 0.1s, border-color 0.1s',
+      }}
+    >
+      <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: 'rgba(168,85,247,0.15)', color: '#c084fc', flexShrink: 0 }}>
+        PICK
+      </span>
+      <span style={{ fontSize: '13px', fontWeight: '600', color: textPrimary, flex: 1, minWidth: 0 }}>
+        {formatPickLabel(pick.seasonYear, pick.roundNumber)}
+      </span>
+      {pick.originalTeamName && pick.originalTeamName !== pick.currentTeamName && (
+        <span style={{ fontSize: '10px', color: textSecondary, flexShrink: 0 }}>
+          from {pick.originalTeamName}
+        </span>
       )}
       {selected && (
         <span style={{ color: blue, fontSize: '14px', fontWeight: '700', flexShrink: 0 }}>✓</span>
@@ -141,6 +183,11 @@ export default function TradeProposalDrawer({
   const [partnerRoster,    setPartnerRoster]    = useState<PartnerRoster | null>(null);
   const [sendIds,          setSendIds]          = useState<Set<string>>(new Set());
   const [receiveIds,       setReceiveIds]       = useState<Set<string>>(new Set());
+  const [myPickAssets,     setMyPickAssets]     = useState<DraftPickAsset[]>([]);
+  const [partnerPickAssets,setPartnerPickAssets]= useState<DraftPickAsset[]>([]);
+  const [sendPickIds,      setSendPickIds]      = useState<Set<string>>(new Set());
+  const [receivePickIds,   setReceivePickIds]   = useState<Set<string>>(new Set());
+  const [picksLoading,     setPicksLoading]     = useState(false);
   const [message,          setMessage]          = useState('');
   const [stepError,        setStepError]        = useState('');
 
@@ -156,6 +203,8 @@ export default function TradeProposalDrawer({
   const receivablePlayers  = partnerRoster?.players.filter(p => !p.unresolved && !!p.lrpId) ?? [];
   const selectedSend       = sendablePlayers.filter(p => sendIds.has(p.id));
   const selectedReceive    = receivablePlayers.filter(p => receiveIds.has(p.id));
+  const selectedSendPicks  = myPickAssets.filter(p => sendPickIds.has(p.id));
+  const selectedRecvPicks  = partnerPickAssets.filter(p => receivePickIds.has(p.id));
 
   const warnings = computeTradeWarnings(
     myRoster, partnerRoster?.players ?? [],
@@ -163,10 +212,8 @@ export default function TradeProposalDrawer({
     leagueSettings,
   );
 
-  const leagueSettingsExt = leagueSettings as (LeagueSettings & {
-    allow_pick_trades?: boolean; allow_future_pick_trades?: boolean;
-  }) | null;
-  const pickTradesEnabled = leagueSettingsExt?.allow_pick_trades ?? false;
+  const pickTradesEnabled     = leagueSettings?.allow_pick_trades ?? false;
+  const futurePickTradesEnabled = pickTradesEnabled && (leagueSettings?.allow_future_picks ?? false);
 
   const loadPartnerRoster = useCallback(async (member: ImportedMember) => {
     setPartnerRoster({ memberId: member.id, players: [], loading: true, loadError: '', rosterEmpty: false });
@@ -180,6 +227,26 @@ export default function TradeProposalDrawer({
     });
   }, [leagueId]);
 
+  const loadMyPickAssets = useCallback(async () => {
+    if (!futurePickTradesEnabled || !myMember?.invitedUserId) return;
+    const myLeagueMember = leagueMembers.find(lm => lm.user_id === myMember.invitedUserId);
+    if (!myLeagueMember) return;
+    setPicksLoading(true);
+    const assets = await loadTradeablePickAssets(leagueId, myLeagueMember.id);
+    setMyPickAssets(assets);
+    setPicksLoading(false);
+  }, [futurePickTradesEnabled, leagueId, myMember, leagueMembers]);
+
+  const loadPartnerPickAssets = useCallback(async (partnerMemberId: string) => {
+    if (!futurePickTradesEnabled) return;
+    const partnerMember = joinedMembers.find(m => m.id === partnerMemberId);
+    if (!partnerMember?.invitedUserId) return;
+    const partnerLeagueMember = leagueMembers.find(lm => lm.user_id === partnerMember.invitedUserId);
+    if (!partnerLeagueMember) return;
+    const assets = await loadTradeablePickAssets(leagueId, partnerLeagueMember.id);
+    setPartnerPickAssets(assets);
+  }, [futurePickTradesEnabled, leagueId, joinedMembers, leagueMembers]);
+
   // When drawer opens, handle preselected partner
   useEffect(() => {
     if (!open) {
@@ -188,10 +255,19 @@ export default function TradeProposalDrawer({
       setPartnerRoster(null);
       setSendIds(new Set());
       setReceiveIds(new Set());
+      setSendPickIds(new Set());
+      setReceivePickIds(new Set());
+      setMyPickAssets([]);
+      setPartnerPickAssets([]);
       setMessage('');
       setStepError('');
       clearError();
       return;
+    }
+
+    // Load my pick assets when drawer opens
+    if (futurePickTradesEnabled) {
+      loadMyPickAssets();
     }
 
     if (preselectedPartnerId) {
@@ -200,8 +276,13 @@ export default function TradeProposalDrawer({
         setPartnerMemberId(partner.id);
         setSendIds(new Set());
         setReceiveIds(new Set());
+        setSendPickIds(new Set());
+        setReceivePickIds(new Set());
         setStep('players');
         loadPartnerRoster(partner);
+        if (futurePickTradesEnabled) {
+          loadPartnerPickAssets(partner.id);
+        }
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -211,7 +292,13 @@ export default function TradeProposalDrawer({
     setPartnerMemberId(member.id);
     setSendIds(new Set());
     setReceiveIds(new Set());
+    setSendPickIds(new Set());
+    setReceivePickIds(new Set());
+    setPartnerPickAssets([]);
     loadPartnerRoster(member);
+    if (futurePickTradesEnabled) {
+      loadPartnerPickAssets(member.id);
+    }
   }
 
   function toggleSend(playerId: string) {
@@ -230,6 +317,22 @@ export default function TradeProposalDrawer({
     });
   }
 
+  function toggleSendPick(pickId: string) {
+    setSendPickIds(prev => {
+      const next = new Set(prev);
+      if (next.has(pickId)) next.delete(pickId); else next.add(pickId);
+      return next;
+    });
+  }
+
+  function toggleReceivePick(pickId: string) {
+    setReceivePickIds(prev => {
+      const next = new Set(prev);
+      if (next.has(pickId)) next.delete(pickId); else next.add(pickId);
+      return next;
+    });
+  }
+
   function goToPlayers() {
     setStepError('');
     if (!partnerMemberId) { setStepError('Select a trade partner.'); return; }
@@ -238,14 +341,16 @@ export default function TradeProposalDrawer({
 
   function goToReview() {
     setStepError('');
-    if (sendIds.size === 0) { setStepError('Select at least one player to send.'); return; }
-    if (receiveIds.size === 0) {
-      if (partnerRoster?.loadError) {
+    const hasSendAssets = sendIds.size > 0 || sendPickIds.size > 0;
+    const hasReceiveAssets = receiveIds.size > 0 || receivePickIds.size > 0;
+    if (!hasSendAssets) { setStepError('Select at least one player or pick to send.'); return; }
+    if (!hasReceiveAssets) {
+      if (partnerRoster?.loadError && receivablePlayers.length === 0 && partnerPickAssets.length === 0) {
         setStepError('Partner roster failed to load. Try going back and reselecting the partner.');
-      } else if (receivablePlayers.length === 0) {
-        setStepError('No resolved tradeable players found for this team.');
+      } else if (receivablePlayers.length === 0 && partnerPickAssets.length === 0) {
+        setStepError('No resolved tradeable players or picks found for this team.');
       } else {
-        setStepError('Select at least one player to receive.');
+        setStepError('Select at least one player or pick to receive.');
       }
       return;
     }
@@ -274,12 +379,16 @@ export default function TradeProposalDrawer({
 
     const sendLrpIds    = selectedSend.map(p => p.lrpId!).filter(Boolean);
     const receiveLrpIds = selectedReceive.map(p => p.lrpId!).filter(Boolean);
+    const sendPickAssetIds    = selectedSendPicks.map(p => p.id);
+    const receivePickAssetIds = selectedRecvPicks.map(p => p.id);
 
     const proposalId = await createProposal({
       leagueId,
       receiverMemberId: partnerLeagueMember.id,
       sendLrpIds,
       receiveLrpIds,
+      sendPickAssetIds,
+      receivePickAssetIds,
       message: message.trim() || undefined,
     });
 
@@ -309,7 +418,7 @@ export default function TradeProposalDrawer({
           <div>
             <div style={{ fontSize: '16px', fontWeight: '700', color: textPrimary }}>Propose Trade</div>
             <div style={{ fontSize: '12px', color: textSecondary, marginTop: '2px' }}>
-              {step === 'partner' ? 'Step 1: Choose partner' : step === 'players' ? 'Step 2: Select players' : 'Step 3: Review'}
+              {step === 'partner' ? 'Step 1: Choose partner' : step === 'players' ? 'Step 2: Select assets' : 'Step 3: Review'}
             </div>
           </div>
           <button
@@ -353,9 +462,10 @@ export default function TradeProposalDrawer({
             </>
           )}
 
-          {/* Step 2: Player selection */}
+          {/* Step 2: Asset selection */}
           {step === 'players' && (
             <>
+              {/* Send side: players */}
               <div style={{ marginBottom: '20px' }}>
                 <div style={{ fontSize: '12px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>
                   Your players to send ({myMember?.teamName ?? 'Your team'})
@@ -374,7 +484,32 @@ export default function TradeProposalDrawer({
                 ))}
               </div>
 
-              <div>
+              {/* Send side: picks */}
+              {futurePickTradesEnabled && (
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ fontSize: '12px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>
+                    Your future picks to send
+                  </div>
+                  {picksLoading && (
+                    <p style={{ color: textSecondary, fontSize: '13px' }}>Loading picks...</p>
+                  )}
+                  {!picksLoading && myPickAssets.length === 0 && (
+                    <p style={{ color: textSecondary, fontSize: '13px' }}>No tradeable future picks.</p>
+                  )}
+                  {myPickAssets.map(pick => (
+                    <PickSelectRow
+                      key={pick.id}
+                      pick={pick}
+                      selected={sendPickIds.has(pick.id)}
+                      onToggle={() => toggleSendPick(pick.id)}
+                      disabled={false}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Receive side: players */}
+              <div style={{ borderTop: `1px solid ${border}`, paddingTop: '20px', marginBottom: '20px' }}>
                 <div style={{ fontSize: '12px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>
                   {partnerMember?.teamName ?? 'Partner'}'s players to receive
                 </div>
@@ -411,9 +546,30 @@ export default function TradeProposalDrawer({
                 )}
               </div>
 
-              {pickTradesEnabled && (
+              {/* Receive side: picks */}
+              {futurePickTradesEnabled && (
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>
+                    {partnerMember?.teamName ?? 'Partner'}'s future picks to receive
+                  </div>
+                  {partnerPickAssets.length === 0 && (
+                    <p style={{ color: textSecondary, fontSize: '13px' }}>No tradeable future picks for this team.</p>
+                  )}
+                  {partnerPickAssets.map(pick => (
+                    <PickSelectRow
+                      key={pick.id}
+                      pick={pick}
+                      selected={receivePickIds.has(pick.id)}
+                      onToggle={() => toggleReceivePick(pick.id)}
+                      disabled={false}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {!futurePickTradesEnabled && pickTradesEnabled && (
                 <div style={{ marginTop: '16px', padding: '10px 12px', background: 'rgba(245,158,11,0.08)', border: `1px solid rgba(245,158,11,0.2)`, borderRadius: '8px', fontSize: '12px', color: amber }}>
-                  Pick trading is enabled for this league, but pick assets are not included in this player trade phase yet.
+                  Future pick trading is not enabled for this league.
                 </div>
               )}
             </>
@@ -437,6 +593,15 @@ export default function TradeProposalDrawer({
                       </div>
                     );
                   })}
+                  {selectedSendPicks.map(pick => (
+                    <div key={pick.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: 'rgba(168,85,247,0.15)', color: '#c084fc' }}>PICK</span>
+                      <span style={{ fontSize: '13px', color: textPrimary, fontWeight: '600' }}>{formatPickLabel(pick.seasonYear, pick.roundNumber)}</span>
+                      {pick.originalTeamName && pick.originalTeamName !== pick.currentTeamName && (
+                        <span style={{ fontSize: '11px', color: textSecondary }}>from {pick.originalTeamName}</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
                 <div style={{ borderTop: `1px solid ${border}`, paddingTop: '14px' }}>
                   <div style={{ fontSize: '11px', fontWeight: '700', color: textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>
@@ -452,6 +617,15 @@ export default function TradeProposalDrawer({
                       </div>
                     );
                   })}
+                  {selectedRecvPicks.map(pick => (
+                    <div key={pick.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', background: 'rgba(168,85,247,0.15)', color: '#c084fc' }}>PICK</span>
+                      <span style={{ fontSize: '13px', color: textPrimary, fontWeight: '600' }}>{formatPickLabel(pick.seasonYear, pick.roundNumber)}</span>
+                      {pick.originalTeamName && pick.originalTeamName !== pick.currentTeamName && (
+                        <span style={{ fontSize: '11px', color: textSecondary }}>from {pick.originalTeamName}</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -464,12 +638,6 @@ export default function TradeProposalDrawer({
                   <div style={{ fontSize: '11px', color: textSecondary, marginTop: '6px' }}>
                     Warnings do not block trade submission.
                   </div>
-                </div>
-              )}
-
-              {pickTradesEnabled && (
-                <div style={{ marginBottom: '16px', padding: '10px 12px', background: 'rgba(245,158,11,0.08)', border: `1px solid rgba(245,158,11,0.2)`, borderRadius: '8px', fontSize: '12px', color: amber }}>
-                  Pick trading is enabled for this league, but pick assets are not included in this player trade phase yet.
                 </div>
               )}
 

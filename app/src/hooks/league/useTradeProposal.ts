@@ -2,11 +2,13 @@ import { useState, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 
 interface CreateTradeParams {
-  leagueId:         string;
-  receiverMemberId: string;
-  sendLrpIds:       string[];
-  receiveLrpIds:    string[];
-  message?:         string;
+  leagueId:             string;
+  receiverMemberId:     string;
+  sendLrpIds:           string[];
+  receiveLrpIds:        string[];
+  sendPickAssetIds?:    string[];
+  receivePickAssetIds?: string[];
+  message?:             string;
 }
 
 export function useTradeProposal() {
@@ -17,12 +19,14 @@ export function useTradeProposal() {
     setSubmitting(true);
     setError('');
 
-    const { data, error: err } = await supabase.rpc('create_player_trade_proposal', {
-      p_league_id:          params.leagueId,
-      p_receiver_member_id: params.receiverMemberId,
-      p_send_lrp_ids:       params.sendLrpIds,
-      p_receive_lrp_ids:    params.receiveLrpIds,
-      p_message:            params.message ?? null,
+    const { data, error: err } = await supabase.rpc('create_trade_proposal', {
+      p_league_id:              params.leagueId,
+      p_receiver_member_id:     params.receiverMemberId,
+      p_send_lrp_ids:           params.sendLrpIds,
+      p_receive_lrp_ids:        params.receiveLrpIds,
+      p_send_pick_asset_ids:    params.sendPickAssetIds ?? [],
+      p_receive_pick_asset_ids: params.receivePickAssetIds ?? [],
+      p_message:                params.message ?? null,
     });
 
     setSubmitting(false);
@@ -45,7 +49,7 @@ export function useTradeProposal() {
     setSubmitting(true);
     setError('');
 
-    const { data, error: err } = await supabase.rpc('accept_player_trade_proposal', {
+    const { data, error: err } = await supabase.rpc('accept_trade_proposal', {
       p_trade_proposal_id: proposalId,
     });
 

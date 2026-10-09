@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { posColor } from '../../utils/positionColors';
 import { timeAgo, timeUntil } from '../../utils/time';
-import type { TradeProposal } from '../../hooks/league/useTrades';
+import type { TradeProposal, TradeProposalPick } from '../../hooks/league/useTrades';
 import { useTradeProposal } from '../../hooks/league/useTradeProposal';
 import { useConfirm } from '../../hooks/useConfirm';
 import ConfirmModal from '../ConfirmModal';
@@ -14,6 +14,10 @@ const amber         = '#fbbf24';
 const green         = '#22c55e';
 const red           = '#ef4444';
 const blue          = '#3b82f6';
+
+function formatPickLabel(seasonYear: number, roundNumber: number): string {
+  return `${seasonYear} Round ${roundNumber}`;
+}
 
 interface Props {
   leagueId:      string;
@@ -38,6 +42,17 @@ function PlayerPill({ name, pos }: { name: string; pos: string | null }) {
   );
 }
 
+function PickPill({ pick }: { pick: TradeProposalPick }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginRight: '4px', marginBottom: '4px' }}>
+      <span style={{ fontSize: '12px', color: textPrimary, fontWeight: '600' }}>{formatPickLabel(pick.snapshot_season_year, pick.snapshot_round_number)}</span>
+      <span style={{ fontSize: '10px', fontWeight: '700', padding: '1px 5px', borderRadius: '4px', background: 'rgba(168,85,247,0.15)', color: '#c084fc' }}>
+        PICK
+      </span>
+    </span>
+  );
+}
+
 function TradeRow({ proposal, userId, isLeagueOwner, onAction }: {
   proposal:      TradeProposal;
   userId:        string;
@@ -50,18 +65,28 @@ function TradeRow({ proposal, userId, isLeagueOwner, onAction }: {
 
   const isProposer  = proposal.proposer_user_id === userId;
   const isReceiver  = proposal.receiver_user_id  === userId;
-  // Commissioner can cancel but cannot accept/reject on behalf of anyone
   const canCancel   = isProposer || (isLeagueOwner && !isReceiver);
 
   const sendPlayers    = proposal.players.filter(p => p.direction === 'send');
   const receivePlayers = proposal.players.filter(p => p.direction === 'receive');
+  const sendPicks      = proposal.picks.filter(p => p.direction === 'send');
+  const receivePicks   = proposal.picks.filter(p => p.direction === 'receive');
+
+  const sendSummary    = [
+    ...sendPlayers.map(p => p.snapshot_player_name),
+    ...sendPicks.map(p => formatPickLabel(p.snapshot_season_year, p.snapshot_round_number)),
+  ];
+  const receiveSummary = [
+    ...receivePlayers.map(p => p.snapshot_player_name),
+    ...receivePicks.map(p => formatPickLabel(p.snapshot_season_year, p.snapshot_round_number)),
+  ];
 
   async function handleAccept() {
     clearError();
     setLocalError('');
     const ok = await confirm({
       title:        'Accept trade?',
-      message:      `Accept this trade? ${proposal.proposer_team_name ?? 'Proposer'} sent ${sendPlayers.map(p => p.snapshot_player_name).join(', ')} for ${receivePlayers.map(p => p.snapshot_player_name).join(', ')}. This cannot be undone.`,
+      message:      `Accept this trade? ${proposal.proposer_team_name ?? 'Proposer'} sent ${sendSummary.join(', ')} for ${receiveSummary.join(', ')}. This cannot be undone.`,
       confirmLabel: 'Accept Trade',
     });
     if (!ok) return;
@@ -145,6 +170,9 @@ function TradeRow({ proposal, userId, isLeagueOwner, onAction }: {
                 {sendPlayers.map(p => (
                   <PlayerPill key={p.id} name={p.snapshot_player_name} pos={p.snapshot_position} />
                 ))}
+                {sendPicks.map(p => (
+                  <PickPill key={p.id} pick={p} />
+                ))}
               </div>
             </div>
             <div style={{ alignSelf: 'center', color: textSecondary, fontSize: '16px', fontWeight: '700' }}>⇄</div>
@@ -155,6 +183,9 @@ function TradeRow({ proposal, userId, isLeagueOwner, onAction }: {
               <div style={{ display: 'flex', flexWrap: 'wrap' }}>
                 {receivePlayers.map(p => (
                   <PlayerPill key={p.id} name={p.snapshot_player_name} pos={p.snapshot_position} />
+                ))}
+                {receivePicks.map(p => (
+                  <PickPill key={p.id} pick={p} />
                 ))}
               </div>
             </div>
@@ -224,8 +255,6 @@ function TradeRow({ proposal, userId, isLeagueOwner, onAction }: {
 }
 
 export default function PendingTradesCard({ leagueId: _leagueId, userId, isLeagueOwner, pending, recent, onTradeAction }: Props) {
-  // Only show pending trades where this user is proposer, receiver, or commissioner.
-  // Other league members see trades in Recent Activity (after resolution) only.
   const myPending  = pending.filter(p =>
     p.proposer_user_id === userId ||
     p.receiver_user_id === userId ||
@@ -273,6 +302,16 @@ export default function PendingTradesCard({ leagueId: _leagueId, userId, isLeagu
       {showRecent && recent.map((p, i) => {
         const sendPlayers    = p.players.filter(pl => pl.direction === 'send');
         const receivePlayers = p.players.filter(pl => pl.direction === 'receive');
+        const sendPicks      = p.picks.filter(pl => pl.direction === 'send');
+        const receivePicks   = p.picks.filter(pl => pl.direction === 'receive');
+        const sendSummary    = [
+          ...sendPlayers.map(pl => pl.snapshot_player_name),
+          ...sendPicks.map(pl => formatPickLabel(pl.snapshot_season_year, pl.snapshot_round_number)),
+        ];
+        const receiveSummary = [
+          ...receivePlayers.map(pl => pl.snapshot_player_name),
+          ...receivePicks.map(pl => formatPickLabel(pl.snapshot_season_year, pl.snapshot_round_number)),
+        ];
         const statusColor = p.status === 'accepted' ? green : p.status === 'rejected' ? red : textSecondary;
         return (
           <div
@@ -289,9 +328,9 @@ export default function PendingTradesCard({ leagueId: _leagueId, userId, isLeagu
                 {' → '}
                 <span style={{ fontWeight: '600', color: textPrimary }}>{p.receiver_team_name ?? 'Unknown'}</span>
                 {' · '}
-                {sendPlayers.map(pl => pl.snapshot_player_name).join(', ')}
+                {sendSummary.join(', ')}
                 {' for '}
-                {receivePlayers.map(pl => pl.snapshot_player_name).join(', ')}
+                {receiveSummary.join(', ')}
                 {p.commissioner_action && (
                   <span style={{ marginLeft: '6px', fontSize: '10px', padding: '1px 5px', borderRadius: '4px', background: 'rgba(251,191,36,0.12)', color: amber }}>
                     Commissioner

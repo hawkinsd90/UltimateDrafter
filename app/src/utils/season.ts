@@ -1,3 +1,8 @@
+export function parseLeagueBaseYear(season: string): number | null {
+  const match = season.match(/(\d{4})/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
 export function getSeasonLabel(sport: string, date: Date = new Date()): string {
   const currentYear = date.getFullYear();
   const currentMonth = date.getMonth() + 1;

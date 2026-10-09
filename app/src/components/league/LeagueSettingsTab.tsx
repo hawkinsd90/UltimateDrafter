@@ -146,6 +146,9 @@ export default function LeagueSettingsTab({ leagueId, leagueSettings, isOwner, o
       if (error) {
         setMessage('Error updating settings: ' + error.message);
       } else {
+        if (formData.allow_future_picks) {
+          await supabase.rpc('ensure_league_future_pick_assets', { p_league_id: leagueId });
+        }
         setMessage('Settings updated successfully');
         onSaved();
       }

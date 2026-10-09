@@ -63,6 +63,18 @@ export interface Database {
           bench: number
           allow_trades: boolean
           allow_pick_trades: boolean
+          roster_op: number
+          allow_future_picks: boolean
+          future_pick_years: number
+          roster_limits_enabled: boolean
+          max_qb: number | null
+          max_rb: number | null
+          max_wr: number | null
+          max_te: number | null
+          max_k: number | null
+          max_dst: number | null
+          default_draft_type: string
+          default_rounds: number
         }
         Insert: {
           league_id: string
@@ -85,6 +97,18 @@ export interface Database {
           bench?: number
           allow_trades?: boolean
           allow_pick_trades?: boolean
+          roster_op?: number
+          allow_future_picks?: boolean
+          future_pick_years?: number
+          roster_limits_enabled?: boolean
+          max_qb?: number | null
+          max_rb?: number | null
+          max_wr?: number | null
+          max_te?: number | null
+          max_k?: number | null
+          max_dst?: number | null
+          default_draft_type?: string
+          default_rounds?: number
         }
         Update: {
           league_id?: string
@@ -107,6 +131,135 @@ export interface Database {
           bench?: number
           allow_trades?: boolean
           allow_pick_trades?: boolean
+          roster_op?: number
+          allow_future_picks?: boolean
+          future_pick_years?: number
+          roster_limits_enabled?: boolean
+          max_qb?: number | null
+          max_rb?: number | null
+          max_wr?: number | null
+          max_te?: number | null
+          max_k?: number | null
+          max_dst?: number | null
+          default_draft_type?: string
+          default_rounds?: number
+        }
+      }
+      league_draft_pick_assets: {
+        Row: {
+          id: string
+          league_id: string
+          season_year: number
+          round_number: number
+          original_member_id: string
+          current_member_id: string
+          status: string
+          used_draft_id: string | null
+          used_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          league_id: string
+          season_year: number
+          round_number: number
+          original_member_id: string
+          current_member_id: string
+          status?: string
+          used_draft_id?: string | null
+          used_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          league_id?: string
+          season_year?: number
+          round_number?: number
+          original_member_id?: string
+          current_member_id?: string
+          status?: string
+          used_draft_id?: string | null
+          used_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      league_trade_proposal_picks: {
+        Row: {
+          id: string
+          trade_proposal_id: string
+          direction: string
+          pick_asset_id: string
+          snapshot_season_year: number
+          snapshot_round_number: number
+          snapshot_original_member_id: string | null
+          snapshot_original_team_name: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          trade_proposal_id: string
+          direction: string
+          pick_asset_id: string
+          snapshot_season_year: number
+          snapshot_round_number: number
+          snapshot_original_member_id?: string | null
+          snapshot_original_team_name?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          trade_proposal_id?: string
+          direction?: string
+          pick_asset_id?: string
+          snapshot_season_year?: number
+          snapshot_round_number?: number
+          snapshot_original_member_id?: string | null
+          snapshot_original_team_name?: string | null
+          created_at?: string
+        }
+      }
+      league_draft_pick_transactions: {
+        Row: {
+          id: string
+          league_id: string
+          pick_asset_id: string
+          trade_proposal_id: string | null
+          actor_user_id: string | null
+          from_member_id: string | null
+          to_member_id: string | null
+          season_year: number
+          round_number: number
+          metadata: Json
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          league_id: string
+          pick_asset_id: string
+          trade_proposal_id?: string | null
+          actor_user_id?: string | null
+          from_member_id?: string | null
+          to_member_id?: string | null
+          season_year: number
+          round_number: number
+          metadata?: Json
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          league_id?: string
+          pick_asset_id?: string
+          trade_proposal_id?: string | null
+          actor_user_id?: string | null
+          from_member_id?: string | null
+          to_member_id?: string | null
+          season_year?: number
+          round_number?: number
+          metadata?: Json
+          created_at?: string
         }
       }
       draft_settings: {
@@ -461,6 +614,7 @@ export interface Database {
           phone_e164: string | null
           role: string
           joined_at: string
+          draft_order: number | null
         }
         Insert: {
           id?: string
@@ -470,6 +624,7 @@ export interface Database {
           phone_e164?: string | null
           role?: string
           joined_at?: string
+          draft_order?: number | null
         }
         Update: {
           id?: string
@@ -479,6 +634,7 @@ export interface Database {
           phone_e164?: string | null
           role?: string
           joined_at?: string
+          draft_order?: number | null
         }
       }
       league_invites: {

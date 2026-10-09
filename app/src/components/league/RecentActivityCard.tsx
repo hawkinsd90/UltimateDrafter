@@ -69,57 +69,85 @@ function DropRow({ tx, userId, isLast }: { tx: TransactionRow; userId: string; i
   );
 }
 
+interface AssetMove {
+  fromTeam: string;
+  toTeam: string;
+  name: string;
+  pos: string | null;
+  isPick: boolean;
+}
+
 function TradeGroupRow({ group, isLast }: { group: TradeGroup; isLast: boolean }) {
   const rows = group.rows;
-  if (rows.length === 0) return null;
+  const pickRows = group.pickRows;
+  if (rows.length === 0 && pickRows.length === 0) return null;
 
   const isComm = rows.some(r => r.metadata?.commissioner_action === true);
 
-  // Build a map of team → players they sent (i.e. players that left that team)
-  // Each transaction row represents one player moving from from_team to to_team.
-  // We want to display: "Team A sent X and Y to Team B for Z."
-  // Collect unique team pairs and group players per "from → to" direction.
-  const teamGroups = new Map<string, { fromTeam: string; toTeam: string; players: Array<{ name: string; pos: string | null }> }>();
+  // Collect all asset moves from both player and pick transactions
+  const moves: AssetMove[] = [];
 
   for (const r of rows) {
     const fromTeam = (r.metadata?.from_team as string) ?? 'Unknown';
     const toTeam   = (r.metadata?.to_team   as string) ?? 'Unknown';
-    const key = `${fromTeam}|||${toTeam}`;
-    if (!teamGroups.has(key)) teamGroups.set(key, { fromTeam, toTeam, players: [] });
-    teamGroups.get(key)!.players.push({
+    moves.push({
+      fromTeam,
+      toTeam,
       name: (r.metadata?.player_name as string) ?? r.external_player_name ?? 'Unknown',
       pos:  (r.metadata?.position   as string) ?? r.external_position ?? null,
+      isPick: false,
     });
+  }
+
+  for (const pr of pickRows) {
+    const fromTeam = (pr.metadata?.from_team as string) ?? 'Unknown';
+    const toTeam   = (pr.metadata?.to_team   as string) ?? 'Unknown';
+    const pickLabel = (pr.metadata?.pick_label as string) ?? `${pr.season_year} Round ${pr.round_number}`;
+    moves.push({
+      fromTeam,
+      toTeam,
+      name: pickLabel,
+      pos: null,
+      isPick: true,
+    });
+  }
+
+  // Group by from → to direction
+  const teamGroups = new Map<string, { fromTeam: string; toTeam: string; assets: AssetMove[] }>();
+  for (const m of moves) {
+    const key = `${m.fromTeam}|||${m.toTeam}`;
+    if (!teamGroups.has(key)) teamGroups.set(key, { fromTeam: m.fromTeam, toTeam: m.toTeam, assets: [] });
+    teamGroups.get(key)!.assets.push(m);
   }
 
   const groups = Array.from(teamGroups.values());
 
-  // Build "Team A sent X to Team B for Y" when there are exactly two directions.
-  // For more complex cases, fall back to listing each direction separately.
+  function renderAsset(m: AssetMove, i: number, total: number) {
+    if (m.isPick) {
+      return (
+        <span key={i}>
+          {i > 0 && (i === total - 1 ? ' and ' : ', ')}
+          <span style={{ fontWeight: '700', color: textPrimary }}>{m.name}</span>
+          <span style={{ marginLeft: '3px', fontSize: '10px', fontWeight: '700', padding: '1px 4px', borderRadius: '3px', background: 'rgba(168,85,247,0.15)', color: '#c084fc' }}>PICK</span>
+        </span>
+      );
+    }
+    const c = posColor(m.pos);
+    return (
+      <span key={i}>
+        {i > 0 && (i === total - 1 ? ' and ' : ', ')}
+        <span style={{ fontWeight: '700', color: textPrimary }}>{m.name}</span>
+        {m.pos && <span style={{ marginLeft: '3px', fontSize: '10px', fontWeight: '700', padding: '1px 4px', borderRadius: '3px', background: c.bg, color: c.text }}>{m.pos}</span>}
+      </span>
+    );
+  }
+
   let summary: ReactNode;
 
   if (groups.length === 2) {
     const [a, b] = groups;
-    const aList = a.players.map((p, i) => {
-      const c = posColor(p.pos);
-      return (
-        <span key={i}>
-          {i > 0 && (i === a.players.length - 1 ? ' and ' : ', ')}
-          <span style={{ fontWeight: '700', color: textPrimary }}>{p.name}</span>
-          {p.pos && <span style={{ marginLeft: '3px', fontSize: '10px', fontWeight: '700', padding: '1px 4px', borderRadius: '3px', background: c.bg, color: c.text }}>{p.pos}</span>}
-        </span>
-      );
-    });
-    const bList = b.players.map((p, i) => {
-      const c = posColor(p.pos);
-      return (
-        <span key={i}>
-          {i > 0 && (i === b.players.length - 1 ? ' and ' : ', ')}
-          <span style={{ fontWeight: '700', color: textPrimary }}>{p.name}</span>
-          {p.pos && <span style={{ marginLeft: '3px', fontSize: '10px', fontWeight: '700', padding: '1px 4px', borderRadius: '3px', background: c.bg, color: c.text }}>{p.pos}</span>}
-        </span>
-      );
-    });
+    const aList = a.assets.map((m, i) => renderAsset(m, i, a.assets.length));
+    const bList = b.assets.map((m, i) => renderAsset(m, i, b.assets.length));
     summary = (
       <>
         <span style={{ fontWeight: '700' }}>Trade accepted: </span>
@@ -131,21 +159,11 @@ function TradeGroupRow({ group, isLast }: { group: TradeGroup; isLast: boolean }
       </>
     );
   } else {
-    // Fallback: list each direction as its own line
     summary = (
       <>
         <span style={{ fontWeight: '700' }}>Trade accepted: </span>
         {groups.map((g, gi) => {
-          const list = g.players.map((p, i) => {
-            const c = posColor(p.pos);
-            return (
-              <span key={i}>
-                {i > 0 && ', '}
-                <span style={{ fontWeight: '700', color: textPrimary }}>{p.name}</span>
-                {p.pos && <span style={{ marginLeft: '3px', fontSize: '10px', fontWeight: '700', padding: '1px 4px', borderRadius: '3px', background: c.bg, color: c.text }}>{p.pos}</span>}
-              </span>
-            );
-          });
+          const list = g.assets.map((m, i) => renderAsset(m, i, g.assets.length));
           return (
             <span key={gi}>
               {gi > 0 && '; '}
