@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import UserMenu from '../components/UserMenu';
@@ -51,10 +51,14 @@ export default function LeagueDetail() {
 
   const userId = user?.id;
 
-  const loadLeagueData = useCallback(async () => {
-    if (!leagueId || !userId) return;
+  const essentialReqRef = useRef(0);
+  const tabReqRef = useRef(0);
 
-    setOptionalError('');
+  const loadEssentialData = useCallback(async () => {
+    if (!leagueId || !userId) return;
+    const reqId = ++essentialReqRef.current;
+    setLoading(true);
+    setError('');
     try {
       const [leagueResult, settingsResult, importedResult] = await Promise.all([
         supabase.from('leagues').select('*').eq('id', leagueId).maybeSingle(),
@@ -64,6 +68,8 @@ export default function LeagueDetail() {
           .eq('league_id', leagueId)
           .order('created_at', { ascending: true }),
       ]);
+
+      if (essentialReqRef.current !== reqId) return;
 
       if (leagueResult.error || !leagueResult.data) {
         setError(leagueResult.error?.message ?? 'League not found');
@@ -86,13 +92,21 @@ export default function LeagueDetail() {
       }
       setLoading(false);
     } catch {
+      if (essentialReqRef.current !== reqId) return;
       setError('Error loading league data');
       setLoading(false);
+    }
+  }, [leagueId, userId]);
+
+  const loadTabData = useCallback(async () => {
+    if (!leagueId || !userId) return;
+    if (activeTab === 'history' || activeTab === 'settings') {
+      setOptionalLoading(false);
+      setOptionalError('');
       return;
     }
-
-    if (activeTab === 'history' || activeTab === 'settings') return;
-
+    const reqId = ++tabReqRef.current;
+    setOptionalError('');
     setOptionalLoading(true);
     try {
       const [draftsResult, membersResult, invitesResult] = await Promise.all([
@@ -107,6 +121,8 @@ export default function LeagueDetail() {
           : Promise.resolve({ data: null, error: null }),
       ]);
 
+      if (tabReqRef.current !== reqId) return;
+
       if (membersResult.data) setMembers(membersResult.data as LeagueMember[]);
       if (invitesResult.data) setInvites(invitesResult.data as LeagueInvite[]);
       if (draftsResult.data) {
@@ -118,6 +134,7 @@ export default function LeagueDetail() {
             .select('draft_id')
             .in('draft_id', loadedDrafts.map(d => d.id))
             .eq('user_id', userId);
+          if (tabReqRef.current !== reqId) return;
           if (participantError) throw participantError;
           setMyDraftIds(new Set((participantRows ?? []).map(r => r.draft_id)));
         } else {
@@ -128,9 +145,10 @@ export default function LeagueDetail() {
         throw draftsResult.error || membersResult.error || invitesResult.error;
       }
     } catch {
+      if (tabReqRef.current !== reqId) return;
       setOptionalError('Some information for this tab could not be loaded.');
     } finally {
-      setOptionalLoading(false);
+      if (tabReqRef.current === reqId) setOptionalLoading(false);
     }
   }, [activeTab, leagueId, userId]);
 
@@ -141,30 +159,37 @@ export default function LeagueDetail() {
   }, [isLoadingAuth, userId]);
 
   useEffect(() => {
-    if (userId) {
-      loadLeagueData();
-    }
-  }, [userId, loadLeagueData]);
+    if (userId) loadEssentialData();
+  }, [userId, loadEssentialData]);
+
+  useEffect(() => {
+    loadTabData();
+  }, [loadTabData]);
+
+  const loadEssentialRef = useRef(loadEssentialData);
+  loadEssentialRef.current = loadEssentialData;
+  const loadTabRef = useRef(loadTabData);
+  loadTabRef.current = loadTabData;
 
   useEffect(() => {
     if (!leagueId) return;
     const channel = supabase
       .channel(`league-${leagueId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_members',         filter: `league_id=eq.${leagueId}` }, () => loadLeagueData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_invites',          filter: `league_id=eq.${leagueId}` }, () => loadLeagueData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_imported_members', filter: `league_id=eq.${leagueId}` }, () => loadLeagueData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_imported_members', filter: `league_id=eq.${leagueId}` }, () => loadEssentialRef.current())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_members',         filter: `league_id=eq.${leagueId}` }, () => loadTabRef.current())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'league_invites',          filter: `league_id=eq.${leagueId}` }, () => loadTabRef.current())
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [leagueId, loadLeagueData]);
+  }, [leagueId]);
 
   async function pauseDraft(draftId: string) {
     await supabase.from('drafts').update({ status: 'paused' }).eq('id', draftId);
-    await loadLeagueData();
+    await loadTabData();
   }
 
   async function resumeDraft(draftId: string) {
     await supabase.from('drafts').update({ status: 'in_progress' }).eq('id', draftId);
-    await loadLeagueData();
+    await loadTabData();
   }
 
   async function deleteDraft(draftId: string, draftName: string) {
@@ -176,7 +201,7 @@ export default function LeagueDetail() {
     });
     if (!ok) return;
     await supabase.from('drafts').delete().eq('id', draftId);
-    await loadLeagueData();
+    await loadTabData();
   }
 
   async function handleDeleteLeague() {
@@ -256,7 +281,7 @@ export default function LeagueDetail() {
       {optionalError && (
         <div style={{ marginBottom: '16px', padding: '10px 12px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', color: '#92400e', fontSize: '13px' }}>
           {optionalError}
-          <button onClick={loadLeagueData} style={{ marginLeft: '12px', color: '#92400e', background: 'transparent', border: '1px solid #d97706', borderRadius: '4px', cursor: 'pointer' }}>Retry</button>
+          <button onClick={loadTabData} style={{ marginLeft: '12px', color: '#92400e', background: 'transparent', border: '1px solid #d97706', borderRadius: '4px', cursor: 'pointer' }}>Retry</button>
         </div>
       )}
 
@@ -300,7 +325,7 @@ export default function LeagueDetail() {
           members={members}
           invites={invites}
           importedMembers={importedMembers}
-          onRefresh={loadLeagueData}
+          onRefresh={loadTabData}
         />
       )}
 
@@ -329,10 +354,10 @@ export default function LeagueDetail() {
             leagueId={leagueId!}
             leagueSettings={leagueSettings}
             isOwner={isOwner}
-            onSaved={loadLeagueData}
+            onSaved={loadEssentialData}
           />
           {isOwner && (
-            <LeagueImportPanel leagueId={leagueId!} onImportComplete={loadLeagueData} />
+            <LeagueImportPanel leagueId={leagueId!} onImportComplete={loadEssentialData} />
           )}
           {isOwner && (
             <div style={{ marginTop: '48px', borderTop: '1px solid #fca5a5', paddingTop: '32px' }}>

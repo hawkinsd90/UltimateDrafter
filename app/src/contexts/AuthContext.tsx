@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { User, Session, AuthChangeEvent } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
@@ -16,13 +16,32 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const RETURN_URL_KEY = 'auth_return_url';
 const AUTH_SESSION_TIMEOUT_MS = 12000;
 
-function getInitialSession(): Promise<Session | null> {
+function getInitialSession(resolveRef: React.MutableRefObject<((session: Session | null) => void) | null>): Promise<Session | null> {
   return new Promise((resolve, reject) => {
     const timeoutId = window.setTimeout(() => reject(new Error('Authentication session lookup timed out.')), AUTH_SESSION_TIMEOUT_MS);
+    resolveRef.current = (session) => {
+      window.clearTimeout(timeoutId);
+      resolve(session);
+      resolveRef.current = null;
+    };
     supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error) reject(error);
-      else resolve(session);
-    }).finally(() => window.clearTimeout(timeoutId));
+      if (error) {
+        window.clearTimeout(timeoutId);
+        resolveRef.current = null;
+        reject(error);
+      } else {
+        const resolver = resolveRef.current;
+        if (resolver) {
+          resolver(session);
+        } else {
+          resolve(session);
+        }
+      }
+    }).catch(() => {
+      window.clearTimeout(timeoutId);
+      resolveRef.current = null;
+      reject(new Error('Authentication session lookup failed.'));
+    });
   });
 }
 
@@ -31,6 +50,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const authReadyRef = useRef(false);
+  const sessionResolveRef = useRef<((session: Session | null) => void) | null>(null);
 
   async function checkAdmin(userId: string) {
     const { data } = await supabase
@@ -55,19 +76,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    getInitialSession().then((session) => {
+    getInitialSession(sessionResolveRef).then((session) => {
+      authReadyRef.current = true;
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) checkAdmin(session.user.id);
     }).catch(() => {
-      setSession(null);
-      setUser(null);
+      authReadyRef.current = true;
     }).finally(() => {
       setIsLoadingAuth(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
       (async () => {
+        if (event === 'INITIAL_SESSION' && authReadyRef.current) {
+          if (!session && sessionResolveRef.current) {
+            sessionResolveRef.current(null);
+            sessionResolveRef.current = null;
+          }
+          return;
+        }
+
+        if (event === 'INITIAL_SESSION' && !authReadyRef.current) {
+          authReadyRef.current = true;
+          if (sessionResolveRef.current) {
+            sessionResolveRef.current(session);
+            sessionResolveRef.current = null;
+          }
+        }
+
         setSession(session);
         setUser(session?.user ?? null);
         setIsLoadingAuth(false);
