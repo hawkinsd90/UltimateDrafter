@@ -56,8 +56,8 @@ function makeTeam(
     wins: opts.wins ?? 0,
     losses: opts.losses ?? 0,
     ties: opts.ties ?? 0,
-    points_for: opts.points_for ?? 0,
-    points_against: opts.points_against ?? 0,
+    points_for: opts.points_for !== undefined ? opts.points_for : 0,
+    points_against: opts.points_against !== undefined ? opts.points_against : 0,
     playoff_seed: opts.playoff_seed ?? null,
     playoff_team_count: opts.playoff_team_count ?? null,
     final_standing: opts.final_standing ?? null,
@@ -558,6 +558,132 @@ function testMatchupRecordsFromIncompleteSeason() {
   assertEq(records.highest_score[0].value, 250, 'Incomplete season matchup: 250 counts as highest');
 }
 
+// ── Test 28: Imported but ongoing season excluded from career aggregates ────────────────
+// import_status === 'complete' means data was fetched, not that the season is over.
+// An ongoing season with import_status=complete but no final_standing must be
+// excluded from career totals.
+
+function testImportedButOngoingSeason() {
+  const managers = [makeManager('m1', 'A')];
+  const teams: LegacySeasonTeam[] = [
+    // 2023: fully finalized
+    makeTeam('t1', 2023, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 10, losses: 3, points_for: 1500, points_against: 1200, final_standing: 1, is_champion: true, playoff_seed: 1, playoff_team_count: 6 }),
+    // 2024: import_status=complete (is_season_complete=true) but season is
+    // still ongoing — no final_standing yet. Must NOT count in career W/L.
+    makeTeam('t2', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 5, losses: 2, points_for: 800, points_against: 600, final_standing: null, is_season_complete: true }),
+  ];
+
+  const careers = calculateCareerStats(teams, managers);
+  assertEq(careers[0].seasons, 2, 'Ongoing: 2 seasons shown (both visible)');
+  assertEq(careers[0].complete_seasons, 1, 'Ongoing: only 1 complete season (final_standing gate)');
+  assertEq(careers[0].wins, 10, 'Ongoing: 10 wins from finalized season only');
+  assertEq(careers[0].losses, 3, 'Ongoing: 3 losses from finalized season only');
+  assertEq(careers[0].points_for, 1500, 'Ongoing: 1500 PF from finalized season only');
+  assertEq(careers[0].championships, 1, 'Ongoing: 1 championship from finalized season');
+  // 2024 season record should be visible but marked incomplete
+  const ongoingRecord = careers[0].season_records.find((r) => r.season_year === 2024)!;
+  assertEq(ongoingRecord.is_season_complete, false, 'Ongoing: 2024 marked incomplete (no final_standing)');
+  assertEq(ongoingRecord.made_playoffs, null, 'Ongoing: made_playoffs null for ongoing season');
+}
+
+// ── Test 29: Mixed complete and incomplete career stats ─────────────────────────────────
+// A manager with 3 seasons: 2 complete, 1 ongoing. Career totals should only
+// reflect the 2 complete seasons, but all 3 appear in season_records.
+
+function testMixedCompleteIncompleteCareerStats() {
+  const managers = [makeManager('m1', 'A'), makeManager('m2', 'B')];
+  const teams: LegacySeasonTeam[] = [
+    // A: 2 complete seasons + 1 ongoing
+    makeTeam('t1', 2022, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 8, losses: 5, points_for: 1400, points_against: 1300, final_standing: 3, playoff_seed: 3, playoff_team_count: 6 }),
+    makeTeam('t2', 2023, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 11, losses: 2, points_for: 1600, points_against: 1100, final_standing: 1, is_champion: true, playoff_seed: 1, playoff_team_count: 6 }),
+    makeTeam('t3', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 6, losses: 1, points_for: 700, points_against: 500, final_standing: null, is_season_complete: true }),
+    // B: 1 complete season
+    makeTeam('t4', 2023, { primary_manager_id: 'm2', primary_manager_name: 'B', wins: 7, losses: 6, points_for: 1200, points_against: 1250, final_standing: 5, playoff_seed: 5, playoff_team_count: 6 }),
+  ];
+
+  const careers = calculateCareerStats(teams, managers);
+  const a = careers.find((c) => c.manager_id === 'm1')!;
+  const b = careers.find((c) => c.manager_id === 'm2')!;
+
+  // A: only 2022 + 2023 count in career aggregates
+  assertEq(a.seasons, 3, 'Mixed: A has 3 seasons shown');
+  assertEq(a.complete_seasons, 2, 'Mixed: A has 2 complete seasons');
+  assertEq(a.wins, 19, 'Mixed: A has 19 wins (8+11, not 25)');
+  assertEq(a.losses, 7, 'Mixed: A has 7 losses (5+2, not 8)');
+  assertEq(a.points_for, 3000, 'Mixed: A has 3000 PF (1400+1600, not 3700)');
+  assertEq(a.championships, 1, 'Mixed: A has 1 championship');
+  assertEq(a.playoff_appearances, 2, 'Mixed: A has 2 playoff appearances');
+  assertEq(a.best_finish, 1, 'Mixed: A best finish 1');
+  assertEq(a.worst_finish, 3, 'Mixed: A worst finish 3');
+  assertEq(a.season_records.length, 3, 'Mixed: A has 3 season records');
+
+  // B: only 1 complete season
+  assertEq(b.seasons, 1, 'Mixed: B has 1 season');
+  assertEq(b.complete_seasons, 1, 'Mixed: B has 1 complete season');
+  assertEq(b.wins, 7, 'Mixed: B has 7 wins');
+}
+
+// ── Test 30: Null points vs zero points in career aggregation ───────────────────────────
+// DB NULL means "unknown" — it must not be silently treated as 0 in a way
+// that distorts records. A team with null points_for should not appear in
+// "most points" single-season records, but a team with 0 points_for should.
+
+function testNullPointsVsZeroPoints() {
+  const managers = [makeManager('m1', 'A'), makeManager('m2', 'B')];
+  const teams: LegacySeasonTeam[] = [
+    // Team with null points_for (DB NULL — data missing)
+    makeTeam('t1', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 5, losses: 8, points_for: null, points_against: null, final_standing: 10 }),
+    // Team with 0 points_for (legitimately scored 0 all season)
+    makeTeam('t2', 2024, { primary_manager_id: 'm2', primary_manager_name: 'B', wins: 0, losses: 13, points_for: 0, points_against: 2000, final_standing: 12 }),
+  ];
+
+  const careers = calculateCareerStats(teams, managers);
+  const a = careers.find((c) => c.manager_id === 'm1')!;
+  const b = careers.find((c) => c.manager_id === 'm2')!;
+
+  // Career points: null team contributes 0 to career sum (via ?? 0)
+  assertEq(a.points_for, 0, 'Null points: career PF is 0 (null ?? 0)');
+  assertEq(b.points_for, 0, 'Zero points: career PF is 0 (legitimate)');
+
+  // Single-season records: null-points team excluded from most_points
+  const records = calculateSingleSeasonRecords(teams);
+  const nullTeamInRecords = records.most_points.find((r) => r.team_name === 'Team t1');
+  assert(nullTeamInRecords === undefined, 'Null points: excluded from most_points single-season records');
+  const zeroTeamInRecords = records.most_points.find((r) => r.team_name === 'Team t2');
+  assert(zeroTeamInRecords !== undefined, 'Zero points: included in most_points single-season records');
+}
+
+// ── Test 31: Manager identity changes reflected on reload ───────────────────────────────
+// When a manager's display name changes (e.g. GUID resolved to human name),
+// the career stats should use the updated display_name from the managers array.
+// This simulates a reload after the name mapping changes.
+
+function testManagerIdentityChangeOnReload() {
+  // First load: manager has GUID as display_name
+  const managersBefore = [makeManager('m1', '{BC7447B2-4463-43D3-AB2F-B47B053E1793}')];
+  // Second load: same manager, now with resolved human name
+  const managersAfter = [makeManager('m1', 'carltonmeans')];
+
+  const teams: LegacySeasonTeam[] = [
+    makeTeam('t1', 2024, { primary_manager_id: 'm1', primary_manager_name: 'carltonmeans', wins: 10, losses: 3, final_standing: 1, playoff_seed: 1, playoff_team_count: 6 }),
+  ];
+
+  const careersBefore = calculateCareerStats(teams, managersBefore);
+  const careersAfter = calculateCareerStats(teams, managersAfter);
+
+  // The display_name in career stats comes from the manager object, not the team
+  assertEq(careersBefore[0].display_name, '{BC7447B2-4463-43D3-AB2F-B47B053E1793}', 'Identity: GUID name before resolution');
+  assertEq(careersAfter[0].display_name, 'carltonmeans', 'Identity: human name after resolution');
+  // Stats should be identical
+  assertEq(careersBefore[0].wins, careersAfter[0].wins, 'Identity: wins unchanged after name change');
+  assertEq(careersBefore[0].championships, careersAfter[0].championships, 'Identity: championships unchanged');
+  // Career records should show the updated name
+  const recordsBefore = calculateCareerRecords(careersBefore);
+  const recordsAfter = calculateCareerRecords(careersAfter);
+  assertEq(recordsBefore.most_wins[0].manager_name, '{BC7447B2-4463-43D3-AB2F-B47B053E1793}', 'Identity: records show GUID before');
+  assertEq(recordsAfter.most_wins[0].manager_name, 'carltonmeans', 'Identity: records show human name after');
+}
+
 // ── Run all tests ──────────────────────────────────────────────────────────────────────
 
 console.log('Running legacyStats tests...\n');
@@ -589,6 +715,10 @@ testMissingPlayoffSettingsComplete();
 testMultipleTeamsSameSeason();
 testCareerLeaderboardCompleteOnly();
 testMatchupRecordsFromIncompleteSeason();
+testImportedButOngoingSeason();
+testMixedCompleteIncompleteCareerStats();
+testNullPointsVsZeroPoints();
+testManagerIdentityChangeOnReload();
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) {

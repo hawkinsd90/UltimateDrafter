@@ -72,13 +72,42 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
           .eq('league_id', leagueId),
       ]);
 
-      if (seasonsRes.error) throw seasonsRes.error;
+      // Fetch imported member names to resolve ESPN GUID display names.
+      // manager_aliases stores the ESPN owner GUID as display_name, which is
+      // not human-readable. league_imported_members has the actual ESPN
+      // username in external_owner_name. We fetch across all leagues since
+      // the same ESPN owner GUID may have been imported under a different
+      // league's import run.
+      const aliasOwnerIds = (managersRes.data ?? []).length > 0
+        ? await supabase
+            .from('league_history_manager_aliases')
+            .select('manager_id, external_owner_id')
+            .in('manager_id', (managersRes.data ?? []).map((m: any) => m.id))
+        : { data: [], error: null };
+      if (aliasOwnerIds.error) throw aliasOwnerIds.error;
 
-      if (managersRes.error) throw managersRes.error;
-      if (teamsRes.error) throw teamsRes.error;
-      if (matchupsRes.error) throw matchupsRes.error;
+      const externalOwnerIds = (aliasOwnerIds.data ?? []).map((a: any) => a.external_owner_id).filter(Boolean);
+      const ownerNameMap: Record<string, string> = {};
+      if (externalOwnerIds.length > 0) {
+        const { data: importedMembers, error: imErr } = await supabase
+          .from('league_imported_members')
+          .select('external_owner_id, external_owner_name')
+          .in('external_owner_id', externalOwnerIds);
+        if (imErr) throw imErr;
+        for (const im of (importedMembers ?? [])) {
+          if (im.external_owner_name && !ownerNameMap[im.external_owner_id]) {
+            ownerNameMap[im.external_owner_id] = im.external_owner_name;
+          }
+        }
+      }
 
-      // Fetch aliases for each manager
+      // Build manager_id → human-readable name using imported member names
+      const managerIdToOwnerId = new Map<string, string>();
+      for (const a of (aliasOwnerIds.data ?? [])) {
+        managerIdToOwnerId.set(a.manager_id, a.external_owner_id);
+      }
+
+      // Fetch aliases for each manager (for profile display)
       const managerIds = (managersRes.data ?? []).map((m: any) => m.id);
       let aliasesMap: Record<string, any[]> = {};
       if (managerIds.length > 0) {
@@ -113,14 +142,23 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
         }
       }
 
+      // Resolve human-readable display name: prefer imported member name,
+      // fall back to manager display_name (may still be a GUID if no
+      // imported member record exists).
       const managerNameMap = new Map<string, string>();
       for (const m of (managersRes.data ?? [])) {
-        managerNameMap.set(m.id, m.display_name);
+        const ownerId = managerIdToOwnerId.get(m.id);
+        const humanName = ownerId ? ownerNameMap[ownerId] : undefined;
+        managerNameMap.set(m.id, humanName ?? m.display_name);
       }
 
-      // Extract playoffTeamCount and completeness from season data
+      // Extract playoffTeamCount and season finality from season data.
+      // import_status === 'complete' means data ingestion succeeded, NOT
+      // that the fantasy season is over. We use import_completeness to
+      // verify all data types were fetched, and final_standing on teams
+      // to verify the season is actually finalized.
       const playoffTeamCountMap = new Map<number, number | null>();
-      const seasonCompleteMap = new Map<number, boolean>();
+      const seasonImportedMap = new Map<number, boolean>();
       for (const s of (seasonsRes.data ?? [])) {
         const rawSettings = s.raw_settings as any;
         const scheduleSettings = rawSettings?.scheduleSettings;
@@ -128,12 +166,17 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
           ? scheduleSettings.playoffTeamCount
           : null;
         playoffTeamCountMap.set(s.season_year, ptc);
-        seasonCompleteMap.set(s.season_year, s.import_status === 'complete');
+        // A season is "imported" when import_status is complete AND all
+        // data types (matchups, standings) are marked as fetched.
+        const completeness = s.import_completeness as any;
+        const allDataFetched = s.import_status === 'complete' &&
+          completeness?.matchups === true && completeness?.standings === true;
+        seasonImportedMap.set(s.season_year, allDataFetched);
       }
 
       const formattedManagers: LegacyManager[] = (managersRes.data ?? []).map((m: any) => ({
         id: m.id,
-        display_name: m.display_name,
+        display_name: managerNameMap.get(m.id) ?? m.display_name,
         linked_user_id: m.linked_user_id,
         seasons: 0,
         aliases: (aliasesMap[m.id] ?? []).map((a) => ({
@@ -155,8 +198,10 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
           wins: t.wins ?? 0,
           losses: t.losses ?? 0,
           ties: t.ties ?? 0,
-          points_for: Number(t.points_for) ?? 0,
-          points_against: Number(t.points_against) ?? 0,
+          // Preserve null from DB — Number(null) returns 0 which would
+          // silently convert missing data to zero.
+          points_for: t.points_for !== null ? Number(t.points_for) : null,
+          points_against: t.points_against !== null ? Number(t.points_against) : null,
           playoff_seed: t.playoff_seed,
           playoff_team_count: playoffTeamCountMap.get(seasonYear) ?? null,
           final_standing: t.final_standing,
@@ -165,8 +210,11 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
           primary_manager_id: t.primary_manager_id,
           primary_manager_name: t.primary_manager_id ? (managerNameMap.get(t.primary_manager_id) ?? null) : null,
           co_manager_ids: coMgrs.map((c) => c.id),
-          co_manager_names: coMgrs.map((c) => c.name),
-          is_season_complete: seasonCompleteMap.get(seasonYear) ?? false,
+          co_manager_names: coMgrs.map((c) => managerNameMap.get(c.id) ?? c.name),
+          // is_season_complete reflects import success, not season finality.
+          // The isSeasonComplete() helper in legacyStats.ts combines this
+          // with final_standing !== null to determine true finality.
+          is_season_complete: seasonImportedMap.get(seasonYear) ?? false,
         };
       });
 

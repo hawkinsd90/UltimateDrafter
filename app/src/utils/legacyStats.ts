@@ -21,8 +21,9 @@ export interface LegacySeasonTeam {
   wins: number;
   losses: number;
   ties: number;
-  points_for: number;
-  points_against: number;
+  // null = unknown/unavailable (DB NULL). A real value of 0 is valid.
+  points_for: number | null;
+  points_against: number | null;
   playoff_seed: number | null;
   // Number of teams that qualified for the championship playoff bracket
   // in this season. Derived from ESPN scheduleSettings.playoffTeamCount.
@@ -37,10 +38,12 @@ export interface LegacySeasonTeam {
   primary_manager_name: string | null;
   co_manager_ids: string[];
   co_manager_names: string[];
-  // Whether the season this team belongs to is fully imported and finalized.
-  // A season is complete when import_status === 'complete' AND the team has
-  // a final_standing. Incomplete seasons are shown in the season-by-season
-  // list for visibility but excluded from career aggregate leaderboards.
+  // Whether the season this team belongs to has been imported AND finalized.
+  // `import_status === 'complete'` means data ingestion succeeded — it does
+  // NOT mean the fantasy season is over. The season is final only when
+  // import succeeded AND final_standing is populated. The dashboard sets
+  // this flag from import_status + import_completeness metadata; the
+  // isSeasonComplete() helper additionally requires final_standing !== null.
   is_season_complete: boolean;
 }
 
@@ -87,6 +90,7 @@ export interface CareerStats {
     wins: number;
     losses: number;
     ties: number;
+    // 0 when DB value was null (season finalized but points unavailable)
     points_for: number;
     points_against: number;
     final_standing: number | null;
@@ -200,22 +204,28 @@ function isCompletedMatchup(m: LegacyMatchup): boolean {
   );
 }
 
-// ── Season Completeness Rule ───────────────────────────────────────────────
-// A season is "complete" (finalized) when:
-//   1. The season's import_status is 'complete' (all data fetched), AND
+// ── Season Finality Rule ───────────────────────────────────────────────────
+// A season is "finalized" (complete for career-aggregate purposes) when:
+//   1. The season's import_status is 'complete' (data ingestion succeeded), AND
 //   2. The team has a non-null final_standing (standings are finalized).
+//
+// Import completion alone is NOT sufficient: `import_status === 'complete'`
+// means the data was fetched successfully, not that the fantasy season is
+// over. An ongoing season can be imported mid-way with `import_status` set
+// to 'complete' because the import job itself finished — but final_standing
+// will be null until the season actually ends.
 //
 // Career aggregate leaderboards (wins, losses, ties, points, championships,
 // championship appearances, playoff appearances, best/worst finish) use ONLY
-// complete seasons. An incomplete season with partial W/L would silently
+// finalized seasons. An ongoing season with partial W/L would silently
 // distort finalized career totals if included.
 //
 // Single-game matchup records (highest score, largest margin, etc.) include
-// any completed matchup regardless of season completeness — an individually
+// any completed matchup regardless of season finality — an individually
 // finalized game is a valid record even if the season isn't over yet.
 //
-// Season-by-season lists on manager profiles show ALL seasons (complete and
-// incomplete) for visibility, with an "incomplete" indicator.
+// Season-by-season lists on manager profiles show ALL seasons (finalized and
+// ongoing) for visibility, with an "incomplete" indicator.
 //
 // H2H and Rivals use completed matchups from all seasons — these are
 // per-game results, not season-level aggregates.
@@ -279,8 +289,12 @@ export function calculateCareerStats(
       stats.wins += team.wins;
       stats.losses += team.losses;
       stats.ties += team.ties;
-      stats.points_for += Number(team.points_for);
-      stats.points_against += Number(team.points_against);
+      // Preserve null as 0 in career aggregates — a null here means the DB
+      // value was missing, but for career sum purposes we treat it as 0
+      // since the season is finalized and the W/L are real. The null-vs-zero
+      // distinction is preserved in season_records below.
+      stats.points_for += team.points_for ?? 0;
+      stats.points_against += team.points_against ?? 0;
 
       if (team.is_champion) stats.championships++;
       if (team.is_champion || team.is_runner_up) stats.championship_appearances++;
@@ -322,8 +336,8 @@ export function calculateCareerStats(
       wins: team.wins,
       losses: team.losses,
       ties: team.ties,
-      points_for: Number(team.points_for),
-      points_against: Number(team.points_against),
+      points_for: team.points_for ?? 0,
+      points_against: team.points_against ?? 0,
       final_standing: team.final_standing,
       is_champion: team.is_champion,
       is_runner_up: team.is_runner_up,
@@ -505,9 +519,9 @@ export function calculateSingleSeasonRecords(
       season_year: t.season_year, value: t.losses, display_value: `${t.losses}`,
       wins: t.wins, losses: t.losses, ties: t.ties,
     })),
-    most_points: [...eligible].sort((a, b) => Number(b.points_for) - Number(a.points_for)).slice(0, 5).map((t) => ({
+    most_points: [...eligible].filter((t) => t.points_for !== null).sort((a, b) => (b.points_for ?? 0) - (a.points_for ?? 0)).slice(0, 5).map((t) => ({
       manager_name: t.primary_manager_name ?? 'Unknown', team_name: t.team_name,
-      season_year: t.season_year, value: Number(t.points_for), display_value: Number(t.points_for).toFixed(2),
+      season_year: t.season_year, value: t.points_for ?? 0, display_value: (t.points_for ?? 0).toFixed(2),
       wins: t.wins, losses: t.losses, ties: t.ties,
     })),
     best_win_pct: [...eligible].filter((t) => totalGames(t) >= 10).map((t) => ({
