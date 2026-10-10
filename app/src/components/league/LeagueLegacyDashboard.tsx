@@ -68,7 +68,7 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
           .order('matchup_period', { ascending: true }),
         supabase
           .from('league_history_seasons')
-          .select('id, season_year, raw_settings')
+          .select('id, season_year, raw_settings, import_status, import_completeness')
           .eq('league_id', leagueId),
       ]);
 
@@ -118,8 +118,9 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
         managerNameMap.set(m.id, m.display_name);
       }
 
-      // Extract playoffTeamCount from raw_settings for each season
+      // Extract playoffTeamCount and completeness from season data
       const playoffTeamCountMap = new Map<number, number | null>();
+      const seasonCompleteMap = new Map<number, boolean>();
       for (const s of (seasonsRes.data ?? [])) {
         const rawSettings = s.raw_settings as any;
         const scheduleSettings = rawSettings?.scheduleSettings;
@@ -127,6 +128,7 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
           ? scheduleSettings.playoffTeamCount
           : null;
         playoffTeamCountMap.set(s.season_year, ptc);
+        seasonCompleteMap.set(s.season_year, s.import_status === 'complete');
       }
 
       const formattedManagers: LegacyManager[] = (managersRes.data ?? []).map((m: any) => ({
@@ -164,6 +166,7 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
           primary_manager_name: t.primary_manager_id ? (managerNameMap.get(t.primary_manager_id) ?? null) : null,
           co_manager_ids: coMgrs.map((c) => c.id),
           co_manager_names: coMgrs.map((c) => c.name),
+          is_season_complete: seasonCompleteMap.get(seasonYear) ?? false,
         };
       });
 
@@ -531,7 +534,7 @@ function ManagerList({ careers, matchups }: { careers: CareerStats[]; matchups: 
                 onMouseLeave={(e) => { (e.currentTarget as HTMLTableRowElement).style.background = ''; }}
               >
                 <td style={{ padding: '10px 12px', fontWeight: '500', color: '#1f2937' }}>{c.display_name}</td>
-                <td style={{ padding: '10px 8px', textAlign: 'center', color: '#6b7280' }}>{c.seasons}</td>
+                <td style={{ padding: '10px 8px', textAlign: 'center', color: '#6b7280' }}>{c.seasons}{c.complete_seasons < c.seasons && <span style={{ fontSize: '10px', color: '#f59e0b' }}> ({c.complete_seasons}c)</span>}</td>
                 <td style={{ padding: '10px 8px', textAlign: 'center', fontWeight: '500' }}>{c.wins}</td>
                 <td style={{ padding: '10px 8px', textAlign: 'center', color: '#6b7280' }}>{c.losses}</td>
                 <td style={{ padding: '10px 8px', textAlign: 'center', color: '#6b7280' }}>{c.ties}</td>
@@ -567,6 +570,7 @@ function ManagerProfile({ career, matchups, onBack }: { career: CareerStats; mat
         <h2 style={{ margin: '0 0 4px 0', fontSize: '20px', fontWeight: '700', color: '#1f2937' }}>{career.display_name}</h2>
         <div style={{ fontSize: '14px', color: '#6b7280' }}>
           {career.seasons} season{career.seasons !== 1 ? 's' : ''}
+          {career.complete_seasons < career.seasons && <span style={{ marginLeft: '8px', fontSize: '12px', color: '#f59e0b' }}>({career.complete_seasons} of {career.seasons} complete)</span>}
           {career.championships > 0 && <span style={{ marginLeft: '12px', color: '#2563eb', fontWeight: '600' }}>{career.championships}x Champion</span>}
         </div>
       </div>
@@ -596,6 +600,7 @@ function ManagerProfile({ career, matchups, onBack }: { career: CareerStats; mat
                   <span style={{ fontSize: '12px', fontWeight: '600', color: s.is_champion ? '#2563eb' : s.is_runner_up ? '#6b7280' : '#9ca3af' }}>
                     {s.is_champion ? 'Champion' : s.is_runner_up ? 'Runner-up' : s.final_standing ? `#${s.final_standing}` : '-'}
                   </span>
+                  {s.is_season_complete === false && <span style={{ marginLeft: '8px', color: '#f59e0b', fontSize: '11px', fontWeight: '600' }}>Incomplete</span>}
                 </div>
                 <div style={{ fontSize: '13px', color: '#6b7280' }}>
                   {s.team_name}

@@ -37,6 +37,11 @@ export interface LegacySeasonTeam {
   primary_manager_name: string | null;
   co_manager_ids: string[];
   co_manager_names: string[];
+  // Whether the season this team belongs to is fully imported and finalized.
+  // A season is complete when import_status === 'complete' AND the team has
+  // a final_standing. Incomplete seasons are shown in the season-by-season
+  // list for visibility but excluded from career aggregate leaderboards.
+  is_season_complete: boolean;
 }
 
 export interface LegacyMatchup {
@@ -60,7 +65,10 @@ export interface LegacyMatchup {
 export interface CareerStats {
   manager_id: string;
   display_name: string;
+  // Total distinct seasons this manager appears in (complete + incomplete)
   seasons: number;
+  // Number of complete seasons contributing to career aggregates
+  complete_seasons: number;
   wins: number;
   losses: number;
   ties: number;
@@ -86,6 +94,7 @@ export interface CareerStats {
     is_runner_up: boolean;
     playoff_seed: number | null;
     made_playoffs: boolean | null;
+    is_season_complete: boolean;
   }[];
 }
 
@@ -191,6 +200,35 @@ function isCompletedMatchup(m: LegacyMatchup): boolean {
   );
 }
 
+// ── Season Completeness Rule ───────────────────────────────────────────────
+// A season is "complete" (finalized) when:
+//   1. The season's import_status is 'complete' (all data fetched), AND
+//   2. The team has a non-null final_standing (standings are finalized).
+//
+// Career aggregate leaderboards (wins, losses, ties, points, championships,
+// championship appearances, playoff appearances, best/worst finish) use ONLY
+// complete seasons. An incomplete season with partial W/L would silently
+// distort finalized career totals if included.
+//
+// Single-game matchup records (highest score, largest margin, etc.) include
+// any completed matchup regardless of season completeness — an individually
+// finalized game is a valid record even if the season isn't over yet.
+//
+// Season-by-season lists on manager profiles show ALL seasons (complete and
+// incomplete) for visibility, with an "incomplete" indicator.
+//
+// H2H and Rivals use completed matchups from all seasons — these are
+// per-game results, not season-level aggregates.
+//
+// A manager with multiple teams in the same season (rare but possible via
+// historical overrides) is counted once per season for the seasons count,
+// but career W/L/T aggregates each team's record independently since each
+// team has its own win/loss record.
+
+function isSeasonComplete(team: LegacySeasonTeam): boolean {
+  return team.is_season_complete && team.final_standing !== null;
+}
+
 // ── Career Statistics ───────────────────────────────────────────────────────
 
 export function calculateCareerStats(
@@ -204,6 +242,7 @@ export function calculateCareerStats(
       manager_id: mgr.id,
       display_name: mgr.display_name,
       seasons: 0,
+      complete_seasons: 0,
       wins: 0,
       losses: 0,
       ties: 0,
@@ -219,43 +258,61 @@ export function calculateCareerStats(
     });
   }
 
+  // Track distinct seasons per manager (complete + incomplete)
+  const distinctSeasons = new Map<string, Set<number>>();
+
   for (const team of teams) {
     if (!team.primary_manager_id) continue;
     const stats = statsMap.get(team.primary_manager_id);
     if (!stats) continue;
 
-    stats.seasons++;
-    stats.wins += team.wins;
-    stats.losses += team.losses;
-    stats.ties += team.ties;
-    stats.points_for += Number(team.points_for);
-    stats.points_against += Number(team.points_against);
+    // Track distinct seasons (a manager could have multiple teams in one season)
+    if (!distinctSeasons.has(team.primary_manager_id)) {
+      distinctSeasons.set(team.primary_manager_id, new Set());
+    }
+    distinctSeasons.get(team.primary_manager_id)!.add(team.season_year);
 
-    if (team.is_champion) stats.championships++;
-    if (team.is_champion || team.is_runner_up) stats.championship_appearances++;
+    const complete = isSeasonComplete(team);
 
-    // Playoff qualification: only count if playoff_team_count is known
-    const madePlayoffs: boolean | null =
-      team.playoff_team_count !== null && team.playoff_team_count > 0
-        ? team.playoff_seed !== null && team.playoff_seed <= team.playoff_team_count
-        : null;
+    if (complete) {
+      stats.complete_seasons++;
+      stats.wins += team.wins;
+      stats.losses += team.losses;
+      stats.ties += team.ties;
+      stats.points_for += Number(team.points_for);
+      stats.points_against += Number(team.points_against);
 
-    if (madePlayoffs === true) {
-      if (stats.playoff_appearances !== null) {
-        stats.playoff_appearances++;
+      if (team.is_champion) stats.championships++;
+      if (team.is_champion || team.is_runner_up) stats.championship_appearances++;
+
+      if (team.final_standing !== null) {
+        if (stats.best_finish === null || team.final_standing < stats.best_finish) {
+          stats.best_finish = team.final_standing;
+        }
+        if (stats.worst_finish === null || team.final_standing > stats.worst_finish) {
+          stats.worst_finish = team.final_standing;
+        }
       }
-    } else if (madePlayoffs === null) {
-      // If we can't determine playoff qualification for this season,
-      // mark the entire career playoff_appearances as unavailable.
-      stats.playoff_appearances = null;
     }
 
-    if (team.final_standing !== null) {
-      if (stats.best_finish === null || team.final_standing < stats.best_finish) {
-        stats.best_finish = team.final_standing;
-      }
-      if (stats.worst_finish === null || team.final_standing > stats.worst_finish) {
-        stats.worst_finish = team.final_standing;
+    // Playoff qualification: only meaningful for complete seasons.
+    // null = unknown (incomplete season OR missing playoffTeamCount on a complete season)
+    const madePlayoffs: boolean | null =
+      !complete
+        ? null
+        : team.playoff_team_count !== null && team.playoff_team_count > 0
+          ? team.playoff_seed !== null && team.playoff_seed <= team.playoff_team_count
+          : null;
+
+    // Only adjust career playoff_appearances for complete seasons.
+    // Incomplete seasons don't count and don't null out the career total.
+    if (complete) {
+      if (madePlayoffs === true) {
+        if (stats.playoff_appearances !== null) {
+          stats.playoff_appearances++;
+        }
+      } else if (madePlayoffs === null) {
+        stats.playoff_appearances = null;
       }
     }
 
@@ -272,10 +329,12 @@ export function calculateCareerStats(
       is_runner_up: team.is_runner_up,
       playoff_seed: team.playoff_seed,
       made_playoffs: madePlayoffs,
+      is_season_complete: complete,
     });
   }
 
   for (const stats of statsMap.values()) {
+    stats.seasons = distinctSeasons.get(stats.manager_id)?.size ?? 0;
     const totalGames = stats.wins + stats.losses + stats.ties;
     stats.win_pct = totalGames > 0
       ? (stats.wins + stats.ties * 0.5) / totalGames

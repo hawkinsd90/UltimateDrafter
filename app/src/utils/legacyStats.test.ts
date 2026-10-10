@@ -67,6 +67,7 @@ function makeTeam(
     primary_manager_name: opts.primary_manager_name ?? null,
     co_manager_ids: opts.co_manager_ids ?? [],
     co_manager_names: opts.co_manager_names ?? [],
+    is_season_complete: opts.is_season_complete ?? true,
   };
 }
 
@@ -426,6 +427,137 @@ function testMarginWithZeroScore() {
   assertEq(records.closest_margin[0].value, 2, 'Margin: closest is 2 (50-48)');
 }
 
+// ── Test 21: Incomplete season excluded from career aggregates ──────────────────────────
+
+function testIncompleteSeasonCareerExclusion() {
+  const managers = [makeManager('m1', 'A')];
+  const teams: LegacySeasonTeam[] = [
+    makeTeam('t1', 2023, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 10, losses: 3, points_for: 1500, points_against: 1200, final_standing: 1, is_champion: true, playoff_seed: 1, playoff_team_count: 6 }),
+    // Incomplete 2024 season — should NOT count in career W/L
+    makeTeam('t2', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 8, losses: 5, points_for: 1400, points_against: 1300, final_standing: null, is_season_complete: false }),
+  ];
+
+  const careers = calculateCareerStats(teams, managers);
+  assertEq(careers[0].seasons, 2, 'Incomplete career: 2 total seasons shown');
+  assertEq(careers[0].complete_seasons, 1, 'Incomplete career: only 1 complete season');
+  assertEq(careers[0].wins, 10, 'Incomplete career: only 10 wins from complete season');
+  assertEq(careers[0].losses, 3, 'Incomplete career: only 3 losses from complete season');
+  assertEq(careers[0].points_for, 1500, 'Incomplete career: only 1500 PF from complete season');
+  assertEq(careers[0].championships, 1, 'Incomplete career: 1 championship from complete season');
+  assertEq(careers[0].best_finish, 1, 'Incomplete career: best finish 1 from complete season');
+  // Incomplete season still in season_records for visibility
+  assertEq(careers[0].season_records.length, 2, 'Incomplete career: 2 season records shown');
+  const incompleteRecord = careers[0].season_records.find((r) => r.season_year === 2024)!;
+  assertEq(incompleteRecord.is_season_complete, false, 'Incomplete career: 2024 marked incomplete');
+  assertEq(incompleteRecord.made_playoffs, null, 'Incomplete career: made_playoffs null for incomplete');
+}
+
+// ── Test 22: Partially imported season (import_status not complete) ──────────────────────
+
+function testPartiallyImportedSeason() {
+  const managers = [makeManager('m1', 'A')];
+  const teams: LegacySeasonTeam[] = [
+    // import_status was 'partial' → is_season_complete=false
+    makeTeam('t1', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 5, losses: 2, final_standing: 1, is_season_complete: false }),
+  ];
+
+  const careers = calculateCareerStats(teams, managers);
+  assertEq(careers[0].wins, 0, 'Partial import: 0 career wins (excluded)');
+  assertEq(careers[0].complete_seasons, 0, 'Partial import: 0 complete seasons');
+  assertEq(careers[0].seasons, 1, 'Partial import: 1 season shown');
+}
+
+// ── Test 23: Missing season points not converted to zero ────────────────────────────────
+
+function testMissingPointsNotZero() {
+  const managers = [makeManager('m1', 'A')];
+  const teams: LegacySeasonTeam[] = [
+    // points_for is 0 (default) but season is complete — valid zero-point season
+    makeTeam('t1', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 0, losses: 13, points_for: 0, points_against: 2000, final_standing: 12 }),
+  ];
+
+  const careers = calculateCareerStats(teams, managers);
+  assertEq(careers[0].wins, 0, 'Missing points: 0 wins is valid');
+  assertEq(careers[0].losses, 13, 'Missing points: 13 losses is valid');
+  assertEq(careers[0].points_for, 0, 'Missing points: 0 PF is valid (not excluded)');
+  assertEq(careers[0].complete_seasons, 1, 'Missing points: season is complete');
+}
+
+// ── Test 24: Missing playoff settings on complete season → null playoffs ────────────────
+
+function testMissingPlayoffSettingsComplete() {
+  const managers = [makeManager('m1', 'A')];
+  const teams: LegacySeasonTeam[] = [
+    makeTeam('t1', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 10, losses: 3, final_standing: 1, playoff_seed: 1, playoff_team_count: null }),
+  ];
+
+  const careers = calculateCareerStats(teams, managers);
+  assertEq(careers[0].playoff_appearances, null, 'Missing playoff settings: null on complete season');
+  assertEq(careers[0].season_records[0].made_playoffs, null, 'Missing playoff settings: null in season record');
+}
+
+// ── Test 25: Multiple teams same manager same season ────────────────────────────────────
+
+function testMultipleTeamsSameSeason() {
+  const managers = [makeManager('m1', 'A')];
+  // Manager took over a team mid-season and also has another team (historical override scenario)
+  const teams: LegacySeasonTeam[] = [
+    makeTeam('t1', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 5, losses: 3, final_standing: 5, playoff_seed: 5, playoff_team_count: 6 }),
+    makeTeam('t2', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 3, losses: 5, final_standing: 8, playoff_seed: 8, playoff_team_count: 6 }),
+  ];
+
+  const careers = calculateCareerStats(teams, managers);
+  // seasons count is distinct seasons (1), not teams (2)
+  assertEq(careers[0].seasons, 1, 'Multi-team: 1 distinct season');
+  // Career W/L aggregates both teams
+  assertEq(careers[0].wins, 8, 'Multi-team: 8 total wins (5+3)');
+  assertEq(careers[0].losses, 8, 'Multi-team: 8 total losses (3+5)');
+  // complete_seasons counts both teams as complete
+  assertEq(careers[0].complete_seasons, 2, 'Multi-team: 2 complete team-seasons');
+  // Playoff: t1 seed 5 <= 6 qualifies, t2 seed 8 > 6 does not
+  assertEq(careers[0].playoff_appearances, 1, 'Multi-team: 1 playoff appearance (t1 qualifies, t2 does not)');
+  // Season records show both teams
+  assertEq(careers[0].season_records.length, 2, 'Multi-team: 2 season records');
+}
+
+// ── Test 26: Career leaderboard eligibility uses complete seasons only ────────────────────
+
+function testCareerLeaderboardCompleteOnly() {
+  const managers = [makeManager('m1', 'A'), makeManager('m2', 'B')];
+  const teams: LegacySeasonTeam[] = [
+    // A: 1 complete season with 10 wins, 1 incomplete with 50 wins
+    makeTeam('t1', 2023, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 10, losses: 3, final_standing: 1 }),
+    makeTeam('t2', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 50, losses: 0, final_standing: null, is_season_complete: false }),
+    // B: 1 complete season with 8 wins
+    makeTeam('t3', 2023, { primary_manager_id: 'm2', primary_manager_name: 'B', wins: 8, losses: 5, final_standing: 3 }),
+  ];
+
+  const careers = calculateCareerStats(teams, managers);
+  const records = calculateCareerRecords(careers);
+  // A should have 10 wins (not 60) in career leaderboard
+  const aRecord = records.most_wins.find((r) => r.manager_name === 'A');
+  assert(aRecord !== undefined, 'Leaderboard: A appears in most wins');
+  assertEq(aRecord!.value, 10, 'Leaderboard: A has 10 wins (incomplete season excluded)');
+  // B should have 8 wins
+  const bRecord = records.most_wins.find((r) => r.manager_name === 'B');
+  assert(bRecord !== undefined, 'Leaderboard: B appears in most wins');
+  assertEq(bRecord!.value, 8, 'Leaderboard: B has 8 wins');
+  // A should be ranked above B (10 > 8)
+  assertEq(records.most_wins[0].manager_name, 'A', 'Leaderboard: A ranked #1 with 10 wins');
+}
+
+// ── Test 27: Completed matchup counts even from incomplete season ────────────────────────
+
+function testMatchupRecordsFromIncompleteSeason() {
+  // Single-game records should count completed matchups even if season isn't complete
+  const matchups: LegacyMatchup[] = [
+    makeMatchup('m1', 2024, { home_score: 250, away_score: 100, winner: 'HOME' }),
+  ];
+
+  const records = calculateMatchupRecords(matchups);
+  assertEq(records.highest_score[0].value, 250, 'Incomplete season matchup: 250 counts as highest');
+}
+
 // ── Run all tests ──────────────────────────────────────────────────────────────────────
 
 console.log('Running legacyStats tests...\n');
@@ -450,6 +582,13 @@ testIncompleteSeason();
 testTieWinPct();
 testCareerRecordsPlayoffNull();
 testMarginWithZeroScore();
+testIncompleteSeasonCareerExclusion();
+testPartiallyImportedSeason();
+testMissingPointsNotZero();
+testMissingPlayoffSettingsComplete();
+testMultipleTeamsSameSeason();
+testCareerLeaderboardCompleteOnly();
+testMatchupRecordsFromIncompleteSeason();
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) {
