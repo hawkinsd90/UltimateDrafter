@@ -82,7 +82,8 @@ Deno.serve(async (req: Request) => {
 
     // ── Manager identity actions (don't need external league link) ────────────
     if (action === "rename_manager" || action === "link_manager" ||
-        action === "merge_managers" || action === "split_manager") {
+        action === "unlink_manager" || action === "merge_managers" ||
+        action === "split_manager") {
       return await handleManagerAction({ adminClient, action, body, leagueId });
     }
 
@@ -306,11 +307,18 @@ async function handleManagerAction(params: {
     return jsonResponse(data);
   }
 
-  if (action === "link_manager") {
+  if (action === "link_manager" || action === "unlink_manager") {
     const managerId = body.managerId as string | undefined;
-    const linkedUserId = body.linkedUserId as string | undefined;
-    if (!managerId || !linkedUserId) {
-      return jsonResponse({ error: "managerId and linkedUserId are required." }, 400);
+    if (!managerId) {
+      return jsonResponse({ error: "managerId is required." }, 400);
+    }
+    // unlink_manager passes null; link_manager passes a user UUID.
+    // Both use the same RPC which sets linked_user_id to the provided value.
+    const linkedUserId = action === "unlink_manager"
+      ? null
+      : (body.linkedUserId as string | undefined);
+    if (action === "link_manager" && !linkedUserId) {
+      return jsonResponse({ error: "linkedUserId is required for link_manager." }, 400);
     }
     const { data, error } = await adminClient.rpc("link_historical_manager", {
       p_manager_id: managerId,

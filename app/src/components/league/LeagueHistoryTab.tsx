@@ -348,7 +348,6 @@ export default function LeagueHistoryTab({ leagueId, isOwner }: HistoryTabProps)
                   <HistoricalManagerPanel
                     leagueId={leagueId}
                     isOwner={isOwner}
-                    espnExternalLeagueId={espnLink?.external_league_id ?? null}
                   />
                 )}
               </>
@@ -547,7 +546,7 @@ function HistoryImportModal({
   // Sequential multi-season import
   const handleMultiImport = async () => {
     const yearsToImport = Array.from(selectedYears).sort((a, b) => a - b);
-    if (yearsToImport.length === 0) return;
+    if (yearsToImport.length === 0 || importing) return;
 
     setImporting(true);
     setImportDone(false);
@@ -573,11 +572,13 @@ function HistoryImportModal({
 
     const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/import-league-history`;
 
+    // Track results in a local array to avoid stale state reads
+    const results = [...progress];
+
     for (let i = 0; i < yearsToImport.length; i++) {
       const year = yearsToImport[i];
-      setImportProgress((prev) => prev.map((p) =>
-        p.year === year ? { ...p, status: 'importing' } : p
-      ));
+      results[i] = { ...results[i], status: 'importing' };
+      setImportProgress([...results]);
 
       try {
         const response = await fetch(apiUrl, {
@@ -599,36 +600,27 @@ function HistoryImportModal({
         });
         const data = await response.json();
         if (!response.ok) {
-          setImportProgress((prev) => prev.map((p) =>
-            p.year === year ? { ...p, status: 'failed', message: data.error } : p
-          ));
+          results[i] = { ...results[i], status: 'failed', message: data.error };
         } else {
-          setImportProgress((prev) => prev.map((p) =>
-            p.year === year ? {
-              ...p,
-              status: 'success',
-              message: `${data.teamsImported}t ${data.matchupsImported}m ${data.draftPicksImported}p`,
-            } : p
-          ));
+          results[i] = {
+            ...results[i],
+            status: 'success',
+            message: `${data.teamsImported}t ${data.matchupsImported}m ${data.draftPicksImported}p`,
+          };
         }
       } catch (err) {
-        setImportProgress((prev) => prev.map((p) =>
-          p.year === year ? { ...p, status: 'failed', message: err instanceof Error ? err.message : 'Network error' } : p
-        ));
+        results[i] = {
+          ...results[i],
+          status: 'failed',
+          message: err instanceof Error ? err.message : 'Network error',
+        };
       }
+      setImportProgress([...results]);
     }
 
     setImportDone(true);
     setImporting(false);
-
-    // Auto-close if at least one succeeded
-    const hasSuccess = true; // checked below
-    const successCount = yearsToImport.filter((_, idx) => {
-      return importProgress[idx]?.status === 'success';
-    }).length;
-    if (successCount > 0 || hasSuccess) {
-      setTimeout(() => onComplete(), 2000);
-    }
+    // No auto-close — commissioner reviews results and clicks Done
   };
 
   const retryFailed = () => {

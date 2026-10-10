@@ -35,10 +35,9 @@ interface TeamManagerRow {
 interface ManagerPanelProps {
   leagueId: string;
   isOwner: boolean;
-  espnExternalLeagueId: string | null;
 }
 
-export default function HistoricalManagerPanel({ leagueId, isOwner, espnExternalLeagueId }: ManagerPanelProps) {
+export default function HistoricalManagerPanel({ leagueId, isOwner }: ManagerPanelProps) {
   const [managers, setManagers] = useState<HistoricalManager[]>([]);
   const [aliases, setAliases] = useState<Map<string, ManagerAlias[]>>(new Map());
   const [teamManagers, setTeamManagers] = useState<Map<string, TeamManagerRow[]>>(new Map());
@@ -48,6 +47,8 @@ export default function HistoricalManagerPanel({ leagueId, isOwner, espnExternal
   const [editingMgr, setEditingMgr] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [mergeTarget, setMergeTarget] = useState<string | null>(null);
+  const [splitTarget, setSplitTarget] = useState<string | null>(null);
+  const [splitName, setSplitName] = useState('');
   const [actionResult, setActionResult] = useState<{ success: boolean; message: string } | null>(null);
   const [acting, setActing] = useState(false);
 
@@ -139,7 +140,6 @@ export default function HistoricalManagerPanel({ leagueId, isOwner, espnExternal
   }, [loadData]);
 
   async function callManagerAction(action: string, payload: Record<string, unknown>) {
-    if (!espnExternalLeagueId) return;
     setActing(true);
     setActionResult(null);
     try {
@@ -167,6 +167,8 @@ export default function HistoricalManagerPanel({ leagueId, isOwner, espnExternal
         await loadData();
         setEditingMgr(null);
         setMergeTarget(null);
+        setSplitTarget(null);
+        setSplitName('');
       }
     } catch (err) {
       setActionResult({
@@ -294,16 +296,65 @@ export default function HistoricalManagerPanel({ leagueId, isOwner, espnExternal
                       {mgrTeams
                         .sort((a, b) => b.season_year - a.season_year)
                         .map((tm) => (
-                          <div key={tm.id} style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>
-                            {tm.season_year}: {tm.team_name}
-                            <span style={{
-                              fontSize: '11px', marginLeft: '6px', padding: '1px 5px',
-                              borderRadius: '3px',
-                              background: tm.role === 'primary' ? '#dbeafe' : '#f3f4f6',
-                              color: tm.role === 'primary' ? '#1e40af' : '#6b7280',
-                            }}>
-                              {tm.role}
+                          <div key={tm.id} style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                            <span>
+                              {tm.season_year}: {tm.team_name}
+                              <span style={{
+                                fontSize: '11px', marginLeft: '6px', padding: '1px 5px',
+                                borderRadius: '3px',
+                                background: tm.role === 'primary' ? '#dbeafe' : '#f3f4f6',
+                                color: tm.role === 'primary' ? '#1e40af' : '#6b7280',
+                              }}>
+                                {tm.role}
+                              </span>
                             </span>
+                            {isOwner && (
+                              <button
+                                onClick={() => { setSplitTarget(tm.id); setSplitName(''); }}
+                                style={{
+                                  padding: '2px 8px', fontSize: '11px', cursor: 'pointer',
+                                  background: 'transparent', color: '#6b7280',
+                                  border: '1px solid #e5e7eb', borderRadius: '4px',
+                                }}
+                              >
+                                Split
+                              </button>
+                            )}
+                            {splitTarget === tm.id && (
+                              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '4px', width: '100%' }}>
+                                <input
+                                  type="text"
+                                  placeholder="New manager name"
+                                  value={splitName}
+                                  onChange={(e) => setSplitName(e.target.value)}
+                                  style={{
+                                    padding: '4px 8px', border: '1px solid #d1d5db',
+                                    borderRadius: '4px', fontSize: '12px', flex: '1', maxWidth: '200px',
+                                  }}
+                                />
+                                <button
+                                  onClick={() => callManagerAction('split_manager', { teamManagerId: tm.id, newDisplayName: splitName })}
+                                  disabled={acting || !splitName.trim()}
+                                  style={{
+                                    padding: '4px 10px', fontSize: '12px', fontWeight: '500',
+                                    background: acting || !splitName.trim() ? '#9ca3af' : '#dc2626',
+                                    color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer',
+                                  }}
+                                >
+                                  Confirm Split
+                                </button>
+                                <button
+                                  onClick={() => { setSplitTarget(null); setSplitName(''); }}
+                                  style={{
+                                    padding: '4px 10px', fontSize: '12px',
+                                    background: 'transparent', color: '#374151',
+                                    border: '1px solid #d1d5db', borderRadius: '4px', cursor: 'pointer',
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ))}
                     </div>
@@ -360,12 +411,14 @@ export default function HistoricalManagerPanel({ leagueId, isOwner, espnExternal
                         </button>
                       )}
 
-                      {/* Link to member */}
+                      {/* Link / unlink to member */}
                       <select
-                        value={m.linked_user_id ?? ''}
+                        value={m.linked_user_id ?? '__none__'}
                         onChange={(e) => {
                           const val = e.target.value;
-                          if (val) {
+                          if (val === '__unlink__') {
+                            callManagerAction('unlink_manager', { managerId: m.id });
+                          } else if (val && val !== '__none__') {
                             callManagerAction('link_manager', { managerId: m.id, linkedUserId: val });
                           }
                         }}
@@ -375,12 +428,24 @@ export default function HistoricalManagerPanel({ leagueId, isOwner, espnExternal
                           marginRight: '8px', marginBottom: '4px',
                         }}
                       >
-                        <option value="">Link to member...</option>
-                        {leagueMembers.map((lm) => (
-                          <option key={lm.user_id ?? ''} value={lm.user_id ?? ''}>
-                            {lm.display_name ?? (lm.user_id ?? '').slice(0, 8)}
+                        {m.linked_user_id ? (
+                          <option value={m.linked_user_id}>
+                            Linked: {linkedMember?.display_name ?? m.linked_user_id.slice(0, 8)}
                           </option>
-                        ))}
+                        ) : (
+                          <option value="__none__">Link to member...</option>
+                        )}
+                        {leagueMembers
+                          .filter((lm) => lm.user_id !== m.linked_user_id)
+                          .map((lm) => (
+                            <option key={lm.user_id ?? ''} value={lm.user_id ?? ''}>
+                              {lm.display_name ?? (lm.user_id ?? '').slice(0, 8)}
+                            </option>
+                          ))
+                        }
+                        {m.linked_user_id && (
+                          <option value="__unlink__">Unlink</option>
+                        )}
                       </select>
 
                       {/* Merge with another manager */}
