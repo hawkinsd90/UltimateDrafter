@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { resolveManagerDisplayName } from '../../utils/legacyStats';
 
 interface DraftPick {
   id: string;
@@ -89,12 +90,55 @@ export default function HistoricalDraftViewer({ seasonId }: DraftViewerProps) {
       }
       const managerNames = new Map<string, string>();
       if (managerIds.size > 0) {
-        const { data: mgrData } = await supabase
-          .from('league_history_managers')
-          .select('id, display_name')
-          .in('id', Array.from(managerIds));
-        for (const m of (mgrData ?? []) as { id: string; display_name: string }[]) {
-          managerNames.set(m.id, m.display_name);
+        const idArr = Array.from(managerIds);
+        const [mgrData, aliasData] = await Promise.all([
+          supabase
+            .from('league_history_managers')
+            .select('id, display_name, league_id')
+            .in('id', idArr),
+          supabase
+            .from('league_history_manager_aliases')
+            .select('manager_id, external_owner_id')
+            .in('manager_id', idArr),
+        ]);
+
+        // Fetch imported members for the league of the first manager
+        // (all draft managers belong to the same league) to resolve GUIDs.
+        const firstMgr = (mgrData.data ?? [])[0] as { league_id: string } | undefined;
+        const leagueId = firstMgr?.league_id;
+        let ownerNameMap: Record<string, string> = {};
+        if (leagueId) {
+          const allOwnerIds = ((aliasData.data ?? []) as { external_owner_id: string }[])
+            .map((a) => a.external_owner_id).filter(Boolean);
+          if (allOwnerIds.length > 0) {
+            const { data: imData } = await supabase
+              .from('league_imported_members')
+              .select('external_owner_id, external_owner_name')
+              .eq('league_id', leagueId)
+              .in('external_owner_id', allOwnerIds);
+            for (const im of (imData ?? [])) {
+              if (im.external_owner_name && !ownerNameMap[im.external_owner_id]) {
+                ownerNameMap[im.external_owner_id] = im.external_owner_name;
+              }
+            }
+          }
+        }
+
+        // Group aliases by manager_id for resolution
+        const aliasesByMgr = new Map<string, { external_owner_id: string }[]>();
+        for (const a of (aliasData.data ?? []) as { manager_id: string; external_owner_id: string }[]) {
+          const existing = aliasesByMgr.get(a.manager_id) ?? [];
+          existing.push({ external_owner_id: a.external_owner_id });
+          aliasesByMgr.set(a.manager_id, existing);
+        }
+
+        for (const m of (mgrData.data ?? []) as { id: string; display_name: string }[]) {
+          const resolved = resolveManagerDisplayName(
+            m.display_name,
+            aliasesByMgr.get(m.id) ?? [],
+            ownerNameMap,
+          );
+          managerNames.set(m.id, resolved);
         }
       }
 

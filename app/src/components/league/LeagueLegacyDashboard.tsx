@@ -24,13 +24,14 @@ import {
 
 interface LeagueLegacyDashboardProps {
   leagueId: string;
+  refreshKey?: number;
 }
 
 type LegacyView = 'overview' | 'recordbook' | 'managers' | 'h2h' | 'championships';
 
 // ── Main Component ──────────────────────────────────────────────────────────
 
-export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboardProps) {
+export default function LeagueLegacyDashboard({ leagueId, refreshKey = 0 }: LeagueLegacyDashboardProps) {
   const [managers, setManagers] = useState<LegacyManager[]>([]);
   const [teams, setTeams] = useState<LegacySeasonTeam[]>([]);
   const [matchups, setMatchups] = useState<LegacyMatchup[]>([]);
@@ -166,17 +167,40 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
         seasonImportedMap.set(s.season_year, allDataFetched);
       }
 
-      const formattedManagers: LegacyManager[] = (managersRes.data ?? []).map((m: any) => ({
-        id: m.id,
-        display_name: managerNameMap.get(m.id) ?? m.display_name,
-        linked_user_id: m.linked_user_id,
-        seasons: 0,
-        aliases: (aliasesMap[m.id] ?? []).map((a) => ({
-          provider: a.provider,
-          external_owner_id: a.external_owner_id,
-          display_name: a.display_name,
-        })),
-      }));
+      // Build disambiguation labels for unresolved managers.
+      // When a manager's resolved name is "Unresolved Manager", append
+      // their most recent team name and season so users can distinguish
+      // multiple unresolved identities in the UI.
+      const managerLatestTeam = new Map<string, { teamName: string; seasonYear: number }>();
+      for (const t of (teamsRes.data ?? [])) {
+        const mgrId = (t as any).primary_manager_id as string | null;
+        if (!mgrId) continue;
+        const seasonYear = (t.season as any)?.season_year ?? 0;
+        const existing = managerLatestTeam.get(mgrId);
+        if (!existing || seasonYear > existing.seasonYear) {
+          managerLatestTeam.set(mgrId, { teamName: (t as any).team_name ?? 'Unknown', seasonYear });
+        }
+      }
+
+      const formattedManagers: LegacyManager[] = (managersRes.data ?? []).map((m: any) => {
+        const resolvedName = managerNameMap.get(m.id) ?? m.display_name;
+        const isUnresolved = resolvedName === 'Unresolved Manager';
+        const latestTeam = managerLatestTeam.get(m.id);
+        const displayName = isUnresolved && latestTeam
+          ? `Unresolved — ${latestTeam.teamName} (${latestTeam.seasonYear})`
+          : resolvedName;
+        return {
+          id: m.id,
+          display_name: displayName,
+          linked_user_id: m.linked_user_id,
+          seasons: 0,
+          aliases: (aliasesMap[m.id] ?? []).map((a) => ({
+            provider: a.provider,
+            external_owner_id: a.external_owner_id,
+            display_name: a.display_name,
+          })),
+        };
+      });
 
       const formattedTeams: LegacySeasonTeam[] = (teamsRes.data ?? []).map((t: any) => {
         const coMgrs = coManagersMap[t.id] ?? [];
@@ -200,9 +224,9 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
           is_champion: t.is_champion ?? false,
           is_runner_up: t.is_runner_up ?? false,
           primary_manager_id: t.primary_manager_id,
-          primary_manager_name: t.primary_manager_id ? (managerNameMap.get(t.primary_manager_id) ?? null) : null,
+          primary_manager_name: t.primary_manager_id ? (formattedManagers.find((fm) => fm.id === t.primary_manager_id)?.display_name ?? null) : null,
           co_manager_ids: coMgrs.map((c) => c.id),
-          co_manager_names: coMgrs.map((c) => managerNameMap.get(c.id) ?? 'Unresolved Manager'),
+          co_manager_names: coMgrs.map((c) => formattedManagers.find((fm) => fm.id === c.id)?.display_name ?? 'Unresolved Manager'),
           // is_season_complete reflects import success, not season finality.
           // The isSeasonComplete() helper in legacyStats.ts combines this
           // with final_standing !== null to determine true finality.
@@ -259,7 +283,7 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
 
   useEffect(() => {
     loadData();
-  }, [loadData]);
+  }, [loadData, refreshKey]);
 
   // Memoized computed statistics
   const careers = useMemo(() => calculateCareerStats(teams, managers), [teams, managers]);
@@ -294,8 +318,35 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
     );
   }
 
+  const unresolvedCount = managers.filter((m) => m.display_name.startsWith('Unresolved')).length;
+
   return (
     <div>
+      {/* Commissioner info banner */}
+      {unresolvedCount > 0 && (
+        <div style={{
+          padding: '12px 16px', marginBottom: '20px', borderRadius: '8px',
+          background: '#fffbeb', border: '1px solid #fcd34d', fontSize: '13px',
+          color: '#92400e', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap',
+        }}>
+          <span>
+            {unresolvedCount} manager{unresolvedCount !== 1 ? 's' : ''} need identification.
+            Go to Seasons &rarr; Managers sub-tab to rename or link them.
+          </span>
+          <button
+            onClick={() => loadData()}
+            style={{
+              padding: '4px 12px', fontSize: '12px', fontWeight: '500',
+              background: 'transparent', color: '#92400e',
+              border: '1px solid #fcd34d', borderRadius: '6px', cursor: 'pointer',
+              marginLeft: 'auto',
+            }}
+          >
+            Refresh
+          </button>
+        </div>
+      )}
+
       {/* Legacy sub-navigation */}
       <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', flexWrap: 'wrap' }}>
         <LegacyTabButton active={view === 'overview'} onClick={() => setView('overview')}>Overview</LegacyTabButton>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../types/supabase';
+import { resolveManagerDisplayName } from '../../utils/legacyStats';
 
 type LeagueMember = Database['public']['Tables']['league_members']['Row'];
 
@@ -35,9 +36,10 @@ interface TeamManagerRow {
 interface ManagerPanelProps {
   leagueId: string;
   isOwner: boolean;
+  onDataChange?: () => void;
 }
 
-export default function HistoricalManagerPanel({ leagueId, isOwner }: ManagerPanelProps) {
+export default function HistoricalManagerPanel({ leagueId, isOwner, onDataChange }: ManagerPanelProps) {
   const [managers, setManagers] = useState<HistoricalManager[]>([]);
   const [aliases, setAliases] = useState<Map<string, ManagerAlias[]>>(new Map());
   const [teamManagers, setTeamManagers] = useState<Map<string, TeamManagerRow[]>>(new Map());
@@ -72,12 +74,39 @@ export default function HistoricalManagerPanel({ leagueId, isOwner }: ManagerPan
           .eq('league_id', leagueId),
       ]);
 
-      const mgrList = (mgrRes.data ?? []) as unknown as HistoricalManager[];
+      // Fetch this league's imported members for GUID name resolution.
+      // Only this league's members are queried, preserving league isolation.
+      const aliasRows = (aliasRes.data ?? []) as unknown as ManagerAlias[];
+      const allOwnerIds = aliasRows.map((a) => a.external_owner_id).filter(Boolean);
+      const ownerNameMap: Record<string, string> = {};
+      if (allOwnerIds.length > 0) {
+        const { data: importedMembers } = await supabase
+          .from('league_imported_members')
+          .select('external_owner_id, external_owner_name')
+          .eq('league_id', leagueId)
+          .in('external_owner_id', allOwnerIds);
+        for (const im of (importedMembers ?? [])) {
+          if (im.external_owner_name && !ownerNameMap[im.external_owner_id]) {
+            ownerNameMap[im.external_owner_id] = im.external_owner_name;
+          }
+        }
+      }
+
+      // Resolve display names: commissioner name > imported member name > GUID raw
+      const mgrList = ((mgrRes.data ?? []) as unknown as HistoricalManager[]).map((m) => {
+        const mgrAliases = aliasRows.filter((a) => a.manager_id === m.id);
+        const resolved = resolveManagerDisplayName(
+          m.display_name,
+          mgrAliases.map((a) => ({ external_owner_id: a.external_owner_id })),
+          ownerNameMap,
+        );
+        return { ...m, display_name: resolved };
+      });
       setManagers(mgrList);
 
       // Group aliases by manager_id
       const aliasMap = new Map<string, ManagerAlias[]>();
-      for (const a of (aliasRes.data ?? []) as unknown as ManagerAlias[]) {
+      for (const a of aliasRows) {
         const existing = aliasMap.get(a.manager_id) ?? [];
         existing.push(a);
         aliasMap.set(a.manager_id, existing);
@@ -169,6 +198,7 @@ export default function HistoricalManagerPanel({ leagueId, isOwner }: ManagerPan
         setMergeTarget(null);
         setSplitTarget(null);
         setSplitName('');
+        onDataChange?.();
       }
     } catch (err) {
       setActionResult({

@@ -77,6 +77,11 @@ export default function LeagueHistoryTab({ leagueId, isOwner }: HistoryTabProps)
   const [error, setError] = useState('');
   const [subTab, setSubTab] = useState<SubTab>('standings');
   const [topView, setTopView] = useState<TopView>('seasons');
+  const [legacyRefreshKey, setLegacyRefreshKey] = useState(0);
+
+  const triggerLegacyRefresh = useCallback(() => {
+    setLegacyRefreshKey((k) => k + 1);
+  }, []);
 
   const loadHistory = useCallback(async () => {
     try {
@@ -136,6 +141,7 @@ export default function LeagueHistoryTab({ leagueId, isOwner }: HistoryTabProps)
   const handleImportComplete = () => {
     setShowImportModal(false);
     loadHistory();
+    triggerLegacyRefresh();
   };
 
   const handleReimport = async (year: number) => {
@@ -176,6 +182,7 @@ export default function LeagueHistoryTab({ leagueId, isOwner }: HistoryTabProps)
       } else {
         await loadHistory();
         if (selectedSeasonId) loadSeasonTeams(selectedSeasonId);
+        triggerLegacyRefresh();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Network error during re-import.');
@@ -280,14 +287,14 @@ export default function LeagueHistoryTab({ leagueId, isOwner }: HistoryTabProps)
 
       {/* Legacy view (all-time stats) */}
       {seasons.length > 0 && topView === 'legacy' && (
-        <LeagueLegacyDashboard leagueId={leagueId} />
+        <LeagueLegacyDashboard leagueId={leagueId} refreshKey={legacyRefreshKey} />
       )}
 
       {/* Season list with sub-tabs */}
       {seasons.length > 0 && topView === 'seasons' && (
         <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
           {/* Season selector */}
-          <div style={{ flex: '0 0 200px' }}>
+          <div style={{ flex: '0 0 200px', minWidth: '160px' }}>
             <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: '600', color: '#374151' }}>Seasons</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {seasons.map((s) => (
@@ -368,6 +375,7 @@ export default function LeagueHistoryTab({ leagueId, isOwner }: HistoryTabProps)
                   <HistoricalManagerPanel
                     leagueId={leagueId}
                     isOwner={isOwner}
+                    onDataChange={triggerLegacyRefresh}
                   />
                 )}
               </>
