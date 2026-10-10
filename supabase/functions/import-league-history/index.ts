@@ -2,7 +2,10 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 import type { HistoricalImportRequest } from "./shared/historical-types.ts";
-import { fetchEspnHistoricalSeason } from "./providers/espn-history.ts";
+import {
+  fetchEspnHistoricalSeason,
+  verifyEspnHistoricalSeason,
+} from "./providers/espn-history.ts";
 import { saveHistoricalSeason } from "./shared/save-history.ts";
 
 const corsHeaders = {
@@ -94,7 +97,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: link } = await adminClient
       .from("external_league_links")
-      .select("id, provider, external_league_id")
+      .select("id, provider, external_league_id, external_season")
       .eq("league_id", leagueId)
       .eq("provider", provider)
       .is("draft_id", null)
@@ -116,6 +119,7 @@ Deno.serve(async (req: Request) => {
         adminClient,
         leagueId,
         externalLeagueId,
+        externalSeason: link.external_season,
         provider,
         isPrivate,
         swid,
@@ -123,8 +127,22 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Default: import a single season
     const seasonYear = body.seasonYear as number | undefined;
+    if (action === "verify") {
+      if (!Number.isInteger(seasonYear)) {
+        return jsonResponse({ error: "A valid seasonYear is required for verification." }, 400);
+      }
+      const availability = await verifyEspnHistoricalSeason({
+        leagueId: externalLeagueId,
+        season: seasonYear,
+        isPrivate,
+        swid,
+        espnS2,
+      });
+      return jsonResponse({ year: seasonYear, ...availability });
+    }
+
+    // Default: import a single season
     if (!seasonYear) {
       return jsonResponse({ error: "seasonYear is required for import action." }, 400);
     }
@@ -195,28 +213,24 @@ async function handleDiscover(params: {
   adminClient: ReturnType<typeof createClient>;
   leagueId: string;
   externalLeagueId: string;
+  externalSeason: number | null;
   provider: string;
   isPrivate: boolean;
   swid?: string;
   espnS2?: string;
 }): Promise<Response> {
-  const { adminClient, leagueId, externalLeagueId, provider, isPrivate, swid, espnS2 } = params;
+  const { adminClient, leagueId, externalLeagueId, externalSeason, provider, isPrivate, swid, espnS2 } = params;
 
-  // Use the current year as the ESPN season to query — ESPN returns
-  // previousSeasons in the status object for the current season.
+  // ESPN's current-season endpoint can return 404 after a league is no longer
+  // active. Try the linked season as a historical anchor before giving up.
   const currentYear = new Date().getFullYear();
-
+  const candidateYears = [...new Set([currentYear, externalSeason ?? 0, currentYear - 1])]
+    .filter((year) => year > 0);
   const ESPN_API_BASE = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons";
-  const views = ["mStatus"];
-  const url =
-    `${ESPN_API_BASE}/${currentYear}/segments/0/leagues/${externalLeagueId}` +
-    `?${views.map((v) => `view=${v}`).join("&")}`;
-
   const headers: Record<string, string> = {
     "Accept": "application/json",
     "User-Agent": "UltimateDrafter/1.0",
   };
-
   if (isPrivate && swid && espnS2) {
     headers["Cookie"] = `SWID=${swid}; espn_s2=${espnS2}`;
   }
@@ -224,36 +238,40 @@ async function handleDiscover(params: {
   let discoveredSeasons: number[] = [];
   let requiresAuth = false;
   let discoveryError: string | null = null;
-
-  try {
-    const resp = await fetch(url, { headers });
-
-    const contentType = resp.headers.get("content-type") ?? "";
-
-    if (resp.status === 401 || resp.status === 403) {
-      requiresAuth = true;
-      discoveryError = isPrivate
-        ? "ESPN denied access. The credentials may be expired or incorrect."
-        : "This league may be private. Enable private mode and provide credentials.";
-    } else if (resp.status === 404) {
-      discoveryError = `ESPN returned 404 for the current season. The league may not exist for ${currentYear}.`;
-    } else if (!resp.ok || !contentType.includes("application/json")) {
-      discoveryError = `ESPN API returned HTTP ${resp.status}. Unexpected response.`;
-    } else {
-      const raw: unknown = await resp.json();
-      if (typeof raw === "object" && raw !== null) {
-        const data = raw as Record<string, unknown>;
-        const status = data?.status as Record<string, unknown> | undefined;
-        const prevSeasonsRaw = status?.previousSeasons;
-        if (Array.isArray(prevSeasonsRaw)) {
-          discoveredSeasons = prevSeasonsRaw.filter(
-            (n): n is number => typeof n === "number"
-          ).sort((a, b) => b - a); // descending
-        }
+  for (const anchorYear of candidateYears) {
+    try {
+      const url = `${ESPN_API_BASE}/${anchorYear}/segments/0/leagues/${externalLeagueId}?view=mStatus`;
+      const resp = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+      const contentType = resp.headers.get("content-type") ?? "";
+      if (resp.status === 401 || resp.status === 403) {
+        requiresAuth = true;
+        discoveryError = isPrivate
+          ? "ESPN denied access. The credentials may be expired or incorrect."
+          : "ESPN requires private-league credentials to discover this league's seasons.";
+        break;
       }
+      if (resp.status === 404) {
+        discoveryError = `ESPN could not find the league at the ${anchorYear} discovery endpoint.`;
+        continue;
+      }
+      if (!resp.ok || !contentType.includes("application/json")) {
+        discoveryError = `ESPN API returned HTTP ${resp.status} during discovery.`;
+        continue;
+      }
+      const raw: unknown = await resp.json();
+      if (typeof raw !== "object" || raw === null) continue;
+      const status = (raw as Record<string, unknown>).status as Record<string, unknown> | undefined;
+      const previousSeasons = status?.previousSeasons;
+      if (Array.isArray(previousSeasons)) {
+        discoveredSeasons = previousSeasons
+          .filter((year): year is number => typeof year === "number")
+          .sort((a, b) => b - a);
+        discoveryError = null;
+        break;
+      }
+    } catch (err) {
+      discoveryError = err instanceof Error ? err.message : "Network error contacting ESPN.";
     }
-  } catch (err) {
-    discoveryError = err instanceof Error ? err.message : "Network error contacting ESPN.";
   }
 
   // Fetch already-imported seasons from the database
@@ -266,18 +284,34 @@ async function handleDiscover(params: {
     (existingSeasons ?? []).map((s) => (s as Record<string, unknown>).season_year as number)
   );
 
-  // Build the result: for each discovered year, mark as imported or available
-  const seasons = discoveredSeasons.map((year) => ({
-    year,
-    status: importedYears.has(year) ? "imported" : "available",
-  }));
+  // Verify unimported years with a small request. Keep concurrency low so
+  // discovery does not resemble a bulk import or trigger ESPN rate limits.
+  const verified = new Map<number, Awaited<ReturnType<typeof verifyEspnHistoricalSeason>>>();
+  const yearsToVerify = discoveredSeasons.filter((year) => !importedYears.has(year));
+  for (let index = 0; index < yearsToVerify.length; index += 3) {
+    const batch = yearsToVerify.slice(index, index + 3);
+    const results = await Promise.all(batch.map(async (year) => ({
+      year,
+      result: await verifyEspnHistoricalSeason({
+        leagueId: externalLeagueId,
+        season: year,
+        isPrivate,
+        swid,
+        espnS2,
+      }),
+    })));
+    for (const result of results) verified.set(result.year, result.result);
+  }
 
-  return jsonResponse({
-    discoveredSeasons: seasons,
-    requiresAuth,
-    error: discoveryError,
-    currentYear,
+  const seasons = discoveredSeasons.map((year) => {
+    if (importedYears.has(year)) return { year, status: "imported" as const, message: "Already imported." };
+    const result = verified.get(year);
+    return result
+      ? { year, status: result.status, message: result.message }
+      : { year, status: "not_verified" as const, message: "Availability was not verified." };
   });
+
+  return jsonResponse({ discoveredSeasons: seasons, requiresAuth, error: discoveryError, currentYear });
 }
 
 // ── Manager identity actions ──────────────────────────────────────────────────

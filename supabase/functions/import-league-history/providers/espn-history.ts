@@ -22,6 +22,98 @@ import type {
 } from "./historical-types.ts";
 
 const ESPN_API_BASE = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons";
+const ESPN_LEGACY_API_BASE = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/leagueHistory";
+const ESPN_REQUEST_TIMEOUT_MS = 8000;
+
+export type EspnSeasonAvailability =
+  | { status: "verified_available"; message: string }
+  | { status: "access_required"; message: string }
+  | { status: "unavailable"; message: string }
+  | { status: "not_verified"; message: string };
+
+function buildHeaders(params: EspnHistoryParams): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Accept": "application/json",
+    "User-Agent": "UltimateDrafter/1.0",
+  };
+  if (params.isPrivate && params.swid && params.espnS2) {
+    headers["Cookie"] = `SWID=${params.swid}; espn_s2=${params.espnS2}`;
+  }
+  return headers;
+}
+
+function buildSeasonUrl(season: number, leagueId: string, views: string[]): string {
+  if (season < 2018) {
+    const query = new URLSearchParams({ seasonId: String(season) });
+    for (const view of views) query.append("view", view);
+    return `${ESPN_LEGACY_API_BASE}/${leagueId}?${query.toString()}`;
+  }
+  const query = new URLSearchParams();
+  for (const view of views) query.append("view", view);
+  return `${ESPN_API_BASE}/${season}/segments/0/leagues/${leagueId}?${query.toString()}`;
+}
+
+async function fetchWithTimeout(url: string, headers: Record<string, string>): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ESPN_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { headers, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isUsableHistoricalResponse(raw: unknown): boolean {
+  const data = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof data !== "object" || data === null) return false;
+  const record = data as Record<string, unknown>;
+  return Array.isArray(record.teams) || typeof record.settings === "object";
+}
+
+export async function verifyEspnHistoricalSeason(
+  params: EspnHistoryParams,
+): Promise<EspnSeasonAvailability> {
+  const url = buildSeasonUrl(params.season, params.leagueId, ["mStatus", "mTeam", "mSettings"]);
+  try {
+    const response = await fetchWithTimeout(url, buildHeaders(params));
+    if (response.status === 401 || response.status === 403) {
+      return {
+        status: "access_required",
+        message: params.isPrivate
+          ? "ESPN rejected the supplied private-league credentials."
+          : "ESPN requires private-league credentials for this season.",
+      };
+    }
+    if (response.status === 404) {
+      return {
+        status: "unavailable",
+        message: `ESPN confirmed that season ${params.season} is unavailable through its supported historical endpoint.`,
+      };
+    }
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!response.ok || !contentType.includes("application/json")) {
+      return {
+        status: "not_verified",
+        message: `ESPN did not return a usable verification response (HTTP ${response.status}).`,
+      };
+    }
+    const raw: unknown = await response.json();
+    if (!isUsableHistoricalResponse(raw)) {
+      return {
+        status: "not_verified",
+        message: "ESPN returned data, but it did not contain usable historical league data.",
+      };
+    }
+    return { status: "verified_available", message: "Verified and ready to import." };
+  } catch (err) {
+    return {
+      status: "not_verified",
+      message: err instanceof DOMException && err.name === "AbortError"
+        ? "ESPN verification timed out."
+        : "ESPN verification could not be completed.",
+    };
+  }
+}
 
 export interface EspnHistoryParams {
   leagueId: string;
@@ -38,18 +130,8 @@ export async function fetchEspnHistoricalSeason(
 
   // Fetch all views in a single API call — verified to work in Phase 0
   const views = ["mTeam", "mSettings", "mStatus", "mMatchup", "mDraftDetail"];
-  const url =
-    `${ESPN_API_BASE}/${season}/segments/0/leagues/${leagueId}` +
-    `?${views.map((v) => `view=${v}`).join("&")}`;
-
-  const headers: Record<string, string> = {
-    "Accept": "application/json",
-    "User-Agent": "UltimateDrafter/1.0",
-  };
-
-  if (isPrivate && params.swid && params.espnS2) {
-    headers["Cookie"] = `SWID=${params.swid}; espn_s2=${params.espnS2}`;
-  }
+  const url = buildSeasonUrl(season, leagueId, views);
+  const headers = buildHeaders(params);
 
   console.log(JSON.stringify({
     event: "espn_history_fetch_start",
@@ -61,7 +143,7 @@ export async function fetchEspnHistoricalSeason(
     views,
   }));
 
-  const resp = await fetch(url, { headers });
+  const resp = await fetchWithTimeout(url, headers);
 
   const contentType = resp.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) {
@@ -88,8 +170,7 @@ export async function fetchEspnHistoricalSeason(
 
   if (resp.status === 404) {
     throw new Error(
-      `ESPN returned 404 for season ${season}. This season may not be available via the v3 API. ` +
-      "Seasons before 2019 may not be accessible."
+      `ESPN returned 404 for season ${season}. This season may not be available through ESPN's supported historical endpoints.`
     );
   }
 
@@ -108,11 +189,12 @@ function normalizeEspnHistoricalResponse(
 ): NormalizedHistoricalSeason {
   const warnings: string[] = [];
 
-  if (typeof raw !== "object" || raw === null) {
+  const responseData = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof responseData !== "object" || responseData === null) {
     throw new Error("ESPN API returned an unexpected response shape.");
   }
 
-  const data = raw as Record<string, unknown>;
+  const data = responseData as Record<string, unknown>;
 
   // ── Settings ────────────────────────────────────────────────────────────────
   const settings = data?.settings as Record<string, unknown> | undefined;

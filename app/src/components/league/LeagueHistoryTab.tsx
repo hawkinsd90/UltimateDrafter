@@ -53,9 +53,16 @@ interface HistoryTabProps {
 type SubTab = 'standings' | 'draft' | 'managers';
 type TopView = 'seasons' | 'legacy';
 
+type DiscoveredSeasonStatus = 'verified_available' | 'imported' | 'access_required' | 'unavailable' | 'not_verified';
+
 interface DiscoveredSeason {
   year: number;
-  status: 'available' | 'imported';
+  status: DiscoveredSeasonStatus;
+  message?: string;
+}
+
+function isDiscoveredSeasonStatus(value: unknown): value is DiscoveredSeasonStatus {
+  return value === 'verified_available' || value === 'imported' || value === 'access_required' || value === 'unavailable' || value === 'not_verified';
 }
 
 interface ImportProgress {
@@ -410,6 +417,50 @@ export default function LeagueHistoryTab({ leagueId, isOwner }: HistoryTabProps)
   );
 }
 
+function SeasonStatusList({
+  title,
+  seasons,
+  actionLabel,
+  onAction,
+  selectable = false,
+  onSelect,
+  selectedYears = new Set<number>(),
+}: {
+  title: string;
+  seasons: DiscoveredSeason[];
+  actionLabel?: string;
+  onAction?: (year: number) => void;
+  selectable?: boolean;
+  onSelect?: (year: number) => void;
+  selectedYears?: Set<number>;
+}) {
+  return (
+    <div style={{ marginBottom: '12px' }}>
+      <div style={{ fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>{title}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {seasons.map((season) => (
+          <div key={season.year} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', padding: '7px 10px', borderRadius: '6px', background: '#f9fafb', border: '1px solid #e5e7eb', fontSize: '13px' }}>
+            <button
+              onClick={() => selectable && onSelect?.(season.year)}
+              disabled={!selectable}
+              style={{ flex: 1, minWidth: 0, textAlign: 'left', border: 'none', background: 'transparent', color: selectable ? '#374151' : '#6b7280', cursor: selectable ? 'pointer' : 'default', padding: 0 }}
+            >
+              <strong>{season.year}</strong>
+              {season.message && <span style={{ marginLeft: '8px' }}>{season.message}</span>}
+              {selectable && selectedYears.has(season.year) && <span style={{ marginLeft: '8px', color: '#2563eb' }}>Selected for explicit attempt</span>}
+            </button>
+            {actionLabel && onAction && (
+              <button onClick={() => onAction(season.year)} disabled={false} style={{ padding: '4px 8px', fontSize: '12px', color: '#2563eb', background: '#fff', border: '1px solid #93c5fd', borderRadius: '4px', cursor: 'pointer' }}>
+                {actionLabel}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Top-View Button ───────────────────────────────────────────────────────────
 
 function TopViewButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
@@ -558,7 +609,15 @@ function HistoryImportModal({
       if (!response.ok) {
         setDiscoveryError(data.error || 'Discovery failed.');
       } else {
-        setDiscoveredSeasons(data.discoveredSeasons ?? []);
+        const discovered = Array.isArray(data.discoveredSeasons)
+          ? data.discoveredSeasons.filter((season: unknown): season is DiscoveredSeason => {
+              if (typeof season !== 'object' || season === null) return false;
+              const record = season as Record<string, unknown>;
+              return typeof record.year === 'number' && isDiscoveredSeasonStatus(record.status);
+            })
+          : [];
+        setDiscoveredSeasons(discovered);
+        setSelectedYears(new Set());
         setRequiresAuth(Boolean(data.requiresAuth));
         if (data.error) setDiscoveryError(data.error);
       }
@@ -571,7 +630,10 @@ function HistoryImportModal({
 
   useEffect(() => {
     discoverSeasons();
-  }, [discoverSeasons]);
+    // Credential changes must not trigger a request for every keystroke.
+    // Commissioners explicitly re-run discovery after entering both values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leagueId, provider, externalLeagueId]);
 
   const toggleYear = (year: number) => {
     setSelectedYears((prev) => {
@@ -584,8 +646,40 @@ function HistoryImportModal({
 
   const selectAllAvailable = () => {
     setSelectedYears(new Set(
-      discoveredSeasons.filter((s) => s.status === 'available').map((s) => s.year)
+      discoveredSeasons.filter((s) => s.status === 'verified_available').map((s) => s.year)
     ));
+  };
+
+  const verifyYear = async (year: number) => {
+    setDiscovering(true);
+    setDiscoveryError(null);
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token;
+      if (!token) throw new Error('Authentication required.');
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/import-league-history`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          action: 'verify', leagueId, provider, externalLeagueId, seasonYear: year,
+          isPrivate, swid: isPrivate ? swid : undefined, espnS2: isPrivate ? espnS2 : undefined,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Season verification failed.');
+      if (!isDiscoveredSeasonStatus(data.status)) throw new Error('Season verification returned an invalid status.');
+      setDiscoveredSeasons((previous) => previous.map((season) =>
+        season.year === year ? { ...season, status: data.status, message: data.message } : season
+      ));
+    } catch (err) {
+      setDiscoveryError(err instanceof Error ? err.message : 'Season verification failed.');
+    } finally {
+      setDiscovering(false);
+    }
   };
 
   const addManualYear = () => {
@@ -593,9 +687,12 @@ function HistoryImportModal({
     if (year >= 2000 && year <= new Date().getFullYear()) {
       const exists = discoveredSeasons.find((s) => s.year === year);
       if (!exists) {
-        setDiscoveredSeasons((prev) => [...prev, { year, status: 'available' }]);
+        setDiscoveredSeasons((prev) => [...prev, {
+          year,
+          status: 'not_verified',
+          message: 'Manual year; verify before normal import.',
+        }]);
       }
-      setSelectedYears((prev) => new Set(prev).add(year));
       setManualYear('');
     }
   };
@@ -688,10 +785,16 @@ function HistoryImportModal({
     setImportProgress([]);
   };
 
-  const availableSeasons = discoveredSeasons.filter((s) => s.status === 'available');
+  const verifiedSeasons = discoveredSeasons.filter((s) => s.status === 'verified_available');
   const importedSeasons = discoveredSeasons.filter((s) => s.status === 'imported');
+  const accessRequiredSeasons = discoveredSeasons.filter((s) => s.status === 'access_required');
+  const unavailableSeasons = discoveredSeasons.filter((s) => s.status === 'unavailable');
+  const unverifiedSeasons = discoveredSeasons.filter((s) => s.status === 'not_verified');
   const successCount = importProgress.filter((p) => p.status === 'success').length;
   const failedCount = importProgress.filter((p) => p.status === 'failed').length;
+  const selectedUnverifiedCount = Array.from(selectedYears).filter((year) =>
+    discoveredSeasons.some((season) => season.year === year && season.status === 'not_verified')
+  ).length;
 
   return (
     <div
@@ -726,7 +829,7 @@ function HistoryImportModal({
           {isPrivate && (
             <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <input
-                type="text"
+                type="password"
                 placeholder="SWID cookie"
                 value={swid}
                 onChange={(e) => setSwid(e.target.value)}
@@ -790,38 +893,35 @@ function HistoryImportModal({
           </div>
         )}
 
-        {/* Available seasons */}
-        {availableSeasons.length > 0 && !importing && !importDone && (
+        {/* Verified and unresolved availability states */}
+        {!importing && !importDone && discoveredSeasons.length > 0 && (
           <div style={{ marginBottom: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <label style={{ fontSize: '14px', fontWeight: '500' }}>Available Seasons</label>
-              <button
-                onClick={selectAllAvailable}
-                style={{
-                  padding: '4px 10px', fontSize: '12px', cursor: 'pointer',
-                  background: 'transparent', color: '#2563eb',
-                  border: '1px solid #2563eb', borderRadius: '4px',
-                }}
-              >
-                Select All
-              </button>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-              {availableSeasons.map((s) => (
-                <button
-                  key={s.year}
-                  onClick={() => toggleYear(s.year)}
-                  style={{
-                    padding: '8px 16px', fontSize: '14px', cursor: 'pointer',
-                    background: selectedYears.has(s.year) ? '#2563eb' : '#f3f4f6',
-                    color: selectedYears.has(s.year) ? '#fff' : '#374151',
-                    border: 'none', borderRadius: '6px', fontWeight: '500',
-                  }}
-                >
-                  {s.year}
-                </button>
-              ))}
-            </div>
+            {verifiedSeasons.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label style={{ fontSize: '14px', fontWeight: '500' }}>Verified Available Seasons</label>
+                  <button onClick={selectAllAvailable} style={{ padding: '4px 10px', fontSize: '12px', cursor: 'pointer', background: 'transparent', color: '#2563eb', border: '1px solid #2563eb', borderRadius: '4px' }}>
+                    Select All
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {verifiedSeasons.map((s) => (
+                    <button key={s.year} onClick={() => toggleYear(s.year)} style={{ padding: '8px 16px', fontSize: '14px', cursor: 'pointer', background: selectedYears.has(s.year) ? '#2563eb' : '#f3f4f6', color: selectedYears.has(s.year) ? '#fff' : '#374151', border: 'none', borderRadius: '6px', fontWeight: '500' }}>
+                      {s.year}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {accessRequiredSeasons.length > 0 && (
+              <SeasonStatusList title="Credentials Required" seasons={accessRequiredSeasons} />
+            )}
+            {unavailableSeasons.length > 0 && (
+              <SeasonStatusList title="Unavailable from ESPN" seasons={unavailableSeasons} />
+            )}
+            {unverifiedSeasons.length > 0 && (
+              <SeasonStatusList title="Not Verified" seasons={unverifiedSeasons} actionLabel="Verify" onAction={verifyYear} selectable onSelect={toggleYear} selectedYears={selectedYears} />
+            )}
           </div>
         )}
 
@@ -903,6 +1003,12 @@ function HistoryImportModal({
           </div>
         )}
 
+        {selectedUnverifiedCount > 0 && !importing && !importDone && (
+          <div style={{ padding: '10px 12px', marginBottom: '12px', borderRadius: '6px', background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', fontSize: '13px' }}>
+            {selectedUnverifiedCount} season{selectedUnverifiedCount !== 1 ? 's are' : ' is'} not verified. Selecting it will make an explicit import attempt even though ESPN availability is uncertain.
+          </div>
+        )}
+
         {/* Actions */}
         {!importDone && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
@@ -926,7 +1032,9 @@ function HistoryImportModal({
                 opacity: selectedYears.size > 0 && !importing ? 1 : 0.6,
               }}
             >
-              {importing ? 'Importing...' : `Import ${selectedYears.size} Season${selectedYears.size !== 1 ? 's' : ''}`}
+              {importing ? 'Importing...' : selectedUnverifiedCount > 0
+                ? `Attempt ${selectedYears.size} Season${selectedYears.size !== 1 ? 's' : ''}`
+                : `Import ${selectedYears.size} Season${selectedYears.size !== 1 ? 's' : ''}`}
             </button>
           </div>
         )}

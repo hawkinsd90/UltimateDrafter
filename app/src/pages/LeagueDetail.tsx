@@ -38,6 +38,8 @@ export default function LeagueDetail() {
   const [myDraftIds, setMyDraftIds]           = useState<Set<string>>(new Set());
   const [importedMembers, setImportedMembers] = useState<ImportedMember[]>([]);
   const [loading, setLoading]                 = useState(true);
+  const [optionalLoading, setOptionalLoading] = useState(false);
+  const [optionalError, setOptionalError]     = useState('');
   const [error, setError]                     = useState('');
 
   const { confirm, pending: confirmPending, handleConfirm, handleCancel } = useConfirm();
@@ -51,15 +53,12 @@ export default function LeagueDetail() {
 
   const loadLeagueData = useCallback(async () => {
     if (!leagueId || !userId) return;
+
+    setOptionalError('');
     try {
-      const [leagueResult, settingsResult, draftsResult, membersResult, invitesResult, importedResult] = await Promise.all([
+      const [leagueResult, settingsResult, importedResult] = await Promise.all([
         supabase.from('leagues').select('*').eq('id', leagueId).maybeSingle(),
         supabase.from('league_settings').select('*').eq('league_id', leagueId).maybeSingle(),
-        supabase.from('drafts').select('*').eq('league_id', leagueId).order('created_at', { ascending: false }),
-        supabase.from('league_members').select('*').eq('league_id', leagueId).order('joined_at', { ascending: true }),
-        supabase.from('league_invites').select('*').eq('league_id', leagueId).is('accepted_at', null).order('created_at', { ascending: false }),
-        // Include external_team_id and external_league_id so LeagueRosterTab can traverse
-        // the import chain without a draft_id
         supabase.from('league_imported_members')
           .select('id, external_owner_name, team_name, provider, invite_id, invited_user_id, external_team_id, external_league_id')
           .eq('league_id', leagueId)
@@ -68,12 +67,11 @@ export default function LeagueDetail() {
 
       if (leagueResult.error || !leagueResult.data) {
         setError(leagueResult.error?.message ?? 'League not found');
-      } else {
-        setLeague(leagueResult.data);
+        setLoading(false);
+        return;
       }
+      setLeague(leagueResult.data);
       if (!settingsResult.error && settingsResult.data) setLeagueSettings(settingsResult.data);
-      if (!membersResult.error && membersResult.data)   setMembers(membersResult.data);
-      if (!invitesResult.error && invitesResult.data)   setInvites(invitesResult.data);
       if (!importedResult.error && importedResult.data) {
         setImportedMembers(importedResult.data.map(r => ({
           id: r.id,
@@ -86,26 +84,55 @@ export default function LeagueDetail() {
           externalLeagueId: (r as Record<string, unknown>).external_league_id as string | null ?? null,
         })));
       }
-      if (!draftsResult.error && draftsResult.data) {
-        setDrafts(draftsResult.data);
-        if (draftsResult.data.length > 0) {
-          const draftIds = draftsResult.data.map(d => d.id);
-          const { data: participantRows } = await supabase
+      setLoading(false);
+    } catch {
+      setError('Error loading league data');
+      setLoading(false);
+      return;
+    }
+
+    if (activeTab === 'history' || activeTab === 'settings') return;
+
+    setOptionalLoading(true);
+    try {
+      const [draftsResult, membersResult, invitesResult] = await Promise.all([
+        activeTab === 'drafts'
+          ? supabase.from('drafts').select('*').eq('league_id', leagueId).order('created_at', { ascending: false })
+          : Promise.resolve({ data: null, error: null }),
+        activeTab === 'members' || activeTab === 'roster'
+          ? supabase.from('league_members').select('*').eq('league_id', leagueId).order('joined_at', { ascending: true })
+          : Promise.resolve({ data: null, error: null }),
+        activeTab === 'members'
+          ? supabase.from('league_invites').select('*').eq('league_id', leagueId).is('accepted_at', null).order('created_at', { ascending: false })
+          : Promise.resolve({ data: null, error: null }),
+      ]);
+
+      if (membersResult.data) setMembers(membersResult.data as LeagueMember[]);
+      if (invitesResult.data) setInvites(invitesResult.data as LeagueInvite[]);
+      if (draftsResult.data) {
+        const loadedDrafts = draftsResult.data as Draft[];
+        setDrafts(loadedDrafts);
+        if (loadedDrafts.length > 0) {
+          const { data: participantRows, error: participantError } = await supabase
             .from('draft_participants')
             .select('draft_id')
-            .in('draft_id', draftIds)
+            .in('draft_id', loadedDrafts.map(d => d.id))
             .eq('user_id', userId);
+          if (participantError) throw participantError;
           setMyDraftIds(new Set((participantRows ?? []).map(r => r.draft_id)));
         } else {
           setMyDraftIds(new Set());
         }
       }
+      if (draftsResult.error || membersResult.error || invitesResult.error) {
+        throw draftsResult.error || membersResult.error || invitesResult.error;
+      }
     } catch {
-      setError('Error loading league data');
+      setOptionalError('Some information for this tab could not be loaded.');
     } finally {
-      setLoading(false);
+      setOptionalLoading(false);
     }
-  }, [leagueId, userId]);
+  }, [activeTab, leagueId, userId]);
 
   useEffect(() => {
     if (!isLoadingAuth && !userId) {
@@ -115,7 +142,6 @@ export default function LeagueDetail() {
 
   useEffect(() => {
     if (userId) {
-      setLoading(true);
       loadLeagueData();
     }
   }, [userId, loadLeagueData]);
@@ -223,6 +249,16 @@ export default function LeagueDetail() {
           Created {new Date(league.created_at).toLocaleDateString()}
         </p>
       </div>
+
+      {optionalLoading && (
+        <div style={{ marginBottom: '16px', color: '#6b7280', fontSize: '14px' }}>Loading this tab...</div>
+      )}
+      {optionalError && (
+        <div style={{ marginBottom: '16px', padding: '10px 12px', background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '6px', color: '#92400e', fontSize: '13px' }}>
+          {optionalError}
+          <button onClick={loadLeagueData} style={{ marginLeft: '12px', color: '#92400e', background: 'transparent', border: '1px solid #d97706', borderRadius: '4px', cursor: 'pointer' }}>Retry</button>
+        </div>
+      )}
 
       <div style={{ borderBottom: '1px solid #e5e7eb', marginBottom: '30px' }}>
         <div style={{ display: 'flex', gap: '30px' }}>

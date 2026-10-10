@@ -14,6 +14,17 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const RETURN_URL_KEY = 'auth_return_url';
+const AUTH_SESSION_TIMEOUT_MS = 12000;
+
+function getInitialSession(): Promise<Session | null> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => reject(new Error('Authentication session lookup timed out.')), AUTH_SESSION_TIMEOUT_MS);
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) reject(error);
+      else resolve(session);
+    }).finally(() => window.clearTimeout(timeoutId));
+  });
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -44,11 +55,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    getInitialSession().then((session) => {
       setSession(session);
       setUser(session?.user ?? null);
-      setIsLoadingAuth(false);
       if (session?.user) checkAdmin(session.user.id);
+    }).catch(() => {
+      setSession(null);
+      setUser(null);
+    }).finally(() => {
+      setIsLoadingAuth(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
