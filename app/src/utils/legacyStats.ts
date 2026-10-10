@@ -76,8 +76,10 @@ export interface CareerStats {
   losses: number;
   ties: number;
   win_pct: number;
-  points_for: number;
-  points_against: number;
+  // null = unavailable (one or more complete seasons had missing scoring
+  // data). A value of 0 means the manager legitimately scored zero points.
+  points_for: number | null;
+  points_against: number | null;
   championships: number;
   championship_appearances: number;
   // null = unavailable (playoffTeamCount not known for one or more seasons)
@@ -90,9 +92,9 @@ export interface CareerStats {
     wins: number;
     losses: number;
     ties: number;
-    // 0 when DB value was null (season finalized but points unavailable)
-    points_for: number;
-    points_against: number;
+    // null = missing/unknown (DB NULL); 0 = legitimately scored zero
+    points_for: number | null;
+    points_against: number | null;
     final_standing: number | null;
     is_champion: boolean;
     is_runner_up: boolean;
@@ -152,6 +154,43 @@ export interface MatchupRecord {
   matchup_period: number;
   value: number;
   display_value: string;
+}
+
+// ── Manager Name Resolution ─────────────────────────────────────────────────
+// ESPN stores owner GUIDs (e.g. {BC7447B2-...}) as display names. These are
+// not human-readable. The resolution priority is:
+//   1. If league_history_managers.display_name is human-readable (not a GUID),
+//      use it as authoritative. This preserves commissioner corrections.
+//   2. If display_name is a GUID, look up the ESPN owner ID in the current
+//      league's imported member names. Aliases are tried alphabetically for
+//      deterministic behavior — never arbitrary.
+//   3. If no resolution is available, return a neutral placeholder.
+//
+// The caller is responsible for only passing current-league imported member
+// data — this function does not query any database and has no league context.
+
+const GUID_RE = /^\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}$/;
+
+export function isGuidName(name: string): boolean {
+  return GUID_RE.test(name);
+}
+
+export function resolveManagerDisplayName(
+  managerDisplayName: string,
+  aliases: { external_owner_id: string }[],
+  importedMemberNames: Record<string, string>,
+): string {
+  if (!isGuidName(managerDisplayName)) {
+    return managerDisplayName;
+  }
+  const sortedAliases = [...aliases].sort((a, b) =>
+    a.external_owner_id.localeCompare(b.external_owner_id),
+  );
+  for (const alias of sortedAliases) {
+    const name = importedMemberNames[alias.external_owner_id];
+    if (name) return name;
+  }
+  return 'Unresolved Manager';
 }
 
 // ── Attribution Rule ───────────────────────────────────────────────────────
@@ -270,6 +309,10 @@ export function calculateCareerStats(
 
   // Track distinct seasons per manager (complete + incomplete)
   const distinctSeasons = new Map<string, Set<number>>();
+  // Track whether any complete season had missing scoring data.
+  // PF and PA are tracked independently.
+  const pointsForMissing = new Set<string>();
+  const pointsAgainstMissing = new Set<string>();
 
   for (const team of teams) {
     if (!team.primary_manager_id) continue;
@@ -289,12 +332,19 @@ export function calculateCareerStats(
       stats.wins += team.wins;
       stats.losses += team.losses;
       stats.ties += team.ties;
-      // Preserve null as 0 in career aggregates — a null here means the DB
-      // value was missing, but for career sum purposes we treat it as 0
-      // since the season is finalized and the W/L are real. The null-vs-zero
-      // distinction is preserved in season_records below.
-      stats.points_for += team.points_for ?? 0;
-      stats.points_against += team.points_against ?? 0;
+      // Accumulate points only when available. If any complete season has
+      // null points, the career total is marked as null (unavailable) since
+      // a partial sum would be misleading. PF and PA are independent.
+      if (team.points_for === null) {
+        pointsForMissing.add(team.primary_manager_id);
+      } else {
+        (stats.points_for as number) += team.points_for;
+      }
+      if (team.points_against === null) {
+        pointsAgainstMissing.add(team.primary_manager_id);
+      } else {
+        (stats.points_against as number) += team.points_against;
+      }
 
       if (team.is_champion) stats.championships++;
       if (team.is_champion || team.is_runner_up) stats.championship_appearances++;
@@ -336,8 +386,8 @@ export function calculateCareerStats(
       wins: team.wins,
       losses: team.losses,
       ties: team.ties,
-      points_for: team.points_for ?? 0,
-      points_against: team.points_against ?? 0,
+      points_for: team.points_for,
+      points_against: team.points_against,
       final_standing: team.final_standing,
       is_champion: team.is_champion,
       is_runner_up: team.is_runner_up,
@@ -349,6 +399,8 @@ export function calculateCareerStats(
 
   for (const stats of statsMap.values()) {
     stats.seasons = distinctSeasons.get(stats.manager_id)?.size ?? 0;
+    if (pointsForMissing.has(stats.manager_id)) stats.points_for = null;
+    if (pointsAgainstMissing.has(stats.manager_id)) stats.points_against = null;
     const totalGames = stats.wins + stats.losses + stats.ties;
     stats.win_pct = totalGames > 0
       ? (stats.wins + stats.ties * 0.5) / totalGames
@@ -473,9 +525,9 @@ export function calculateCareerRecords(
       manager_name: c.display_name, team_name: '', season_year: 0,
       value: c.win_pct, display_value: `${(c.win_pct * 100).toFixed(1)}%`,
     })),
-    most_points: sorted.filter((c) => c.points_for > 0).sort((a, b) => b.points_for - a.points_for).slice(0, 5).map((c) => ({
+    most_points: sorted.filter((c) => c.points_for !== null && c.points_for > 0).sort((a, b) => (b.points_for ?? 0) - (a.points_for ?? 0)).slice(0, 5).map((c) => ({
       manager_name: c.display_name, team_name: '', season_year: 0,
-      value: c.points_for, display_value: c.points_for.toFixed(2),
+      value: c.points_for!, display_value: c.points_for!.toFixed(2),
     })),
     most_championships: sorted.filter((c) => c.championships > 0).sort((a, b) => b.championships - a.championships).slice(0, 5).map((c) => ({
       manager_name: c.display_name, team_name: '', season_year: 0,

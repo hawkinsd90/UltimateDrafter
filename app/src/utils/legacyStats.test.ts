@@ -18,6 +18,8 @@ import {
   calculateSingleSeasonRecords,
   calculateCareerRecords,
   buildChampionshipHistory,
+  resolveManagerDisplayName,
+  isGuidName,
 } from './legacyStats';
 
 // ── Test helpers ────────────────────────────────────────────────────────────
@@ -38,8 +40,12 @@ function assertEq(actual: unknown, expected: unknown, msg: string): void {
   assert(actual === expected, `${msg} (expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)})`);
 }
 
-function makeManager(id: string, name: string): LegacyManager {
-  return { id, display_name: name, linked_user_id: null, seasons: 0, aliases: [] };
+function makeManager(
+  id: string,
+  name: string,
+  opts?: { aliases?: LegacyManager['aliases'] },
+): LegacyManager {
+  return { id, display_name: name, linked_user_id: null, seasons: 0, aliases: opts?.aliases ?? [] };
 }
 
 function makeTeam(
@@ -641,9 +647,12 @@ function testNullPointsVsZeroPoints() {
   const a = careers.find((c) => c.manager_id === 'm1')!;
   const b = careers.find((c) => c.manager_id === 'm2')!;
 
-  // Career points: null team contributes 0 to career sum (via ?? 0)
-  assertEq(a.points_for, 0, 'Null points: career PF is 0 (null ?? 0)');
+  // Career points: null team → career PF is null (missing data, not zero)
+  assertEq(a.points_for, null, 'Null points: career PF is null (missing data, not zero)');
+  assertEq(a.points_against, null, 'Null points: career PA is null (missing data, not zero)');
+  // Zero-point team → career PF is 0 (legitimate)
   assertEq(b.points_for, 0, 'Zero points: career PF is 0 (legitimate)');
+  assertEq(b.points_against, 2000, 'Zero points: career PA is 2000');
 
   // Single-season records: null-points team excluded from most_points
   const records = calculateSingleSeasonRecords(teams);
@@ -684,6 +693,132 @@ function testManagerIdentityChangeOnReload() {
   assertEq(recordsAfter.most_wins[0].manager_name, 'carltonmeans', 'Identity: records show human name after');
 }
 
+// ── Test 32: Commissioner-renamed manager retains chosen name ──────────────
+function testCommissionerRenamedManagerRetainsName() {
+  const aliases = [{ external_owner_id: '{BC7447B2-4463-43D3-AB2F-B47B053E1793}' }];
+  const importedNames: Record<string, string> = {
+    '{BC7447B2-4463-43D3-AB2F-B47B053E1793}': 'carltonmeans',
+  };
+  const resolved = resolveManagerDisplayName('Carlton (Commissioner)', aliases, importedNames);
+  assertEq(resolved, 'Carlton (Commissioner)', 'Commissioner rename: human name preserved');
+}
+
+// ── Test 33: GUID-only manager uses current-league name fallback ──────────
+function testGuidManagerUsesCurrentLeagueFallback() {
+  const aliases = [{ external_owner_id: '{BC7447B2-4463-43D3-AB2F-B47B053E1793}' }];
+  const importedNames: Record<string, string> = {
+    '{BC7447B2-4463-43D3-AB2F-B47B053E1793}': 'carltonmeans',
+  };
+  const resolved = resolveManagerDisplayName('{BC7447B2-4463-43D3-AB2F-B47B053E1793}', aliases, importedNames);
+  assertEq(resolved, 'carltonmeans', 'GUID fallback: uses imported member name');
+}
+
+// ── Test 34: Multiple ESPN aliases resolved deterministically ──────────────
+function testMultipleAliasesDeterministic() {
+  const aliases = [
+    { external_owner_id: '{ZZZZZZZZ-4463-43D3-AB2F-B47B053E1793}' },
+    { external_owner_id: '{AAAAAAAA-4463-43D3-AB2F-B47B053E1793}' },
+  ];
+  const importedNames: Record<string, string> = {
+    '{ZZZZZZZZ-4463-43D3-AB2F-B47B053E1793}': 'zzz_name',
+    '{AAAAAAAA-4463-43D3-AB2F-B47B053E1793}': 'aaa_name',
+  };
+  const resolved = resolveManagerDisplayName('{BC7447B2-4463-43D3-AB2F-B47B053E1793}', aliases, importedNames);
+  assertEq(resolved, 'aaa_name', 'Multiple aliases: first alphabetically wins');
+}
+
+// ── Test 35: Unrelated league imported members are not used ────────────────
+function testUnrelatedLeagueNotUsed() {
+  const aliases = [{ external_owner_id: '{BC7447B2-4463-43D3-AB2F-B47B053E1793}' }];
+  const importedNames: Record<string, string> = {};
+  const resolved = resolveManagerDisplayName('{BC7447B2-4463-43D3-AB2F-B47B053E1793}', aliases, importedNames);
+  assertEq(resolved, 'Unresolved Manager', 'Unrelated league: unresolved when no current-league data');
+}
+
+// ── Test 36: Co-manager display-name resolution ────────────────────────────
+function testCoManagerNameResolution() {
+  const aliases = [{ external_owner_id: '{24B305E2-BE54-43EF-B305-E2BE54A3EFB1}' }];
+  const importedNames: Record<string, string> = {
+    '{24B305E2-BE54-43EF-B305-E2BE54A3EFB1}': 'espn33266911',
+  };
+  const resolved = resolveManagerDisplayName('{24B305E2-BE54-43EF-B305-E2BE54A3EFB1}', aliases, importedNames);
+  assertEq(resolved, 'espn33266911', 'Co-manager: GUID resolved to imported name');
+}
+
+// ── Test 37: Career scoring with complete points data ──────────────────────
+function testCareerScoringCompletePoints() {
+  const managers = [makeManager('m1', 'A')];
+  const teams: LegacySeasonTeam[] = [
+    makeTeam('t1', 2023, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 10, losses: 3, points_for: 1500, points_against: 1200, final_standing: 1 }),
+    makeTeam('t2', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 8, losses: 5, points_for: 1400, points_against: 1300, final_standing: 5 }),
+  ];
+  const careers = calculateCareerStats(teams, managers);
+  assertEq(careers[0].points_for, 2900, 'Complete points: career PF 2900');
+  assertEq(careers[0].points_against, 2500, 'Complete points: career PA 2500');
+}
+
+// ── Test 38: Career scoring with NULL points in one season ─────────────────
+function testCareerScoringNullPointsOneSeason() {
+  const managers = [makeManager('m1', 'A')];
+  const teams: LegacySeasonTeam[] = [
+    makeTeam('t1', 2023, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 10, losses: 3, points_for: 1500, points_against: 1200, final_standing: 1 }),
+    makeTeam('t2', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 8, losses: 5, points_for: null, points_against: null, final_standing: 5 }),
+  ];
+  const careers = calculateCareerStats(teams, managers);
+  assertEq(careers[0].points_for, null, 'Null season: career PF null (one season missing)');
+  assertEq(careers[0].points_against, null, 'Null season: career PA null (one season missing)');
+  assertEq(careers[0].wins, 18, 'Null season: 18 wins unaffected');
+  assertEq(careers[0].losses, 8, 'Null season: 8 losses unaffected');
+}
+
+// ── Test 39: Career scoring with legitimate zero-point season ──────────────
+function testCareerScoringZeroPointSeason() {
+  const managers = [makeManager('m1', 'A')];
+  const teams: LegacySeasonTeam[] = [
+    makeTeam('t1', 2023, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 10, losses: 3, points_for: 1500, points_against: 1200, final_standing: 1 }),
+    makeTeam('t2', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 0, losses: 13, points_for: 0, points_against: 2000, final_standing: 12 }),
+  ];
+  const careers = calculateCareerStats(teams, managers);
+  assertEq(careers[0].points_for, 1500, 'Zero-point season: career PF 1500 (0 is valid)');
+  assertEq(careers[0].points_against, 3200, 'Zero-point season: career PA 3200');
+}
+
+// ── Test 40: Missing PF and PA handled independently ───────────────────────
+function testMissingPFIndependentFromPA() {
+  const managers = [makeManager('m1', 'A')];
+  const teams: LegacySeasonTeam[] = [
+    makeTeam('t1', 2023, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 10, losses: 3, points_for: null, points_against: 1200, final_standing: 1 }),
+    makeTeam('t2', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 8, losses: 5, points_for: 1500, points_against: null, final_standing: 5 }),
+  ];
+  const careers = calculateCareerStats(teams, managers);
+  assertEq(careers[0].points_for, null, 'Independent PF: null (season 1 missing)');
+  assertEq(careers[0].points_against, null, 'Independent PA: null (season 2 missing)');
+  assertEq(careers[0].wins, 18, 'Independent: 18 wins unaffected');
+  assertEq(careers[0].losses, 8, 'Independent: 8 losses unaffected');
+}
+
+// ── Test 41: W/L/T unaffected by missing scoring data ──────────────────────
+function testWLTUnaffectedByMissingScoring() {
+  const managers = [makeManager('m1', 'A')];
+  const teams: LegacySeasonTeam[] = [
+    makeTeam('t1', 2023, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 10, losses: 3, ties: 1, points_for: null, points_against: null, final_standing: 1, is_champion: true, playoff_seed: 1, playoff_team_count: 6 }),
+    makeTeam('t2', 2024, { primary_manager_id: 'm1', primary_manager_name: 'A', wins: 8, losses: 5, ties: 0, points_for: null, points_against: null, final_standing: 5, playoff_seed: 3, playoff_team_count: 6 }),
+  ];
+  const careers = calculateCareerStats(teams, managers);
+  assertEq(careers[0].wins, 18, 'WLT unaffected: 18 wins');
+  assertEq(careers[0].losses, 8, 'WLT unaffected: 8 losses');
+  assertEq(careers[0].ties, 1, 'WLT unaffected: 1 tie');
+  assertEq(careers[0].championships, 1, 'WLT unaffected: 1 championship');
+  assertEq(careers[0].playoff_appearances, 2, 'WLT unaffected: 2 playoff appearances');
+  assertEq(careers[0].points_for, null, 'WLT unaffected: PF null');
+  assertEq(careers[0].points_against, null, 'WLT unaffected: PA null');
+  const records = calculateCareerRecords(careers);
+  const inPoints = records.most_points.find((r) => r.manager_name === 'A');
+  assert(inPoints === undefined, 'WLT unaffected: excluded from points leaderboard');
+  const inWins = records.most_wins.find((r) => r.manager_name === 'A');
+  assert(inWins !== undefined, 'WLT unaffected: included in wins leaderboard');
+}
+
 // ── Run all tests ──────────────────────────────────────────────────────────────────────
 
 console.log('Running legacyStats tests...\n');
@@ -719,6 +854,16 @@ testImportedButOngoingSeason();
 testMixedCompleteIncompleteCareerStats();
 testNullPointsVsZeroPoints();
 testManagerIdentityChangeOnReload();
+testCommissionerRenamedManagerRetainsName();
+testGuidManagerUsesCurrentLeagueFallback();
+testMultipleAliasesDeterministic();
+testUnrelatedLeagueNotUsed();
+testCoManagerNameResolution();
+testCareerScoringCompletePoints();
+testCareerScoringNullPointsOneSeason();
+testCareerScoringZeroPointSeason();
+testMissingPFIndependentFromPA();
+testWLTUnaffectedByMissingScoring();
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) {

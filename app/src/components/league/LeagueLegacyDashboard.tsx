@@ -17,6 +17,7 @@ import {
   calculateMatchupRecords,
   buildChampionshipHistory,
   calculateRivals,
+  resolveManagerDisplayName,
 } from '../../utils/legacyStats';
 
 // ── Props ───────────────────────────────────────────────────────────────────
@@ -72,44 +73,11 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
           .eq('league_id', leagueId),
       ]);
 
-      // Fetch imported member names to resolve ESPN GUID display names.
-      // manager_aliases stores the ESPN owner GUID as display_name, which is
-      // not human-readable. league_imported_members has the actual ESPN
-      // username in external_owner_name. We fetch across all leagues since
-      // the same ESPN owner GUID may have been imported under a different
-      // league's import run.
-      const aliasOwnerIds = (managersRes.data ?? []).length > 0
-        ? await supabase
-            .from('league_history_manager_aliases')
-            .select('manager_id, external_owner_id')
-            .in('manager_id', (managersRes.data ?? []).map((m: any) => m.id))
-        : { data: [], error: null };
-      if (aliasOwnerIds.error) throw aliasOwnerIds.error;
-
-      const externalOwnerIds = (aliasOwnerIds.data ?? []).map((a: any) => a.external_owner_id).filter(Boolean);
-      const ownerNameMap: Record<string, string> = {};
-      if (externalOwnerIds.length > 0) {
-        const { data: importedMembers, error: imErr } = await supabase
-          .from('league_imported_members')
-          .select('external_owner_id, external_owner_name')
-          .in('external_owner_id', externalOwnerIds);
-        if (imErr) throw imErr;
-        for (const im of (importedMembers ?? [])) {
-          if (im.external_owner_name && !ownerNameMap[im.external_owner_id]) {
-            ownerNameMap[im.external_owner_id] = im.external_owner_name;
-          }
-        }
-      }
-
-      // Build manager_id → human-readable name using imported member names
-      const managerIdToOwnerId = new Map<string, string>();
-      for (const a of (aliasOwnerIds.data ?? [])) {
-        managerIdToOwnerId.set(a.manager_id, a.external_owner_id);
-      }
-
-      // Fetch aliases for each manager (for profile display)
+      // Fetch aliases for each manager — used for both profile display and
+      // GUID name resolution. A single query serves both purposes.
       const managerIds = (managersRes.data ?? []).map((m: any) => m.id);
       let aliasesMap: Record<string, any[]> = {};
+      const managerAliasesMap: Record<string, { external_owner_id: string }[]> = {};
       if (managerIds.length > 0) {
         const { data: aliasData, error: aliasErr } = await supabase
           .from('league_history_manager_aliases')
@@ -119,6 +87,8 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
         for (const a of (aliasData ?? [])) {
           if (!aliasesMap[a.manager_id]) aliasesMap[a.manager_id] = [];
           aliasesMap[a.manager_id].push(a);
+          if (!managerAliasesMap[a.manager_id]) managerAliasesMap[a.manager_id] = [];
+          managerAliasesMap[a.manager_id].push({ external_owner_id: a.external_owner_id });
         }
       }
 
@@ -138,18 +108,40 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
         for (const tm of (tmData ?? [])) {
           const tid = tm.season_team_id;
           if (!coManagersMap[tid]) coManagersMap[tid] = [];
-          coManagersMap[tid].push({ id: tm.manager_id, name: (tm.manager as any)?.display_name ?? 'Unknown' });
+          coManagersMap[tid].push({ id: tm.manager_id, name: (tm.manager as any)?.display_name ?? '' });
         }
       }
 
-      // Resolve human-readable display name: prefer imported member name,
-      // fall back to manager display_name (may still be a GUID if no
-      // imported member record exists).
+      // Fetch this league's imported members for GUID resolution fallback.
+      // Only this league's members are queried — unrelated leagues' data
+      // is never used, preserving league isolation.
+      const allOwnerIds = Object.values(managerAliasesMap).flat().map((a) => a.external_owner_id).filter(Boolean);
+      const ownerNameMap: Record<string, string> = {};
+      if (allOwnerIds.length > 0) {
+        const { data: importedMembers, error: imErr } = await supabase
+          .from('league_imported_members')
+          .select('external_owner_id, external_owner_name')
+          .eq('league_id', leagueId)
+          .in('external_owner_id', allOwnerIds);
+        if (imErr) throw imErr;
+        for (const im of (importedMembers ?? [])) {
+          if (im.external_owner_name && !ownerNameMap[im.external_owner_id]) {
+            ownerNameMap[im.external_owner_id] = im.external_owner_name;
+          }
+        }
+      }
+
+      // Resolve manager display names using priority:
+      //   1. Human-readable display_name (preserves commissioner corrections)
+      //   2. Current-league imported member name (for GUID display names)
+      //   3. "Unresolved Manager" placeholder
       const managerNameMap = new Map<string, string>();
       for (const m of (managersRes.data ?? [])) {
-        const ownerId = managerIdToOwnerId.get(m.id);
-        const humanName = ownerId ? ownerNameMap[ownerId] : undefined;
-        managerNameMap.set(m.id, humanName ?? m.display_name);
+        const aliases = managerAliasesMap[m.id] ?? [];
+        managerNameMap.set(
+          m.id,
+          resolveManagerDisplayName(m.display_name, aliases, ownerNameMap),
+        );
       }
 
       // Extract playoffTeamCount and season finality from season data.
@@ -210,7 +202,7 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
           primary_manager_id: t.primary_manager_id,
           primary_manager_name: t.primary_manager_id ? (managerNameMap.get(t.primary_manager_id) ?? null) : null,
           co_manager_ids: coMgrs.map((c) => c.id),
-          co_manager_names: coMgrs.map((c) => managerNameMap.get(c.id) ?? c.name),
+          co_manager_names: coMgrs.map((c) => managerNameMap.get(c.id) ?? 'Unresolved Manager'),
           // is_season_complete reflects import success, not season finality.
           // The isSeasonComplete() helper in legacyStats.ts combines this
           // with final_standing !== null to determine true finality.
@@ -587,7 +579,7 @@ function ManagerList({ careers, matchups }: { careers: CareerStats[]; matchups: 
                 <td style={{ padding: '10px 8px', textAlign: 'center', color: '#6b7280' }}>{c.losses}</td>
                 <td style={{ padding: '10px 8px', textAlign: 'center', color: '#6b7280' }}>{c.ties}</td>
                 <td style={{ padding: '10px 8px', textAlign: 'center' }}>{(c.win_pct * 100).toFixed(1)}%</td>
-                <td style={{ padding: '10px 8px', textAlign: 'center' }}>{c.points_for.toFixed(0)}</td>
+                <td style={{ padding: '10px 8px', textAlign: 'center' }}>{c.points_for === null ? 'N/A' : c.points_for.toFixed(0)}</td>
                 <td style={{ padding: '10px 8px', textAlign: 'center' }}>
                   {c.championships > 0 ? <span style={{ fontWeight: '700', color: '#2563eb' }}>{c.championships}</span> : <span style={{ color: '#d1d5db' }}>0</span>}
                 </td>
@@ -655,7 +647,7 @@ function ManagerProfile({ career, matchups, onBack }: { career: CareerStats; mat
                 </div>
                 <div style={{ fontSize: '13px', color: '#374151', marginTop: '4px' }}>
                   {s.wins}-{s.losses}-{s.ties}
-                  <span style={{ marginLeft: '8px', color: '#9ca3af' }}>PF {s.points_for.toFixed(0)} PA {s.points_against.toFixed(0)}</span>
+                  <span style={{ marginLeft: '8px', color: '#9ca3af' }}>PF {s.points_for === null ? 'N/A' : s.points_for.toFixed(0)} PA {s.points_against === null ? 'N/A' : s.points_against.toFixed(0)}</span>
                   {s.playoff_seed !== null && <span style={{ marginLeft: '8px', color: '#9ca3af' }}>Seed #{s.playoff_seed}</span>}
                   {s.made_playoffs === true && <span style={{ marginLeft: '8px', color: '#2563eb', fontSize: '11px', fontWeight: '600' }}>Playoffs</span>}
                   {s.made_playoffs === null && s.playoff_seed !== null && <span style={{ marginLeft: '8px', color: '#9ca3af', fontSize: '11px' }}>Seed (bracket unknown)</span>}
