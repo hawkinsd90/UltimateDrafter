@@ -296,63 +296,78 @@ export default function HistoricalManagerPanel({ leagueId, isOwner }: ManagerPan
                       {mgrTeams
                         .sort((a, b) => b.season_year - a.season_year)
                         .map((tm) => (
-                          <div key={tm.id} style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
-                            <span>
-                              {tm.season_year}: {tm.team_name}
-                              <span style={{
-                                fontSize: '11px', marginLeft: '6px', padding: '1px 5px',
-                                borderRadius: '3px',
-                                background: tm.role === 'primary' ? '#dbeafe' : '#f3f4f6',
-                                color: tm.role === 'primary' ? '#1e40af' : '#6b7280',
-                              }}>
-                                {tm.role}
+                          <div key={tm.id} style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                              <span>
+                                {tm.season_year}: {tm.team_name}
+                                <span style={{
+                                  fontSize: '11px', marginLeft: '6px', padding: '1px 5px',
+                                  borderRadius: '3px',
+                                  background: tm.role === 'primary' ? '#dbeafe' : '#f3f4f6',
+                                  color: tm.role === 'primary' ? '#1e40af' : '#6b7280',
+                                }}>
+                                  {tm.role}
+                                </span>
                               </span>
-                            </span>
-                            {isOwner && (
-                              <button
-                                onClick={() => { setSplitTarget(tm.id); setSplitName(''); }}
-                                style={{
-                                  padding: '2px 8px', fontSize: '11px', cursor: 'pointer',
-                                  background: 'transparent', color: '#6b7280',
-                                  border: '1px solid #e5e7eb', borderRadius: '4px',
-                                }}
-                              >
-                                Split
-                              </button>
-                            )}
+                              {isOwner && (
+                                <button
+                                  onClick={() => { setSplitTarget(tm.id); setSplitName(''); }}
+                                  style={{
+                                    padding: '2px 8px', fontSize: '11px', cursor: 'pointer',
+                                    background: 'transparent', color: '#6b7280',
+                                    border: '1px solid #e5e7eb', borderRadius: '4px',
+                                  }}
+                                >
+                                  Split
+                                </button>
+                              )}
+                            </div>
                             {splitTarget === tm.id && (
-                              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '4px', width: '100%' }}>
-                                <input
-                                  type="text"
-                                  placeholder="New manager name"
-                                  value={splitName}
-                                  onChange={(e) => setSplitName(e.target.value)}
-                                  style={{
-                                    padding: '4px 8px', border: '1px solid #d1d5db',
-                                    borderRadius: '4px', fontSize: '12px', flex: '1', maxWidth: '200px',
-                                  }}
-                                />
-                                <button
-                                  onClick={() => callManagerAction('split_manager', { teamManagerId: tm.id, newDisplayName: splitName })}
-                                  disabled={acting || !splitName.trim()}
-                                  style={{
-                                    padding: '4px 10px', fontSize: '12px', fontWeight: '500',
-                                    background: acting || !splitName.trim() ? '#9ca3af' : '#dc2626',
-                                    color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer',
-                                  }}
-                                >
-                                  Confirm Split
-                                </button>
-                                <button
-                                  onClick={() => { setSplitTarget(null); setSplitName(''); }}
-                                  style={{
-                                    padding: '4px 10px', fontSize: '12px',
-                                    background: 'transparent', color: '#374151',
-                                    border: '1px solid #d1d5db', borderRadius: '4px', cursor: 'pointer',
-                                  }}
-                                >
-                                  Cancel
-                                </button>
+                              <div style={{
+                                marginTop: '6px', padding: '10px 12px',
+                                background: '#fffbeb', border: '1px solid #fcd34d',
+                                borderRadius: '6px',
+                              }}>
+                                <div style={{ fontSize: '12px', color: '#92400e', marginBottom: '8px' }}>
+                                  Split <strong>{m.display_name}</strong> from the {tm.role} role on
+                                  <strong> {tm.team_name}</strong> ({tm.season_year} season).
+                                  This creates a new separate manager identity for this team only.
+                                  Other teams and seasons remain with {m.display_name}.
+                                  This correction will persist through future re-imports.
+                                </div>
+                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                  <input
+                                    type="text"
+                                    placeholder="New manager display name"
+                                    value={splitName}
+                                    onChange={(e) => setSplitName(e.target.value)}
+                                    style={{
+                                      padding: '4px 8px', border: '1px solid #d1d5db',
+                                      borderRadius: '4px', fontSize: '12px', flex: '1', maxWidth: '220px',
+                                    }}
+                                  />
+                                  <button
+                                    onClick={() => callManagerAction('split_manager', { teamManagerId: tm.id, newDisplayName: splitName })}
+                                    disabled={acting || !splitName.trim()}
+                                    style={{
+                                      padding: '4px 10px', fontSize: '12px', fontWeight: '500',
+                                      background: acting || !splitName.trim() ? '#9ca3af' : '#dc2626',
+                                      color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer',
+                                    }}
+                                  >
+                                    Confirm Split
+                                  </button>
+                                  <button
+                                    onClick={() => { setSplitTarget(null); setSplitName(''); }}
+                                    style={{
+                                      padding: '4px 10px', fontSize: '12px',
+                                      background: 'transparent', color: '#374151',
+                                      border: '1px solid #d1d5db', borderRadius: '4px', cursor: 'pointer',
+                                    }}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
                               </div>
                             )}
                           </div>
