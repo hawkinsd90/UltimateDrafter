@@ -41,7 +41,7 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
     setLoading(true);
     setError(null);
     try {
-      const [managersRes, teamsRes, matchupsRes] = await Promise.all([
+      const [managersRes, teamsRes, matchupsRes, seasonsRes] = await Promise.all([
         supabase
           .from('league_history_managers')
           .select('id, display_name, linked_user_id')
@@ -66,7 +66,13 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
           `)
           .eq('league_id', leagueId)
           .order('matchup_period', { ascending: true }),
+        supabase
+          .from('league_history_seasons')
+          .select('id, season_year, raw_settings')
+          .eq('league_id', leagueId),
       ]);
+
+      if (seasonsRes.error) throw seasonsRes.error;
 
       if (managersRes.error) throw managersRes.error;
       if (teamsRes.error) throw teamsRes.error;
@@ -112,6 +118,17 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
         managerNameMap.set(m.id, m.display_name);
       }
 
+      // Extract playoffTeamCount from raw_settings for each season
+      const playoffTeamCountMap = new Map<number, number | null>();
+      for (const s of (seasonsRes.data ?? [])) {
+        const rawSettings = s.raw_settings as any;
+        const scheduleSettings = rawSettings?.scheduleSettings;
+        const ptc = typeof scheduleSettings?.playoffTeamCount === 'number' && scheduleSettings.playoffTeamCount > 0
+          ? scheduleSettings.playoffTeamCount
+          : null;
+        playoffTeamCountMap.set(s.season_year, ptc);
+      }
+
       const formattedManagers: LegacyManager[] = (managersRes.data ?? []).map((m: any) => ({
         id: m.id,
         display_name: m.display_name,
@@ -126,9 +143,10 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
 
       const formattedTeams: LegacySeasonTeam[] = (teamsRes.data ?? []).map((t: any) => {
         const coMgrs = coManagersMap[t.id] ?? [];
+        const seasonYear = (t.season as any)?.season_year ?? 0;
         return {
           id: t.id,
-          season_year: (t.season as any)?.season_year ?? 0,
+          season_year: seasonYear,
           external_team_id: t.external_team_id,
           team_name: t.team_name,
           team_abbrev: t.team_abbrev,
@@ -138,6 +156,7 @@ export default function LeagueLegacyDashboard({ leagueId }: LeagueLegacyDashboar
           points_for: Number(t.points_for) ?? 0,
           points_against: Number(t.points_against) ?? 0,
           playoff_seed: t.playoff_seed,
+          playoff_team_count: playoffTeamCountMap.get(seasonYear) ?? null,
           final_standing: t.final_standing,
           is_champion: t.is_champion ?? false,
           is_runner_up: t.is_runner_up ?? false,
@@ -366,7 +385,7 @@ function OverviewPanel({
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number }) {
+function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
     <div style={{ padding: '16px', background: '#fff', borderRadius: '10px', border: '1px solid #e5e7eb', textAlign: 'center' }}>
       <div style={{ fontSize: '24px', fontWeight: '700', color: '#2563eb' }}>{value}</div>
@@ -521,7 +540,7 @@ function ManagerList({ careers, matchups }: { careers: CareerStats[]; matchups: 
                 <td style={{ padding: '10px 8px', textAlign: 'center' }}>
                   {c.championships > 0 ? <span style={{ fontWeight: '700', color: '#2563eb' }}>{c.championships}</span> : <span style={{ color: '#d1d5db' }}>0</span>}
                 </td>
-                <td style={{ padding: '10px 8px', textAlign: 'center', color: '#6b7280' }}>{c.playoff_appearances}</td>
+                <td style={{ padding: '10px 8px', textAlign: 'center', color: '#6b7280' }}>{c.playoff_appearances === null ? 'N/A' : c.playoff_appearances}</td>
                 <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                   {c.best_finish ? (c.best_finish === 1 ? <span style={{ fontWeight: '700', color: '#2563eb' }}>1st</span> : `${c.best_finish}`) : '-'}
                 </td>
@@ -562,7 +581,7 @@ function ManagerProfile({ career, matchups, onBack }: { career: CareerStats; mat
           <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>Win Rate</div>
         </div>
         <StatCard label="Championships" value={career.championships} />
-        <StatCard label="Playoff Appearances" value={career.playoff_appearances} />
+        <StatCard label="Playoff Appearances" value={career.playoff_appearances === null ? 'N/A' : career.playoff_appearances} />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', flexWrap: 'wrap' }}>
@@ -584,7 +603,9 @@ function ManagerProfile({ career, matchups, onBack }: { career: CareerStats; mat
                 <div style={{ fontSize: '13px', color: '#374151', marginTop: '4px' }}>
                   {s.wins}-{s.losses}-{s.ties}
                   <span style={{ marginLeft: '8px', color: '#9ca3af' }}>PF {s.points_for.toFixed(0)} PA {s.points_against.toFixed(0)}</span>
-                  {s.playoff_seed && <span style={{ marginLeft: '8px', color: '#9ca3af' }}>Seed #{s.playoff_seed}</span>}
+                  {s.playoff_seed !== null && <span style={{ marginLeft: '8px', color: '#9ca3af' }}>Seed #{s.playoff_seed}</span>}
+                  {s.made_playoffs === true && <span style={{ marginLeft: '8px', color: '#2563eb', fontSize: '11px', fontWeight: '600' }}>Playoffs</span>}
+                  {s.made_playoffs === null && s.playoff_seed !== null && <span style={{ marginLeft: '8px', color: '#9ca3af', fontSize: '11px' }}>Seed (bracket unknown)</span>}
                 </div>
               </div>
             ))}

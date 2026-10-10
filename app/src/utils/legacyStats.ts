@@ -24,6 +24,12 @@ export interface LegacySeasonTeam {
   points_for: number;
   points_against: number;
   playoff_seed: number | null;
+  // Number of teams that qualified for the championship playoff bracket
+  // in this season. Derived from ESPN scheduleSettings.playoffTeamCount.
+  // null when the setting is unavailable (e.g. imported from a provider
+  // that doesn't expose it). When null, playoff_appearances cannot be
+  // calculated reliably and is reported as null (unavailable).
+  playoff_team_count: number | null;
   final_standing: number | null;
   is_champion: boolean;
   is_runner_up: boolean;
@@ -63,7 +69,8 @@ export interface CareerStats {
   points_against: number;
   championships: number;
   championship_appearances: number;
-  playoff_appearances: number;
+  // null = unavailable (playoffTeamCount not known for one or more seasons)
+  playoff_appearances: number | null;
   best_finish: number | null;
   worst_finish: number | null;
   season_records: {
@@ -78,6 +85,7 @@ export interface CareerStats {
     is_champion: boolean;
     is_runner_up: boolean;
     playoff_seed: number | null;
+    made_playoffs: boolean | null;
   }[];
 }
 
@@ -143,6 +151,46 @@ export interface MatchupRecord {
 // inflate aggregate league records. The co-manager's contribution is
 // visible in the season-by-season team list on their profile.
 
+// ── Playoff Qualification Rule ─────────────────────────────────────────────
+// A team qualified for the championship playoff bracket if and only if:
+//   1. playoff_team_count is known (non-null, > 0) for that season, AND
+//   2. playoff_seed is non-null AND playoff_seed <= playoff_team_count.
+//
+// ESPN assigns a playoffSeed to ALL teams (1 through N), not just
+// championship-bracket teams. Seeds 1..playoffTeamCount are the
+// championship bracket; seeds (playoffTeamCount+1)..N are the
+// consolation bracket.
+//
+// If playoff_team_count is unavailable for any of a manager's seasons,
+// playoff_appearances is reported as null (unavailable) rather than
+// fabricating a count from seeds alone.
+
+// ── Completed-Matchup Predicate ─────────────────────────────────────────────
+// A matchup is "completed" for statistical purposes when:
+//   - It is NOT a bye (byes have no away team).
+//   - Both home_score and away_score are non-null numbers.
+//     (A score of 0 is valid and must be counted.)
+//   - winner is non-null and not 'UNDECIDED'.
+//
+// This predicate is used by calculateH2H, calculateRivals, and
+// calculateMatchupRecords. It ensures:
+//   - Zero-point games are counted.
+//   - 0-0 ties are counted.
+//   - Null/missing scores are excluded.
+//   - Undecided matchups are excluded.
+//   - Byes are excluded.
+
+function isCompletedMatchup(m: LegacyMatchup): boolean {
+  return (
+    m.classification !== 'bye' &&
+    m.away_team_id !== null &&
+    m.home_score !== null &&
+    m.away_score !== null &&
+    m.winner !== null &&
+    m.winner !== 'UNDECIDED'
+  );
+}
+
 // ── Career Statistics ───────────────────────────────────────────────────────
 
 export function calculateCareerStats(
@@ -185,7 +233,22 @@ export function calculateCareerStats(
 
     if (team.is_champion) stats.championships++;
     if (team.is_champion || team.is_runner_up) stats.championship_appearances++;
-    if (team.playoff_seed !== null) stats.playoff_appearances++;
+
+    // Playoff qualification: only count if playoff_team_count is known
+    const madePlayoffs: boolean | null =
+      team.playoff_team_count !== null && team.playoff_team_count > 0
+        ? team.playoff_seed !== null && team.playoff_seed <= team.playoff_team_count
+        : null;
+
+    if (madePlayoffs === true) {
+      if (stats.playoff_appearances !== null) {
+        stats.playoff_appearances++;
+      }
+    } else if (madePlayoffs === null) {
+      // If we can't determine playoff qualification for this season,
+      // mark the entire career playoff_appearances as unavailable.
+      stats.playoff_appearances = null;
+    }
 
     if (team.final_standing !== null) {
       if (stats.best_finish === null || team.final_standing < stats.best_finish) {
@@ -208,6 +271,7 @@ export function calculateCareerStats(
       is_champion: team.is_champion,
       is_runner_up: team.is_runner_up,
       playoff_seed: team.playoff_seed,
+      made_playoffs: madePlayoffs,
     });
   }
 
@@ -242,17 +306,14 @@ export function calculateH2H(
     matchups: [],
   };
 
-  // Only count completed matchups where both managers faced each other
   const h2hMatchups: H2HMatchup[] = [];
 
   for (const m of matchups) {
-    if (!m.away_team_id || !m.away_score || !m.home_score) continue;
-    if (m.winner === 'UNDECIDED' || !m.winner) continue;
-    if (m.classification === 'bye') continue;
+    if (!isCompletedMatchup(m)) continue;
 
     // Determine which side is A and which is B
-    let aScore: number | null = null;
-    let bScore: number | null = null;
+    let aScore: number;
+    let bScore: number;
 
     if (m.home_manager_id === managerAId && m.away_manager_id === managerBId) {
       aScore = Number(m.home_score);
@@ -304,7 +365,6 @@ export function calculateH2H(
     }
   }
 
-  // Sort by season then period, most recent last
   h2hMatchups.sort((a, b) => a.season_year - b.season_year || a.matchup_period - b.matchup_period);
   result.matchups = h2hMatchups;
   result.most_recent = h2hMatchups.length > 0 ? h2hMatchups[h2hMatchups.length - 1] : null;
@@ -352,10 +412,14 @@ export function calculateCareerRecords(
       manager_name: c.display_name, team_name: '', season_year: 0,
       value: c.championship_appearances, display_value: `${c.championship_appearances}`,
     })),
-    most_playoff_appearances: sorted.filter((c) => c.playoff_appearances > 0).sort((a, b) => b.playoff_appearances - a.playoff_appearances).slice(0, 5).map((c) => ({
-      manager_name: c.display_name, team_name: '', season_year: 0,
-      value: c.playoff_appearances, display_value: `${c.playoff_appearances}`,
-    })),
+    most_playoff_appearances: sorted
+      .filter((c) => c.playoff_appearances !== null && c.playoff_appearances > 0)
+      .sort((a, b) => (b.playoff_appearances ?? 0) - (a.playoff_appearances ?? 0))
+      .slice(0, 5)
+      .map((c) => ({
+        manager_name: c.display_name, team_name: '', season_year: 0,
+        value: c.playoff_appearances!, display_value: `${c.playoff_appearances}`,
+      })),
   };
 }
 
@@ -367,6 +431,7 @@ export function calculateSingleSeasonRecords(
   most_points: SingleSeasonRecord[];
   best_win_pct: SingleSeasonRecord[];
 } {
+  // Exclude incomplete seasons (no final_standing) from record-book entries
   const eligible = teams.filter((t) => t.final_standing !== null);
   const totalGames = (t: LegacySeasonTeam) => t.wins + t.losses + t.ties;
 
@@ -405,10 +470,7 @@ export function calculateMatchupRecords(
   closest_margin: MatchupRecord[];
   highest_combined: MatchupRecord[];
 } {
-  // Only completed matchups with scores
-  const completed = matchups.filter(
-    (m) => m.away_team_id && m.home_score !== null && m.away_score !== null && m.winner && m.winner !== 'UNDECIDED' && m.classification !== 'bye',
-  );
+  const completed = matchups.filter(isCompletedMatchup);
 
   const allScores: { m: LegacyMatchup; score: number; isHome: boolean; mgr: string; team: string }[] = [];
   for (const m of completed) {
@@ -478,19 +540,35 @@ export function buildChampionshipHistory(
 ): ChampionshipEntry[] {
   const champions = teams.filter((t) => t.is_champion);
   const runnerUps = teams.filter((t) => t.is_runner_up);
-  const champGames = matchups.filter((m) => m.classification === 'championship');
 
   return champions.map((champ) => {
     const runnerUp = runnerUps.find((ru) => ru.season_year === champ.season_year);
-    const champGame = champGames.find((m) => m.season_year === champ.season_year);
+
+    // Find the championship game: a matchup that contains BOTH the
+    // champion and runner-up team IDs. Do not rely on classification
+    // alone — verify the participants match the verified champion/runner-up.
+    const champGame = matchups.find((m) => {
+      if (m.season_year !== champ.season_year) return false;
+      if (m.away_team_id === null) return false;
+      const participantIds = new Set([m.home_team_id, m.away_team_id]);
+      return participantIds.has(champ.id) && participantIds.has(runnerUp?.id ?? '__no_ru__');
+    });
 
     let championScore: number | null = null;
     let runnerUpScore: number | null = null;
 
-    if (champGame) {
+    if (champGame && champGame.home_score !== null && champGame.away_score !== null) {
       const champIsHome = champGame.home_team_id === champ.id;
-      championScore = champIsHome ? Number(champGame.home_score) : Number(champGame.away_score);
-      runnerUpScore = champIsHome ? Number(champGame.away_score) : Number(champGame.home_score);
+      championScore = champIsHome
+        ? Number(champGame.home_score)
+        : Number(champGame.away_score);
+      runnerUpScore = champIsHome
+        ? Number(champGame.away_score)
+        : Number(champGame.home_score);
+
+      // Guard against NaN from non-numeric stored values
+      if (isNaN(championScore)) championScore = null;
+      if (isNaN(runnerUpScore)) runnerUpScore = null;
     }
 
     return {
@@ -498,10 +576,10 @@ export function buildChampionshipHistory(
       champion_team_name: champ.team_name,
       champion_manager_name: champ.primary_manager_name ?? 'Unknown',
       champion_manager_id: champ.primary_manager_id,
-      champion_score: championScore !== null && !isNaN(championScore) ? championScore : null,
+      champion_score: championScore,
       runner_up_team_name: runnerUp?.team_name ?? null,
       runner_up_manager_name: runnerUp?.primary_manager_name ?? null,
-      runner_up_score: runnerUpScore !== null && !isNaN(runnerUpScore) ? runnerUpScore : null,
+      runner_up_score: runnerUpScore,
       has_championship_game: champGame !== undefined,
     };
   }).sort((a, b) => b.season_year - a.season_year);
@@ -526,23 +604,21 @@ export function calculateRivals(
   const rivalMap = new Map<string, RivalInfo>();
 
   for (const m of matchups) {
-    if (!m.away_team_id || !m.away_score || !m.home_score) continue;
-    if (m.classification === 'bye') continue;
+    if (!isCompletedMatchup(m)) continue;
 
     let opponentId: string | null = null;
     let targetWon = false;
     let isTie = false;
 
+    const homeScore = Number(m.home_score);
+    const awayScore = Number(m.away_score);
+
     if (m.home_manager_id === targetManagerId && m.away_manager_id) {
       opponentId = m.away_manager_id;
-      const homeScore = Number(m.home_score);
-      const awayScore = Number(m.away_score);
       isTie = homeScore === awayScore;
       targetWon = !isTie && homeScore > awayScore;
     } else if (m.away_manager_id === targetManagerId && m.home_manager_id) {
       opponentId = m.home_manager_id;
-      const homeScore = Number(m.home_score);
-      const awayScore = Number(m.away_score);
       isTie = homeScore === awayScore;
       targetWon = !isTie && awayScore > homeScore;
     } else {
@@ -553,7 +629,6 @@ export function calculateRivals(
 
     let rival = rivalMap.get(opponentId);
     if (!rival) {
-      // Find manager name from matchup data
       const oppName = m.home_manager_id === opponentId ? m.home_manager_name : m.away_manager_name;
       rival = {
         manager_id: opponentId,
