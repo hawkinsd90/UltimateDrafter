@@ -287,7 +287,15 @@ export default function LeagueHistoryTab({ leagueId, isOwner }: HistoryTabProps)
 
       {/* Legacy view (all-time stats) */}
       {seasons.length > 0 && topView === 'legacy' && (
-        <LeagueLegacyDashboard leagueId={leagueId} refreshKey={legacyRefreshKey} />
+        <LeagueLegacyDashboard 
+          leagueId={leagueId} 
+          refreshKey={legacyRefreshKey} 
+          isOwner={isOwner} 
+          onNavigateToManagers={() => {
+            setTopView('seasons');
+            setSubTab('managers');
+          }} 
+        />
       )}
 
       {/* Season list with sub-tabs */}
