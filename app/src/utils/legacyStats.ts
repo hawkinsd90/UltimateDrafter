@@ -1,0 +1,575 @@
+// Statistics calculation utilities for League Legacy.
+// All functions operate on data fetched via Supabase client queries
+// and are scoped to a single league by filtering on league_id.
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
+export interface LegacyManager {
+  id: string;
+  display_name: string;
+  linked_user_id: string | null;
+  seasons: number;
+  aliases: { provider: string; external_owner_id: string; display_name: string | null }[];
+}
+
+export interface LegacySeasonTeam {
+  id: string;
+  season_year: number;
+  external_team_id: string;
+  team_name: string;
+  team_abbrev: string | null;
+  wins: number;
+  losses: number;
+  ties: number;
+  points_for: number;
+  points_against: number;
+  playoff_seed: number | null;
+  final_standing: number | null;
+  is_champion: boolean;
+  is_runner_up: boolean;
+  primary_manager_id: string | null;
+  primary_manager_name: string | null;
+  co_manager_ids: string[];
+  co_manager_names: string[];
+}
+
+export interface LegacyMatchup {
+  id: string;
+  season_year: number;
+  matchup_period: number;
+  classification: string;
+  home_team_id: string;
+  away_team_id: string | null;
+  home_score: number | null;
+  away_score: number | null;
+  winner: string | null;
+  home_team_name: string;
+  away_team_name: string | null;
+  home_manager_id: string | null;
+  away_manager_id: string | null;
+  home_manager_name: string | null;
+  away_manager_name: string | null;
+}
+
+export interface CareerStats {
+  manager_id: string;
+  display_name: string;
+  seasons: number;
+  wins: number;
+  losses: number;
+  ties: number;
+  win_pct: number;
+  points_for: number;
+  points_against: number;
+  championships: number;
+  championship_appearances: number;
+  playoff_appearances: number;
+  best_finish: number | null;
+  worst_finish: number | null;
+  season_records: {
+    season_year: number;
+    team_name: string;
+    wins: number;
+    losses: number;
+    ties: number;
+    points_for: number;
+    points_against: number;
+    final_standing: number | null;
+    is_champion: boolean;
+    is_runner_up: boolean;
+    playoff_seed: number | null;
+  }[];
+}
+
+export interface H2HMatchup {
+  season_year: number;
+  matchup_period: number;
+  classification: string;
+  manager_a_score: number;
+  manager_b_score: number;
+  manager_a_won: boolean;
+  is_tie: boolean;
+}
+
+export interface H2HStats {
+  manager_a_id: string;
+  manager_b_id: string;
+  total: { wins: number; losses: number; ties: number };
+  regular: { wins: number; losses: number; ties: number };
+  playoff: { wins: number; losses: number; ties: number };
+  points_for: number;
+  points_against: number;
+  largest_margin: number | null;
+  closest_margin: number | null;
+  most_recent: H2HMatchup | null;
+  matchups: H2HMatchup[];
+}
+
+export interface RecordEntry {
+  manager_name: string;
+  team_name: string;
+  season_year: number;
+  value: number;
+  display_value: string;
+}
+
+export interface SingleSeasonRecord {
+  manager_name: string;
+  team_name: string;
+  season_year: number;
+  value: number;
+  display_value: string;
+  wins: number;
+  losses: number;
+  ties: number;
+}
+
+export interface MatchupRecord {
+  manager_name: string;
+  team_name: string;
+  season_year: number;
+  matchup_period: number;
+  value: number;
+  display_value: string;
+}
+
+// ── Attribution Rule ───────────────────────────────────────────────────────
+// For career stats and H2H, we attribute team results to the PRIMARY manager
+// only. Co-managers are listed in the team info but do not receive separate
+// career win/loss credit. This prevents double-counting a single matchup
+// outcome for both the primary and co-manager.
+// Rationale: the primary owner is the team's designated owner in ESPN.
+// Co-managers share the team but attributing the full W/L to both would
+// inflate aggregate league records. The co-manager's contribution is
+// visible in the season-by-season team list on their profile.
+
+// ── Career Statistics ───────────────────────────────────────────────────────
+
+export function calculateCareerStats(
+  teams: LegacySeasonTeam[],
+  managers: LegacyManager[],
+): CareerStats[] {
+  const statsMap = new Map<string, CareerStats>();
+
+  for (const mgr of managers) {
+    statsMap.set(mgr.id, {
+      manager_id: mgr.id,
+      display_name: mgr.display_name,
+      seasons: 0,
+      wins: 0,
+      losses: 0,
+      ties: 0,
+      win_pct: 0,
+      points_for: 0,
+      points_against: 0,
+      championships: 0,
+      championship_appearances: 0,
+      playoff_appearances: 0,
+      best_finish: null,
+      worst_finish: null,
+      season_records: [],
+    });
+  }
+
+  for (const team of teams) {
+    if (!team.primary_manager_id) continue;
+    const stats = statsMap.get(team.primary_manager_id);
+    if (!stats) continue;
+
+    stats.seasons++;
+    stats.wins += team.wins;
+    stats.losses += team.losses;
+    stats.ties += team.ties;
+    stats.points_for += Number(team.points_for);
+    stats.points_against += Number(team.points_against);
+
+    if (team.is_champion) stats.championships++;
+    if (team.is_champion || team.is_runner_up) stats.championship_appearances++;
+    if (team.playoff_seed !== null) stats.playoff_appearances++;
+
+    if (team.final_standing !== null) {
+      if (stats.best_finish === null || team.final_standing < stats.best_finish) {
+        stats.best_finish = team.final_standing;
+      }
+      if (stats.worst_finish === null || team.final_standing > stats.worst_finish) {
+        stats.worst_finish = team.final_standing;
+      }
+    }
+
+    stats.season_records.push({
+      season_year: team.season_year,
+      team_name: team.team_name,
+      wins: team.wins,
+      losses: team.losses,
+      ties: team.ties,
+      points_for: Number(team.points_for),
+      points_against: Number(team.points_against),
+      final_standing: team.final_standing,
+      is_champion: team.is_champion,
+      is_runner_up: team.is_runner_up,
+      playoff_seed: team.playoff_seed,
+    });
+  }
+
+  for (const stats of statsMap.values()) {
+    const totalGames = stats.wins + stats.losses + stats.ties;
+    stats.win_pct = totalGames > 0
+      ? (stats.wins + stats.ties * 0.5) / totalGames
+      : 0;
+  }
+
+  return Array.from(statsMap.values()).filter((s) => s.seasons > 0);
+}
+
+// ── Head-to-Head ───────────────────────────────────────────────────────────
+
+export function calculateH2H(
+  matchups: LegacyMatchup[],
+  managerAId: string,
+  managerBId: string,
+): H2HStats {
+  const result: H2HStats = {
+    manager_a_id: managerAId,
+    manager_b_id: managerBId,
+    total: { wins: 0, losses: 0, ties: 0 },
+    regular: { wins: 0, losses: 0, ties: 0 },
+    playoff: { wins: 0, losses: 0, ties: 0 },
+    points_for: 0,
+    points_against: 0,
+    largest_margin: null,
+    closest_margin: null,
+    most_recent: null,
+    matchups: [],
+  };
+
+  // Only count completed matchups where both managers faced each other
+  const h2hMatchups: H2HMatchup[] = [];
+
+  for (const m of matchups) {
+    if (!m.away_team_id || !m.away_score || !m.home_score) continue;
+    if (m.winner === 'UNDECIDED' || !m.winner) continue;
+    if (m.classification === 'bye') continue;
+
+    // Determine which side is A and which is B
+    let aScore: number | null = null;
+    let bScore: number | null = null;
+
+    if (m.home_manager_id === managerAId && m.away_manager_id === managerBId) {
+      aScore = Number(m.home_score);
+      bScore = Number(m.away_score);
+    } else if (m.home_manager_id === managerBId && m.away_manager_id === managerAId) {
+      aScore = Number(m.away_score);
+      bScore = Number(m.home_score);
+    } else {
+      continue;
+    }
+
+    const isTie = aScore === bScore;
+    const aWon = !isTie && aScore > bScore;
+    const margin = Math.abs(aScore - bScore);
+
+    const h2h: H2HMatchup = {
+      season_year: m.season_year,
+      matchup_period: m.matchup_period,
+      classification: m.classification,
+      manager_a_score: aScore,
+      manager_b_score: bScore,
+      manager_a_won: aWon,
+      is_tie: isTie,
+    };
+    h2hMatchups.push(h2h);
+
+    result.points_for += aScore;
+    result.points_against += bScore;
+
+    if (isTie) {
+      result.total.ties++;
+      if (m.classification === 'regular') result.regular.ties++;
+      else if (m.classification === 'playoff' || m.classification === 'championship') result.playoff.ties++;
+    } else if (aWon) {
+      result.total.wins++;
+      if (m.classification === 'regular') result.regular.wins++;
+      else if (m.classification === 'playoff' || m.classification === 'championship') result.playoff.wins++;
+    } else {
+      result.total.losses++;
+      if (m.classification === 'regular') result.regular.losses++;
+      else if (m.classification === 'playoff' || m.classification === 'championship') result.playoff.losses++;
+    }
+
+    if (result.largest_margin === null || margin > result.largest_margin) {
+      result.largest_margin = margin;
+    }
+    if (result.closest_margin === null || margin < result.closest_margin) {
+      result.closest_margin = margin;
+    }
+  }
+
+  // Sort by season then period, most recent last
+  h2hMatchups.sort((a, b) => a.season_year - b.season_year || a.matchup_period - b.matchup_period);
+  result.matchups = h2hMatchups;
+  result.most_recent = h2hMatchups.length > 0 ? h2hMatchups[h2hMatchups.length - 1] : null;
+
+  return result;
+}
+
+// ── Record Book ────────────────────────────────────────────────────────────
+
+export function calculateCareerRecords(
+  careers: CareerStats[],
+): {
+  most_wins: RecordEntry[];
+  most_losses: RecordEntry[];
+  highest_win_pct: RecordEntry[];
+  most_points: RecordEntry[];
+  most_championships: RecordEntry[];
+  most_champ_appearances: RecordEntry[];
+  most_playoff_appearances: RecordEntry[];
+} {
+  const sorted = [...careers];
+
+  return {
+    most_wins: sorted.filter((c) => c.wins > 0).sort((a, b) => b.wins - a.wins).slice(0, 5).map((c) => ({
+      manager_name: c.display_name, team_name: '', season_year: 0,
+      value: c.wins, display_value: `${c.wins}`,
+    })),
+    most_losses: sorted.filter((c) => c.losses > 0).sort((a, b) => b.losses - a.losses).slice(0, 5).map((c) => ({
+      manager_name: c.display_name, team_name: '', season_year: 0,
+      value: c.losses, display_value: `${c.losses}`,
+    })),
+    highest_win_pct: sorted.filter((c) => (c.wins + c.losses + c.ties) >= 10).sort((a, b) => b.win_pct - a.win_pct).slice(0, 5).map((c) => ({
+      manager_name: c.display_name, team_name: '', season_year: 0,
+      value: c.win_pct, display_value: `${(c.win_pct * 100).toFixed(1)}%`,
+    })),
+    most_points: sorted.filter((c) => c.points_for > 0).sort((a, b) => b.points_for - a.points_for).slice(0, 5).map((c) => ({
+      manager_name: c.display_name, team_name: '', season_year: 0,
+      value: c.points_for, display_value: c.points_for.toFixed(2),
+    })),
+    most_championships: sorted.filter((c) => c.championships > 0).sort((a, b) => b.championships - a.championships).slice(0, 5).map((c) => ({
+      manager_name: c.display_name, team_name: '', season_year: 0,
+      value: c.championships, display_value: `${c.championships}`,
+    })),
+    most_champ_appearances: sorted.filter((c) => c.championship_appearances > 0).sort((a, b) => b.championship_appearances - a.championship_appearances).slice(0, 5).map((c) => ({
+      manager_name: c.display_name, team_name: '', season_year: 0,
+      value: c.championship_appearances, display_value: `${c.championship_appearances}`,
+    })),
+    most_playoff_appearances: sorted.filter((c) => c.playoff_appearances > 0).sort((a, b) => b.playoff_appearances - a.playoff_appearances).slice(0, 5).map((c) => ({
+      manager_name: c.display_name, team_name: '', season_year: 0,
+      value: c.playoff_appearances, display_value: `${c.playoff_appearances}`,
+    })),
+  };
+}
+
+export function calculateSingleSeasonRecords(
+  teams: LegacySeasonTeam[],
+): {
+  most_wins: SingleSeasonRecord[];
+  fewest_losses: SingleSeasonRecord[];
+  most_points: SingleSeasonRecord[];
+  best_win_pct: SingleSeasonRecord[];
+} {
+  const eligible = teams.filter((t) => t.final_standing !== null);
+  const totalGames = (t: LegacySeasonTeam) => t.wins + t.losses + t.ties;
+
+  return {
+    most_wins: [...eligible].sort((a, b) => b.wins - a.wins).slice(0, 5).map((t) => ({
+      manager_name: t.primary_manager_name ?? 'Unknown', team_name: t.team_name,
+      season_year: t.season_year, value: t.wins, display_value: `${t.wins}`,
+      wins: t.wins, losses: t.losses, ties: t.ties,
+    })),
+    fewest_losses: [...eligible].filter((t) => totalGames(t) >= 10).sort((a, b) => a.losses - b.losses).slice(0, 5).map((t) => ({
+      manager_name: t.primary_manager_name ?? 'Unknown', team_name: t.team_name,
+      season_year: t.season_year, value: t.losses, display_value: `${t.losses}`,
+      wins: t.wins, losses: t.losses, ties: t.ties,
+    })),
+    most_points: [...eligible].sort((a, b) => Number(b.points_for) - Number(a.points_for)).slice(0, 5).map((t) => ({
+      manager_name: t.primary_manager_name ?? 'Unknown', team_name: t.team_name,
+      season_year: t.season_year, value: Number(t.points_for), display_value: Number(t.points_for).toFixed(2),
+      wins: t.wins, losses: t.losses, ties: t.ties,
+    })),
+    best_win_pct: [...eligible].filter((t) => totalGames(t) >= 10).map((t) => ({
+      t, pct: (t.wins + t.ties * 0.5) / totalGames(t),
+    })).sort((a, b) => b.pct - a.pct).slice(0, 5).map(({ t, pct }) => ({
+      manager_name: t.primary_manager_name ?? 'Unknown', team_name: t.team_name,
+      season_year: t.season_year, value: pct, display_value: `${(pct * 100).toFixed(1)}%`,
+      wins: t.wins, losses: t.losses, ties: t.ties,
+    })),
+  };
+}
+
+export function calculateMatchupRecords(
+  matchups: LegacyMatchup[],
+): {
+  highest_score: MatchupRecord[];
+  lowest_score: MatchupRecord[];
+  largest_margin: MatchupRecord[];
+  closest_margin: MatchupRecord[];
+  highest_combined: MatchupRecord[];
+} {
+  // Only completed matchups with scores
+  const completed = matchups.filter(
+    (m) => m.away_team_id && m.home_score !== null && m.away_score !== null && m.winner && m.winner !== 'UNDECIDED' && m.classification !== 'bye',
+  );
+
+  const allScores: { m: LegacyMatchup; score: number; isHome: boolean; mgr: string; team: string }[] = [];
+  for (const m of completed) {
+    if (m.home_score !== null) {
+      allScores.push({ m, score: Number(m.home_score), isHome: true, mgr: m.home_manager_name ?? 'Unknown', team: m.home_team_name });
+    }
+    if (m.away_score !== null) {
+      allScores.push({ m, score: Number(m.away_score), isHome: false, mgr: m.away_manager_name ?? 'Unknown', team: m.away_team_name ?? '' });
+    }
+  }
+
+  const margins = completed.map((m) => ({
+    m,
+    margin: Math.abs(Number(m.home_score) - Number(m.away_score)),
+    winnerName: m.winner === 'HOME' ? m.home_manager_name : m.away_manager_name,
+    winnerTeam: m.winner === 'HOME' ? m.home_team_name : m.away_team_name,
+  }));
+
+  const combined = completed.map((m) => ({
+    m,
+    total: Number(m.home_score) + Number(m.away_score),
+    mgr: m.winner === 'HOME' ? m.home_manager_name : m.away_manager_name,
+    team: m.winner === 'HOME' ? m.home_team_name : m.away_team_name,
+  }));
+
+  return {
+    highest_score: allScores.sort((a, b) => b.score - a.score).slice(0, 5).map((s) => ({
+      manager_name: s.mgr, team_name: s.team, season_year: s.m.season_year,
+      matchup_period: s.m.matchup_period, value: s.score, display_value: s.score.toFixed(2),
+    })),
+    lowest_score: allScores.sort((a, b) => a.score - b.score).slice(0, 5).map((s) => ({
+      manager_name: s.mgr, team_name: s.team, season_year: s.m.season_year,
+      matchup_period: s.m.matchup_period, value: s.score, display_value: s.score.toFixed(2),
+    })),
+    largest_margin: margins.sort((a, b) => b.margin - a.margin).slice(0, 5).map((r) => ({
+      manager_name: r.winnerName ?? 'Unknown', team_name: r.winnerTeam ?? '', season_year: r.m.season_year,
+      matchup_period: r.m.matchup_period, value: r.margin, display_value: r.margin.toFixed(2),
+    })),
+    closest_margin: margins.filter((r) => r.margin > 0).sort((a, b) => a.margin - b.margin).slice(0, 5).map((r) => ({
+      manager_name: r.winnerName ?? 'Unknown', team_name: r.winnerTeam ?? '', season_year: r.m.season_year,
+      matchup_period: r.m.matchup_period, value: r.margin, display_value: r.margin.toFixed(2),
+    })),
+    highest_combined: combined.sort((a, b) => b.total - a.total).slice(0, 5).map((c) => ({
+      manager_name: c.mgr ?? 'Unknown', team_name: c.team ?? '', season_year: c.m.season_year,
+      matchup_period: c.m.matchup_period, value: c.total, display_value: c.total.toFixed(2),
+    })),
+  };
+}
+
+// ── Championship History ───────────────────────────────────────────────────
+
+export interface ChampionshipEntry {
+  season_year: number;
+  champion_team_name: string;
+  champion_manager_name: string;
+  champion_manager_id: string | null;
+  champion_score: number | null;
+  runner_up_team_name: string | null;
+  runner_up_manager_name: string | null;
+  runner_up_score: number | null;
+  has_championship_game: boolean;
+}
+
+export function buildChampionshipHistory(
+  teams: LegacySeasonTeam[],
+  matchups: LegacyMatchup[],
+): ChampionshipEntry[] {
+  const champions = teams.filter((t) => t.is_champion);
+  const runnerUps = teams.filter((t) => t.is_runner_up);
+  const champGames = matchups.filter((m) => m.classification === 'championship');
+
+  return champions.map((champ) => {
+    const runnerUp = runnerUps.find((ru) => ru.season_year === champ.season_year);
+    const champGame = champGames.find((m) => m.season_year === champ.season_year);
+
+    let championScore: number | null = null;
+    let runnerUpScore: number | null = null;
+
+    if (champGame) {
+      const champIsHome = champGame.home_team_id === champ.id;
+      championScore = champIsHome ? Number(champGame.home_score) : Number(champGame.away_score);
+      runnerUpScore = champIsHome ? Number(champGame.away_score) : Number(champGame.home_score);
+    }
+
+    return {
+      season_year: champ.season_year,
+      champion_team_name: champ.team_name,
+      champion_manager_name: champ.primary_manager_name ?? 'Unknown',
+      champion_manager_id: champ.primary_manager_id,
+      champion_score: championScore !== null && !isNaN(championScore) ? championScore : null,
+      runner_up_team_name: runnerUp?.team_name ?? null,
+      runner_up_manager_name: runnerUp?.primary_manager_name ?? null,
+      runner_up_score: runnerUpScore !== null && !isNaN(runnerUpScore) ? runnerUpScore : null,
+      has_championship_game: champGame !== undefined,
+    };
+  }).sort((a, b) => b.season_year - a.season_year);
+}
+
+// ── Rivals (most frequent opponents) ────────────────────────────────────────
+
+export interface RivalInfo {
+  manager_id: string;
+  manager_name: string;
+  matchup_count: number;
+  wins: number;
+  losses: number;
+  ties: number;
+}
+
+export function calculateRivals(
+  matchups: LegacyMatchup[],
+  targetManagerId: string,
+  maxRivals: number = 5,
+): RivalInfo[] {
+  const rivalMap = new Map<string, RivalInfo>();
+
+  for (const m of matchups) {
+    if (!m.away_team_id || !m.away_score || !m.home_score) continue;
+    if (m.classification === 'bye') continue;
+
+    let opponentId: string | null = null;
+    let targetWon = false;
+    let isTie = false;
+
+    if (m.home_manager_id === targetManagerId && m.away_manager_id) {
+      opponentId = m.away_manager_id;
+      const homeScore = Number(m.home_score);
+      const awayScore = Number(m.away_score);
+      isTie = homeScore === awayScore;
+      targetWon = !isTie && homeScore > awayScore;
+    } else if (m.away_manager_id === targetManagerId && m.home_manager_id) {
+      opponentId = m.home_manager_id;
+      const homeScore = Number(m.home_score);
+      const awayScore = Number(m.away_score);
+      isTie = homeScore === awayScore;
+      targetWon = !isTie && awayScore > homeScore;
+    } else {
+      continue;
+    }
+
+    if (!opponentId) continue;
+
+    let rival = rivalMap.get(opponentId);
+    if (!rival) {
+      // Find manager name from matchup data
+      const oppName = m.home_manager_id === opponentId ? m.home_manager_name : m.away_manager_name;
+      rival = {
+        manager_id: opponentId,
+        manager_name: oppName ?? 'Unknown',
+        matchup_count: 0, wins: 0, losses: 0, ties: 0,
+      };
+      rivalMap.set(opponentId, rival);
+    }
+
+    rival.matchup_count++;
+    if (isTie) rival.ties++;
+    else if (targetWon) rival.wins++;
+    else rival.losses++;
+  }
+
+  return Array.from(rivalMap.values())
+    .sort((a, b) => b.matchup_count - a.matchup_count || b.wins - a.wins)
+    .slice(0, maxRivals);
+}

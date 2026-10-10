@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import HistoricalDraftViewer from './HistoricalDraftViewer.tsx';
 import HistoricalManagerPanel from './HistoricalManagerPanel.tsx';
+import LeagueLegacyDashboard from './LeagueLegacyDashboard.tsx';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ interface HistoryTabProps {
 }
 
 type SubTab = 'standings' | 'draft' | 'managers';
+type TopView = 'seasons' | 'legacy';
 
 interface DiscoveredSeason {
   year: number;
@@ -74,6 +76,7 @@ export default function LeagueHistoryTab({ leagueId, isOwner }: HistoryTabProps)
   const [showImportModal, setShowImportModal] = useState(false);
   const [error, setError] = useState('');
   const [subTab, setSubTab] = useState<SubTab>('standings');
+  const [topView, setTopView] = useState<TopView>('seasons');
 
   const loadHistory = useCallback(async () => {
     try {
@@ -263,8 +266,25 @@ export default function LeagueHistoryTab({ leagueId, isOwner }: HistoryTabProps)
         </div>
       )}
 
-      {/* Season list with sub-tabs */}
+      {/* Top-level view toggle: Seasons vs Legacy */}
       {seasons.length > 0 && (
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
+          <TopViewButton active={topView === 'seasons'} onClick={() => setTopView('seasons')}>
+            Seasons
+          </TopViewButton>
+          <TopViewButton active={topView === 'legacy'} onClick={() => setTopView('legacy')}>
+            Legacy
+          </TopViewButton>
+        </div>
+      )}
+
+      {/* Legacy view (all-time stats) */}
+      {seasons.length > 0 && topView === 'legacy' && (
+        <LeagueLegacyDashboard leagueId={leagueId} />
+      )}
+
+      {/* Season list with sub-tabs */}
+      {seasons.length > 0 && topView === 'seasons' && (
         <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
           {/* Season selector */}
           <div style={{ flex: '0 0 200px' }}>
@@ -371,6 +391,27 @@ export default function LeagueHistoryTab({ leagueId, isOwner }: HistoryTabProps)
         />
       )}
     </div>
+  );
+}
+
+// ── Top-View Button ───────────────────────────────────────────────────────────
+
+function TopViewButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '8px 18px', fontSize: '14px', fontWeight: active ? '600' : '500',
+        cursor: 'pointer',
+        background: active ? '#2563eb' : '#fff',
+        color: active ? '#fff' : '#374151',
+        border: active ? '1px solid #2563eb' : '1px solid #d1d5db',
+        borderRadius: '8px',
+        transition: 'all 0.15s ease',
+      }}
+    >
+      {children}
+    </button>
   );
 }
 
