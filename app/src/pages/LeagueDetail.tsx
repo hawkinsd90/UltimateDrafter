@@ -57,6 +57,7 @@ export default function LeagueDetail() {
   const loadEssentialData = useCallback(async () => {
     if (!leagueId || !userId) return;
     const reqId = ++essentialReqRef.current;
+    tabReqRef.current++;
     setLoading(true);
     setError('');
     try {
@@ -100,12 +101,12 @@ export default function LeagueDetail() {
 
   const loadTabData = useCallback(async () => {
     if (!leagueId || !userId) return;
+    const reqId = ++tabReqRef.current;
     if (activeTab === 'history' || activeTab === 'settings') {
       setOptionalLoading(false);
       setOptionalError('');
       return;
     }
-    const reqId = ++tabReqRef.current;
     setOptionalError('');
     setOptionalLoading(true);
     try {

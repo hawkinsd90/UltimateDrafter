@@ -52,14 +52,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const authReadyRef = useRef(false);
   const sessionResolveRef = useRef<((session: Session | null) => void) | null>(null);
+  const authEpochRef = useRef(0);
+  const signedOutRef = useRef(false);
+  const adminCheckRef = useRef<{ userId: string; epoch: number } | null>(null);
+  const mountedRef = useRef(true);
+  const epochAtInitiationRef = useRef(0);
 
-  async function checkAdmin(userId: string) {
-    const { data } = await supabase
-      .from('admin_users')
-      .select('id')
-      .eq('user_id', userId)
-      .maybeSingle();
-    setIsAdmin(!!data);
+  async function checkAdmin(userId: string, epoch: number) {
+    try {
+      const { data } = await supabase
+        .from('admin_users')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (!mountedRef.current) return;
+      if (adminCheckRef.current?.epoch !== epoch || adminCheckRef.current?.userId !== userId) return;
+      setIsAdmin(!!data);
+    } catch {
+      if (!mountedRef.current) return;
+      if (adminCheckRef.current?.epoch !== epoch || adminCheckRef.current?.userId !== userId) return;
+      setIsAdmin(false);
+    }
+  }
+
+  function applyAuthState(session: Session | null) {
+    if (!mountedRef.current) return;
+    setSession(session);
+    setUser(session?.user ?? null);
+    setIsLoadingAuth(false);
+    const epoch = ++authEpochRef.current;
+    if (session?.user) {
+      adminCheckRef.current = { userId: session.user.id, epoch };
+      checkAdmin(session.user.id, epoch);
+    } else {
+      adminCheckRef.current = null;
+      setIsAdmin(false);
+    }
   }
 
   useEffect(() => {
@@ -76,15 +104,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    epochAtInitiationRef.current = authEpochRef.current;
     getInitialSession(sessionResolveRef).then((session) => {
+      if (!mountedRef.current) return;
       authReadyRef.current = true;
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) checkAdmin(session.user.id);
+      if (signedOutRef.current) return;
+      if (epochAtInitiationRef.current !== authEpochRef.current) return;
+      applyAuthState(session);
     }).catch(() => {
+      if (!mountedRef.current) return;
       authReadyRef.current = true;
     }).finally(() => {
-      setIsLoadingAuth(false);
+      if (mountedRef.current) setIsLoadingAuth(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
@@ -103,18 +134,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             sessionResolveRef.current(session);
             sessionResolveRef.current = null;
           }
+          return;
         }
-
-        setSession(session);
-        setUser(session?.user ?? null);
-        setIsLoadingAuth(false);
-        if (session?.user) checkAdmin(session.user.id);
-        else setIsAdmin(false);
 
         if (event === 'SIGNED_OUT') {
+          signedOutRef.current = true;
+          adminCheckRef.current = null;
+          applyAuthState(null);
           sessionStorage.removeItem(RETURN_URL_KEY);
           window.location.href = '/login?reason=signed_out';
+          return;
         }
+
+        signedOutRef.current = false;
+        applyAuthState(session);
 
         if (event === 'TOKEN_REFRESHED') {
           console.log('[Auth] Session token refreshed');
@@ -126,7 +159,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       })();
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mountedRef.current = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signInWithGoogle = async (returnTo?: string) => {
