@@ -163,12 +163,12 @@ export default function LeagueDetail() {
   }, [userId, loadEssentialData]);
 
   useEffect(() => {
-    loadTabData();
-  }, [loadTabData]);
-
-  useEffect(() => {
     tabReqRef.current++;
   }, [leagueId, userId]);
+
+  useEffect(() => {
+    loadTabData();
+  }, [loadTabData]);
 
   const loadEssentialRef = useRef(loadEssentialData);
   loadEssentialRef.current = loadEssentialData;

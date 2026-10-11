@@ -30,22 +30,6 @@ function describe(name: string, fn: () => void | Promise<void>): void {
   });
 }
 
-async function runAll() {
-  for (const test of testQueue) {
-    await test();
-  }
-  console.log(`\n--- Race Condition Test Results ---`);
-  console.log(`Passed: ${passed}, Failed: ${failed}`);
-  console.log(`Total: ${passed + failed}`);
-  if (failed > 0) {
-    process.exit(1);
-  } else {
-    console.log('All race-condition tests passed.');
-  }
-}
-
-// runAll() is invoked at the end of the file after all describe() calls.
-
 // ── Deferred promise utility ───────────────────────────────────────────────
 
 interface Deferred<T> {
@@ -248,6 +232,13 @@ function createMockTabLoader() {
   return { state, loadEssential, loadTab, resolveTabRequest, resetForLeagueOrUserChange, get tabReqId() { return tabReqId; } };
 }
 
+// Simulates the corrected effect ordering in LeagueDetail:
+// the league/user invalidation effect runs BEFORE the tab-loading effect.
+function simulateMountAndLoadTab(tab: ReturnType<typeof createMockTabLoader>, tabName: string) {
+  tab.resetForLeagueOrUserChange();
+  return tab.loadTab(tabName);
+}
+
 // ── Tests: Auth scenarios ──────────────────────────────────────────────────
 
 describe('Auth: SIGNED_IN arrives before getSession completes', () => {
@@ -437,4 +428,64 @@ describe('Tab: rapid tab switching keeps only the latest request valid', () => {
   assert(req3 > req2, 'Second Drafts switch should invalidate Members');
 });
 
-runAll();
+describe('Tab: initial Drafts tab load completes and displays data', async () => {
+  const tab = createMockTabLoader();
+  const promise = simulateMountAndLoadTab(tab, 'drafts');
+  assert(tab.state.loading, 'Should be loading after initial mount');
+  tab.resolveTabRequest('drafts-initial');
+  await promise;
+  assert(tab.state.data === 'drafts-initial', 'Drafts data should display after initial load');
+  assert(!tab.state.loading, 'Loading should clear after initial Drafts load');
+});
+
+describe('Tab: initial Members tab load completes and displays data', async () => {
+  const tab = createMockTabLoader();
+  const promise = simulateMountAndLoadTab(tab, 'members');
+  assert(tab.state.loading, 'Should be loading after initial mount');
+  tab.resolveTabRequest('members-initial');
+  await promise;
+  assert(tab.state.data === 'members-initial', 'Members data should display after initial load');
+  assert(!tab.state.loading, 'Loading should clear after initial Members load');
+});
+
+describe('Tab: initial History tab load does not start unrelated optional queries', () => {
+  const tab = createMockTabLoader();
+  simulateMountAndLoadTab(tab, 'history');
+  assert(!tab.state.loading, 'History should not set loading');
+  assert(tab.state.data === null, 'History should not set data');
+});
+
+describe('Tab: switching leagues discards old league pending requests', async () => {
+  const tab = createMockTabLoader();
+  const oldPromise = simulateMountAndLoadTab(tab, 'drafts');
+  const oldReqId = tab.tabReqId;
+  tab.resetForLeagueOrUserChange();
+  assert(tab.tabReqId > oldReqId, 'League switch should bump tabReqId before new load');
+  const newPromise = tab.loadTab('drafts');
+  tab.resolveTabRequest('old-league-data');
+  await oldPromise;
+  assert(tab.state.data !== 'old-league-data', 'Old league data should be discarded');
+  tab.resolveTabRequest('new-league-data');
+  await newPromise;
+  assert(tab.state.data === 'new-league-data', 'New league data should display');
+});
+
+(async () => {
+  for (const test of testQueue) {
+    await test();
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  const lines = [
+    '',
+    '--- Race Condition Test Results ---',
+    `Passed: ${passed}, Failed: ${failed}`,
+    `Total: ${passed + failed}`,
+  ];
+  if (failed > 0) {
+    lines.push('');
+  } else {
+    lines.push('All race-condition tests passed.', '');
+  }
+  process.stderr.write(lines.join('\n') + '\n');
+  if (failed > 0) process.exit(1);
+})();
