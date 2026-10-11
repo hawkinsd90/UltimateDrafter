@@ -57,6 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const adminCheckRef = useRef<{ userId: string; epoch: number } | null>(null);
   const mountedRef = useRef(true);
   const epochAtInitiationRef = useRef(0);
+  const timedOutRef = useRef(false);
 
   async function checkAdmin(userId: string, epoch: number) {
     try {
@@ -105,6 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     epochAtInitiationRef.current = authEpochRef.current;
+    timedOutRef.current = false;
     getInitialSession(sessionResolveRef).then((session) => {
       if (!mountedRef.current) return;
       authReadyRef.current = true;
@@ -114,6 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }).catch(() => {
       if (!mountedRef.current) return;
       authReadyRef.current = true;
+      timedOutRef.current = true;
     }).finally(() => {
       if (mountedRef.current) setIsLoadingAuth(false);
     });
@@ -121,6 +124,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
       (async () => {
         if (event === 'INITIAL_SESSION' && authReadyRef.current) {
+          if (timedOutRef.current && session && !signedOutRef.current && epochAtInitiationRef.current === authEpochRef.current) {
+            timedOutRef.current = false;
+            applyAuthState(session);
+          }
           if (!session && sessionResolveRef.current) {
             sessionResolveRef.current(null);
             sessionResolveRef.current = null;

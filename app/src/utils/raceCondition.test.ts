@@ -5,6 +5,8 @@
 // the specific asynchronous sequences described in the race-condition fix.
 // No database access, no React rendering — pure logic verification.
 
+declare const process: { exit(code: number): void };
+
 // ── Test harness ───────────────────────────────────────────────────────────
 
 let passed = 0;
@@ -75,16 +77,14 @@ interface MockAuthState {
 function createMockAuthProvider() {
   const state: MockAuthState = { user: null, isLoading: true, isAdmin: false };
   let authReady = false;
+  let timedOut = false;
   let authEpoch = 0;
   let signedOut = false;
   let epochAtInitiation = 0;
   let mounted = true;
   let adminCheck: { userId: string; epoch: number } | null = null;
 
-  // Deferred for getSession()
   let getSessionDeferred: Deferred<{ session: { user: { id: string } } | null }> | null = null;
-
-  // Deferred for admin check queries
   const adminDeferreds = new Map<string, Deferred<boolean>>();
 
   function applyAuthState(session: { user: { id: string } } | null) {
@@ -94,7 +94,6 @@ function createMockAuthProvider() {
     const epoch = ++authEpoch;
     if (session?.user) {
       adminCheck = { userId: session.user.id, epoch };
-      // Start admin check (deferred)
       const deferred = createDeferred<boolean>();
       adminDeferreds.set(session.user.id, deferred);
       deferred.promise.then((isAdmin) => {
@@ -109,6 +108,7 @@ function createMockAuthProvider() {
   }
 
   function initGetSession() {
+    timedOut = false;
     epochAtInitiation = authEpoch;
     getSessionDeferred = createDeferred<{ session: { user: { id: string } } | null }>();
     getSessionDeferred.promise.then(({ session }) => {
@@ -120,6 +120,7 @@ function createMockAuthProvider() {
     }).catch(() => {
       if (!mounted) return;
       authReady = true;
+      timedOut = true;
     }).finally(() => {
       if (mounted) state.isLoading = false;
     });
@@ -128,8 +129,17 @@ function createMockAuthProvider() {
 
   function emitAuthEvent(event: string, session: { user: { id: string } } | null) {
     if (event === 'INITIAL_SESSION' && authReady) {
+      if (timedOut && session && !signedOut && epochAtInitiation === authEpoch) {
+        timedOut = false;
+        applyAuthState(session);
+      }
+      if (!session && getSessionDeferred && !getSessionDeferred.isSettled) {
+        getSessionDeferred.resolve({ session: null });
+        getSessionDeferred.isSettled = true;
+      }
       return;
     }
+
     if (event === 'INITIAL_SESSION' && !authReady) {
       authReady = true;
       if (getSessionDeferred && !getSessionDeferred.isSettled) {
@@ -138,12 +148,14 @@ function createMockAuthProvider() {
       }
       return;
     }
+
     if (event === 'SIGNED_OUT') {
       signedOut = true;
       adminCheck = null;
       applyAuthState(null);
       return;
     }
+
     signedOut = false;
     applyAuthState(session);
   }
@@ -167,11 +179,19 @@ function createMockAuthProvider() {
     }
   }
 
-  return { state, initGetSession, emitAuthEvent, resolveAdminCheck, resolveGetSession, unmount };
+  function rejectGetSession() {
+    if (getSessionDeferred && !getSessionDeferred.isSettled) {
+      getSessionDeferred.reject(new Error('timeout'));
+      getSessionDeferred.isSettled = true;
+    }
+  }
+
+  return { state, initGetSession, emitAuthEvent, resolveAdminCheck, resolveGetSession, rejectGetSession, unmount };
 }
 
 // ── Mock tab request invalidation ──────────────────────────────────────────
-// Mirrors the tabReqRef logic in LeagueDetail.tsx.
+// Mirrors the tabReqRef/essentialReqRef logic in LeagueDetail.tsx.
+// loadEssential does NOT bump tabReqId — only league/user changes do.
 
 function createMockTabLoader() {
   let tabReqId = 0;
@@ -182,16 +202,17 @@ function createMockTabLoader() {
     error: '',
   };
 
-  // Deferred for in-flight tab request
   let inFlight: { reqId: number; deferred: Deferred<string> } | null = null;
 
   async function loadEssential() {
     const reqId = ++essentialReqId;
-    tabReqId++;
     state.loading = true;
-    // Essential completes synchronously in mock
     if (essentialReqId !== reqId) return;
     state.loading = false;
+  }
+
+  function resetForLeagueOrUserChange() {
+    tabReqId++;
   }
 
   async function loadTab(tab: string) {
@@ -224,128 +245,129 @@ function createMockTabLoader() {
     }
   }
 
-  return { state, loadEssential, loadTab, resolveTabRequest, get tabReqId() { return tabReqId; } };
+  return { state, loadEssential, loadTab, resolveTabRequest, resetForLeagueOrUserChange, get tabReqId() { return tabReqId; } };
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────
+// ── Tests: Auth scenarios ──────────────────────────────────────────────────
 
 describe('Auth: SIGNED_IN arrives before getSession completes', () => {
   const auth = createMockAuthProvider();
   auth.initGetSession();
-
-  // SIGNED_IN arrives first
   auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-b' } });
-
-  // Now getSession completes with old user A
   auth.resolveGetSession({ user: { id: 'user-a' } });
-
-  // The epoch should have changed, so getSession result is discarded
   assert(auth.state.user === 'user-b', 'Should keep user-b from SIGNED_IN, not overwrite with user-a from getSession');
 });
 
 describe('Auth: SIGNED_OUT arrives before getSession completes', () => {
   const auth = createMockAuthProvider();
   auth.initGetSession();
-
-  // SIGNED_OUT arrives first
   auth.emitAuthEvent('SIGNED_OUT', null);
-
-  // Now getSession completes with a session
   auth.resolveGetSession({ user: { id: 'user-a' } });
-
   assert(auth.state.user === null, 'Should not restore old session after SIGNED_OUT');
 });
 
 describe('Auth: TOKEN_REFRESHED updates session, old getSession completes after', () => {
   const auth = createMockAuthProvider();
   auth.initGetSession();
-
-  // TOKEN_REFRESHED with new user
   auth.emitAuthEvent('TOKEN_REFRESHED', { user: { id: 'user-refreshed' } });
-
-  // Old getSession completes with original user
   auth.resolveGetSession({ user: { id: 'user-original' } });
-
   assert(auth.state.user === 'user-refreshed', 'Should keep refreshed user, not overwrite with original from stale getSession');
 });
 
-describe('Auth: getSession times out, valid session event arrives after', async () => {
+describe('Auth: getSession times out, valid SIGNED_IN arrives after', async () => {
   const auth = createMockAuthProvider();
-  const deferred = auth.initGetSession();
+  auth.initGetSession();
+  auth.rejectGetSession();
+  await new Promise((r) => setTimeout(r, 10));
+  assert(!auth.state.isLoading, 'Should clear loading after timeout');
+  auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-recovered' } });
+  assert(auth.state.user === 'user-recovered', 'Should recover session from post-timeout SIGNED_IN');
+});
 
-  // Simulate timeout: reject the promise
-  if (deferred && !deferred.isSettled) {
-    deferred.reject(new Error('timeout'));
-    deferred.isSettled = true;
-  }
+describe('Auth: getSession times out, valid INITIAL_SESSION arrives after', async () => {
+  const auth = createMockAuthProvider();
+  auth.initGetSession();
+  auth.rejectGetSession();
+  await new Promise((r) => setTimeout(r, 10));
+  assert(!auth.state.isLoading, 'Should clear loading after timeout');
+  auth.emitAuthEvent('INITIAL_SESSION', { user: { id: 'user-late-init' } });
+  assert(auth.state.user === 'user-late-init', 'Should recover session from late INITIAL_SESSION after timeout');
+});
 
-  // Wait for microtasks (promise chain .catch + .finally)
+describe('Auth: timeout then SIGNED_OUT then stale INITIAL_SESSION', async () => {
+  const auth = createMockAuthProvider();
+  auth.initGetSession();
+  auth.rejectGetSession();
   await new Promise((r) => setTimeout(r, 10));
 
-  // isLoading should be cleared
-  assert(!auth.state.isLoading, 'Should clear loading after timeout');
+  auth.emitAuthEvent('SIGNED_OUT', null);
+  assert(auth.state.user === null, 'Should be signed out after SIGNED_OUT');
 
-  // A valid SIGNED_IN event arrives after timeout
-  auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-recovered' } });
+  auth.emitAuthEvent('INITIAL_SESSION', { user: { id: 'user-stale' } });
+  assert(auth.state.user === null, 'Should not restore stale INITIAL_SESSION after SIGNED_OUT');
+});
 
-  assert(auth.state.user === 'user-recovered', 'Should recover session from post-timeout event');
+describe('Auth: SIGNED_IN then older INITIAL_SESSION arrives', () => {
+  const auth = createMockAuthProvider();
+  auth.initGetSession();
+  auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-new' } });
+  auth.emitAuthEvent('INITIAL_SESSION', { user: { id: 'user-old' } });
+  assert(auth.state.user === 'user-new', 'Should keep SIGNED_IN user, not overwrite with older INITIAL_SESSION');
+});
+
+describe('Auth: normal successful initialization via INITIAL_SESSION', async () => {
+  const auth = createMockAuthProvider();
+  auth.initGetSession();
+  auth.emitAuthEvent('INITIAL_SESSION', { user: { id: 'user-normal' } });
+  await new Promise((r) => setTimeout(r, 10));
+  assert(auth.state.user === 'user-normal', 'Should apply session from normal INITIAL_SESSION');
+  assert(!auth.state.isLoading, 'Should clear loading after normal init');
 });
 
 describe('Auth: admin lookup for user A completes after user B signs in', () => {
   const auth = createMockAuthProvider();
   auth.initGetSession();
-
-  // User A signs in
   auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-a' } });
-
-  // User B signs in before A's admin check completes
   auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-b' } });
-
-  // Now resolve A's admin check as true (admin)
   auth.resolveAdminCheck('user-a', true);
-
   assert(auth.state.user === 'user-b', 'Should have user-b as current user');
   assert(!auth.state.isAdmin, 'Should not apply admin status from user-a to user-b');
-
-  // Resolve B's admin check as false (not admin)
   auth.resolveAdminCheck('user-b', false);
-
   assert(!auth.state.isAdmin, 'user-b should not be admin');
+});
+
+describe('Auth: pending admin lookup during identity change preserves correct user', () => {
+  const auth = createMockAuthProvider();
+  auth.initGetSession();
+  auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-x' } });
+  auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-y' } });
+  auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-z' } });
+  auth.resolveAdminCheck('user-x', true);
+  auth.resolveAdminCheck('user-y', true);
+  auth.resolveAdminCheck('user-z', false);
+  assert(auth.state.user === 'user-z', 'Should have user-z as current user');
+  assert(!auth.state.isAdmin, 'Should apply user-z admin result, not user-x or user-y');
 });
 
 describe('Auth: AuthProvider unmounts while getSession pending', async () => {
   const auth = createMockAuthProvider();
   auth.initGetSession();
-
-  // Unmount
   auth.unmount();
-
-  // getSession completes after unmount
   auth.resolveGetSession({ user: { id: 'user-a' } });
-
-  // Wait for microtasks
   await new Promise((r) => setTimeout(r, 10));
-
   assert(auth.state.user === null, 'Should not apply session after unmount');
-  assert(auth.state.isLoading, 'Should not modify loading state after unmount (isLoading stays true, component is gone)');
+  assert(auth.state.isLoading, 'Should not modify loading state after unmount');
 });
+
+// ── Tests: Tab invalidation scenarios ──────────────────────────────────────
 
 describe('Tab: switching to History invalidates pending Drafts request', () => {
   const tab = createMockTabLoader();
-
-  // Start Drafts tab load
   const draftsPromise = tab.loadTab('drafts');
   const draftsReqId = tab.tabReqId;
-
-  // Switch to History (should invalidate)
   tab.loadTab('history');
-
   assert(tab.tabReqId > draftsReqId, 'History switch should increment tabReqId');
-
-  // Now the Drafts request completes
   tab.resolveTabRequest('drafts-data');
-
-  // Wait for microtasks
   draftsPromise.then(() => {
     assert(tab.state.data === null, 'Stale Drafts data should not be applied after History switch');
     assert(!tab.state.loading, 'Loading should be false after History switch');
@@ -354,68 +376,65 @@ describe('Tab: switching to History invalidates pending Drafts request', () => {
 
 describe('Tab: switching from History to Drafts does not carry stale state', () => {
   const tab = createMockTabLoader();
-
-  // Go to History (no optional queries)
   tab.loadTab('history');
   assert(!tab.state.loading, 'History should not set loading');
   assert(tab.state.data === null, 'History should not set data');
-
-  // Switch to Drafts
   const draftsPromise = tab.loadTab('drafts');
   assert(tab.state.loading, 'Drafts should set loading');
-
-  // Resolve the Drafts request
   tab.resolveTabRequest('drafts-data');
-
   draftsPromise.then(() => {
     assert(tab.state.data === 'drafts-data', 'Drafts data should be applied');
     assert(!tab.state.loading, 'Loading should be cleared after Drafts load');
   });
 });
 
-describe('Tab: essential reload invalidates pending tab request', () => {
+describe('Tab: same-league essential refresh preserves pending Drafts request', () => {
   const tab = createMockTabLoader();
-
-  // Start a Drafts tab load
   const draftsPromise = tab.loadTab('drafts');
   const draftsReqId = tab.tabReqId;
-
-  // Essential reload (e.g., league change) should bump tabReqId
   tab.loadEssential();
-
-  assert(tab.tabReqId > draftsReqId, 'Essential reload should invalidate pending tab request');
-
-  // Drafts request completes
+  assert(tab.tabReqId === draftsReqId, 'Same-league essential refresh should NOT bump tabReqId');
   tab.resolveTabRequest('drafts-data');
-
   draftsPromise.then(() => {
-    assert(tab.state.data === null, 'Stale Drafts data should not be applied after essential reload');
+    assert(tab.state.data === 'drafts-data', 'Drafts data should still be applied after essential refresh');
+    assert(!tab.state.loading, 'Loading should be cleared after Drafts load');
+  });
+});
+
+describe('Tab: same-league essential refresh preserves pending Members request', () => {
+  const tab = createMockTabLoader();
+  const membersPromise = tab.loadTab('members');
+  const membersReqId = tab.tabReqId;
+  tab.loadEssential();
+  assert(tab.tabReqId === membersReqId, 'Same-league essential refresh should NOT bump tabReqId');
+  tab.resolveTabRequest('members-data');
+  membersPromise.then(() => {
+    assert(tab.state.data === 'members-data', 'Members data should still be applied after essential refresh');
+  });
+});
+
+describe('Tab: league switch invalidates pending Drafts request', () => {
+  const tab = createMockTabLoader();
+  const draftsPromise = tab.loadTab('drafts');
+  const draftsReqId = tab.tabReqId;
+  tab.resetForLeagueOrUserChange();
+  assert(tab.tabReqId > draftsReqId, 'League switch should bump tabReqId');
+  tab.resolveTabRequest('drafts-data');
+  draftsPromise.then(() => {
+    assert(tab.state.data === null, 'Stale Drafts data should not be applied after league switch');
   });
 });
 
 describe('Tab: rapid tab switching keeps only the latest request valid', () => {
   const tab = createMockTabLoader();
-
-  // Start Drafts
   tab.loadTab('drafts');
   const req1 = tab.tabReqId;
-
-  // Switch to Members
   tab.loadTab('members');
   const req2 = tab.tabReqId;
-
-  // Switch back to Drafts
   tab.loadTab('drafts');
   const req3 = tab.tabReqId;
-
   assert(req2 > req1, 'Members switch should invalidate Drafts');
   assert(req3 > req2, 'Second Drafts switch should invalidate Members');
-
-  // Resolve the first Drafts request (stale)
-  tab.resolveTabRequest('drafts-v1');
-
-  // The first Drafts data should be stale because req2 and req3 invalidated it.
-  // (in real code, it would be the active in-flight request)
 });
 
 runAll();

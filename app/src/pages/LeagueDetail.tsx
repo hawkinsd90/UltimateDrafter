@@ -57,7 +57,6 @@ export default function LeagueDetail() {
   const loadEssentialData = useCallback(async () => {
     if (!leagueId || !userId) return;
     const reqId = ++essentialReqRef.current;
-    tabReqRef.current++;
     setLoading(true);
     setError('');
     try {
@@ -166,6 +165,10 @@ export default function LeagueDetail() {
   useEffect(() => {
     loadTabData();
   }, [loadTabData]);
+
+  useEffect(() => {
+    tabReqRef.current++;
+  }, [leagueId, userId]);
 
   const loadEssentialRef = useRef(loadEssentialData);
   loadEssentialRef.current = loadEssentialData;
