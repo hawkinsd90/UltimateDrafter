@@ -21,13 +21,45 @@ function assert(condition: boolean, message: string): void {
   }
 }
 
-const testQueue: (() => Promise<void>)[] = [];
+const testQueue: { name: string; fn: () => Promise<void> }[] = [];
 
 function describe(name: string, fn: () => void | Promise<void>): void {
-  testQueue.push(async () => {
-    console.log(`\n${name}`);
-    await fn();
-  });
+  testQueue.push({ name, fn: async () => { await fn(); } });
+}
+
+const TEST_TIMEOUT_MS = 5000;
+
+async function runTest(entry: { name: string; fn: () => Promise<void> }): Promise<void> {
+  console.log(`\n${entry.name}`);
+  let timedOut = false;
+  const result = await Promise.race([
+    entry.fn().then(() => 'done' as const),
+    new Promise<'timeout'>((resolve) => {
+      setTimeout(() => { timedOut = true; resolve('timeout'); }, TEST_TIMEOUT_MS);
+    }),
+  ]);
+  if (timedOut || result === 'timeout') {
+    failed++;
+    console.error(`  FAIL: Test timed out after ${TEST_TIMEOUT_MS}ms`);
+  }
+}
+
+async function runAll(): Promise<void> {
+  for (const entry of testQueue) {
+    await runTest(entry);
+  }
+  const lines = [
+    '',
+    '--- Race Condition Test Results ---',
+    `Passed: ${passed}, Failed: ${failed}`,
+    `Total: ${passed + failed}`,
+  ];
+  if (failed > 0) {
+    lines.push('');
+  } else {
+    lines.push('All race-condition tests passed.', '');
+  }
+  process.stdout.write(lines.join('\n') + '\n');
 }
 
 // ── Deferred promise utility ───────────────────────────────────────────────
@@ -176,6 +208,7 @@ function createMockAuthProvider() {
 // ── Mock tab request invalidation ──────────────────────────────────────────
 // Mirrors the tabReqRef/essentialReqRef logic in LeagueDetail.tsx.
 // loadEssential does NOT bump tabReqId — only league/user changes do.
+// Tracks multiple pending requests independently by request ID.
 
 function createMockTabLoader() {
   let tabReqId = 0;
@@ -186,7 +219,7 @@ function createMockTabLoader() {
     error: '',
   };
 
-  let inFlight: { reqId: number; deferred: Deferred<string> } | null = null;
+  const pending = new Map<number, Deferred<string>>();
 
   async function loadEssential() {
     const reqId = ++essentialReqId;
@@ -199,7 +232,7 @@ function createMockTabLoader() {
     tabReqId++;
   }
 
-  async function loadTab(tab: string) {
+  async function loadTab(tab: string): Promise<void> {
     const reqId = ++tabReqId;
     if (tab === 'history' || tab === 'settings') {
       state.loading = false;
@@ -209,7 +242,7 @@ function createMockTabLoader() {
     state.error = '';
     state.loading = true;
     const deferred = createDeferred<string>();
-    inFlight = { reqId, deferred };
+    pending.set(reqId, deferred);
     try {
       const data = await deferred.promise;
       if (tabReqId !== reqId) return;
@@ -218,50 +251,69 @@ function createMockTabLoader() {
       if (tabReqId !== reqId) return;
       state.error = 'Tab load failed';
     } finally {
+      pending.delete(reqId);
       if (tabReqId === reqId) state.loading = false;
     }
   }
 
-  function resolveTabRequest(data: string) {
-    if (inFlight && !inFlight.deferred.isSettled) {
-      inFlight.deferred.resolve(data);
-      inFlight.deferred.isSettled = true;
+  function resolveTabRequestById(reqId: number, data: string) {
+    const deferred = pending.get(reqId);
+    if (deferred && !deferred.isSettled) {
+      deferred.resolve(data);
+      deferred.isSettled = true;
     }
   }
 
-  return { state, loadEssential, loadTab, resolveTabRequest, resetForLeagueOrUserChange, get tabReqId() { return tabReqId; } };
+  function resolveLatestTabRequest(data: string) {
+    if (pending.size === 0) return;
+    const latestReqId = Math.max(...pending.keys());
+    resolveTabRequestById(latestReqId, data);
+  }
+
+  return {
+    state,
+    loadEssential,
+    loadTab,
+    resolveTabRequestById,
+    resolveLatestTabRequest,
+    resetForLeagueOrUserChange,
+    get tabReqId() { return tabReqId; },
+  };
 }
 
 // Simulates the corrected effect ordering in LeagueDetail:
 // the league/user invalidation effect runs BEFORE the tab-loading effect.
-function simulateMountAndLoadTab(tab: ReturnType<typeof createMockTabLoader>, tabName: string) {
+function simulateMountAndLoadTab(tab: ReturnType<typeof createMockTabLoader>, tabName: string): Promise<void> {
   tab.resetForLeagueOrUserChange();
   return tab.loadTab(tabName);
 }
 
 // ── Tests: Auth scenarios ──────────────────────────────────────────────────
 
-describe('Auth: SIGNED_IN arrives before getSession completes', () => {
+describe('Auth: SIGNED_IN arrives before getSession completes', async () => {
   const auth = createMockAuthProvider();
   auth.initGetSession();
   auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-b' } });
   auth.resolveGetSession({ user: { id: 'user-a' } });
+  await new Promise((r) => setTimeout(r, 10));
   assert(auth.state.user === 'user-b', 'Should keep user-b from SIGNED_IN, not overwrite with user-a from getSession');
 });
 
-describe('Auth: SIGNED_OUT arrives before getSession completes', () => {
+describe('Auth: SIGNED_OUT arrives before getSession completes', async () => {
   const auth = createMockAuthProvider();
   auth.initGetSession();
   auth.emitAuthEvent('SIGNED_OUT', null);
   auth.resolveGetSession({ user: { id: 'user-a' } });
+  await new Promise((r) => setTimeout(r, 10));
   assert(auth.state.user === null, 'Should not restore old session after SIGNED_OUT');
 });
 
-describe('Auth: TOKEN_REFRESHED updates session, old getSession completes after', () => {
+describe('Auth: TOKEN_REFRESHED updates session, old getSession completes after', async () => {
   const auth = createMockAuthProvider();
   auth.initGetSession();
   auth.emitAuthEvent('TOKEN_REFRESHED', { user: { id: 'user-refreshed' } });
   auth.resolveGetSession({ user: { id: 'user-original' } });
+  await new Promise((r) => setTimeout(r, 10));
   assert(auth.state.user === 'user-refreshed', 'Should keep refreshed user, not overwrite with original from stale getSession');
 });
 
@@ -298,11 +350,12 @@ describe('Auth: timeout then SIGNED_OUT then stale INITIAL_SESSION', async () =>
   assert(auth.state.user === null, 'Should not restore stale INITIAL_SESSION after SIGNED_OUT');
 });
 
-describe('Auth: SIGNED_IN then older INITIAL_SESSION arrives', () => {
+describe('Auth: SIGNED_IN then older INITIAL_SESSION arrives', async () => {
   const auth = createMockAuthProvider();
   auth.initGetSession();
   auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-new' } });
   auth.emitAuthEvent('INITIAL_SESSION', { user: { id: 'user-old' } });
+  await new Promise((r) => setTimeout(r, 10));
   assert(auth.state.user === 'user-new', 'Should keep SIGNED_IN user, not overwrite with older INITIAL_SESSION');
 });
 
@@ -315,19 +368,21 @@ describe('Auth: normal successful initialization via INITIAL_SESSION', async () 
   assert(!auth.state.isLoading, 'Should clear loading after normal init');
 });
 
-describe('Auth: admin lookup for user A completes after user B signs in', () => {
+describe('Auth: admin lookup for user A completes after user B signs in', async () => {
   const auth = createMockAuthProvider();
   auth.initGetSession();
   auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-a' } });
   auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-b' } });
   auth.resolveAdminCheck('user-a', true);
+  await new Promise((r) => setTimeout(r, 10));
   assert(auth.state.user === 'user-b', 'Should have user-b as current user');
   assert(!auth.state.isAdmin, 'Should not apply admin status from user-a to user-b');
   auth.resolveAdminCheck('user-b', false);
+  await new Promise((r) => setTimeout(r, 10));
   assert(!auth.state.isAdmin, 'user-b should not be admin');
 });
 
-describe('Auth: pending admin lookup during identity change preserves correct user', () => {
+describe('Auth: pending admin lookup during identity change preserves correct user', async () => {
   const auth = createMockAuthProvider();
   auth.initGetSession();
   auth.emitAuthEvent('SIGNED_IN', { user: { id: 'user-x' } });
@@ -336,6 +391,7 @@ describe('Auth: pending admin lookup during identity change preserves correct us
   auth.resolveAdminCheck('user-x', true);
   auth.resolveAdminCheck('user-y', true);
   auth.resolveAdminCheck('user-z', false);
+  await new Promise((r) => setTimeout(r, 10));
   assert(auth.state.user === 'user-z', 'Should have user-z as current user');
   assert(!auth.state.isAdmin, 'Should apply user-z admin result, not user-x or user-y');
 });
@@ -352,87 +408,89 @@ describe('Auth: AuthProvider unmounts while getSession pending', async () => {
 
 // ── Tests: Tab invalidation scenarios ──────────────────────────────────────
 
-describe('Tab: switching to History invalidates pending Drafts request', () => {
+describe('Tab: switching to History invalidates pending Drafts request', async () => {
   const tab = createMockTabLoader();
   const draftsPromise = tab.loadTab('drafts');
   const draftsReqId = tab.tabReqId;
   tab.loadTab('history');
   assert(tab.tabReqId > draftsReqId, 'History switch should increment tabReqId');
-  tab.resolveTabRequest('drafts-data');
-  draftsPromise.then(() => {
-    assert(tab.state.data === null, 'Stale Drafts data should not be applied after History switch');
-    assert(!tab.state.loading, 'Loading should be false after History switch');
-  });
+  tab.resolveTabRequestById(draftsReqId, 'drafts-data');
+  await draftsPromise;
+  assert(tab.state.data === null, 'Stale Drafts data should not be applied after History switch');
+  assert(!tab.state.loading, 'Loading should be false after History switch');
 });
 
-describe('Tab: switching from History to Drafts does not carry stale state', () => {
+describe('Tab: switching from History to Drafts does not carry stale state', async () => {
   const tab = createMockTabLoader();
   tab.loadTab('history');
   assert(!tab.state.loading, 'History should not set loading');
   assert(tab.state.data === null, 'History should not set data');
   const draftsPromise = tab.loadTab('drafts');
   assert(tab.state.loading, 'Drafts should set loading');
-  tab.resolveTabRequest('drafts-data');
-  draftsPromise.then(() => {
-    assert(tab.state.data === 'drafts-data', 'Drafts data should be applied');
-    assert(!tab.state.loading, 'Loading should be cleared after Drafts load');
-  });
+  tab.resolveLatestTabRequest('drafts-data');
+  await draftsPromise;
+  assert(tab.state.data === 'drafts-data', 'Drafts data should be applied');
+  assert(!tab.state.loading, 'Loading should be cleared after Drafts load');
 });
 
-describe('Tab: same-league essential refresh preserves pending Drafts request', () => {
+describe('Tab: same-league essential refresh preserves pending Drafts request', async () => {
   const tab = createMockTabLoader();
   const draftsPromise = tab.loadTab('drafts');
   const draftsReqId = tab.tabReqId;
   tab.loadEssential();
   assert(tab.tabReqId === draftsReqId, 'Same-league essential refresh should NOT bump tabReqId');
-  tab.resolveTabRequest('drafts-data');
-  draftsPromise.then(() => {
-    assert(tab.state.data === 'drafts-data', 'Drafts data should still be applied after essential refresh');
-    assert(!tab.state.loading, 'Loading should be cleared after Drafts load');
-  });
+  tab.resolveTabRequestById(draftsReqId, 'drafts-data');
+  await draftsPromise;
+  assert(tab.state.data === 'drafts-data', 'Drafts data should still be applied after essential refresh');
+  assert(!tab.state.loading, 'Loading should be cleared after Drafts load');
 });
 
-describe('Tab: same-league essential refresh preserves pending Members request', () => {
+describe('Tab: same-league essential refresh preserves pending Members request', async () => {
   const tab = createMockTabLoader();
   const membersPromise = tab.loadTab('members');
   const membersReqId = tab.tabReqId;
   tab.loadEssential();
   assert(tab.tabReqId === membersReqId, 'Same-league essential refresh should NOT bump tabReqId');
-  tab.resolveTabRequest('members-data');
-  membersPromise.then(() => {
-    assert(tab.state.data === 'members-data', 'Members data should still be applied after essential refresh');
-  });
+  tab.resolveTabRequestById(membersReqId, 'members-data');
+  await membersPromise;
+  assert(tab.state.data === 'members-data', 'Members data should still be applied after essential refresh');
 });
 
-describe('Tab: league switch invalidates pending Drafts request', () => {
+describe('Tab: league switch invalidates pending Drafts request', async () => {
   const tab = createMockTabLoader();
   const draftsPromise = tab.loadTab('drafts');
   const draftsReqId = tab.tabReqId;
   tab.resetForLeagueOrUserChange();
   assert(tab.tabReqId > draftsReqId, 'League switch should bump tabReqId');
-  tab.resolveTabRequest('drafts-data');
-  draftsPromise.then(() => {
-    assert(tab.state.data === null, 'Stale Drafts data should not be applied after league switch');
-  });
+  tab.resolveTabRequestById(draftsReqId, 'drafts-data');
+  await draftsPromise;
+  assert(tab.state.data === null, 'Stale Drafts data should not be applied after league switch');
 });
 
-describe('Tab: rapid tab switching keeps only the latest request valid', () => {
+describe('Tab: rapid tab switching keeps only the latest request valid', async () => {
   const tab = createMockTabLoader();
   tab.loadTab('drafts');
   const req1 = tab.tabReqId;
   tab.loadTab('members');
   const req2 = tab.tabReqId;
-  tab.loadTab('drafts');
+  const draftsPromise = tab.loadTab('drafts');
   const req3 = tab.tabReqId;
   assert(req2 > req1, 'Members switch should invalidate Drafts');
   assert(req3 > req2, 'Second Drafts switch should invalidate Members');
+  tab.resolveTabRequestById(req2, 'members-data');
+  await new Promise((r) => setTimeout(r, 10));
+  assert(tab.state.data !== 'members-data', 'Stale Members data should not be applied');
+  tab.resolveTabRequestById(req3, 'drafts-v2');
+  await draftsPromise;
+  assert(tab.state.data === 'drafts-v2', 'Latest Drafts data should be applied');
+  assert(!tab.state.loading, 'Loading should be cleared after final Drafts load');
 });
 
 describe('Tab: initial Drafts tab load completes and displays data', async () => {
   const tab = createMockTabLoader();
   const promise = simulateMountAndLoadTab(tab, 'drafts');
   assert(tab.state.loading, 'Should be loading after initial mount');
-  tab.resolveTabRequest('drafts-initial');
+  tab.resolveLatestTabRequest('drafts-initial');
   await promise;
   assert(tab.state.data === 'drafts-initial', 'Drafts data should display after initial load');
   assert(!tab.state.loading, 'Loading should clear after initial Drafts load');
@@ -442,15 +500,15 @@ describe('Tab: initial Members tab load completes and displays data', async () =
   const tab = createMockTabLoader();
   const promise = simulateMountAndLoadTab(tab, 'members');
   assert(tab.state.loading, 'Should be loading after initial mount');
-  tab.resolveTabRequest('members-initial');
+  tab.resolveLatestTabRequest('members-initial');
   await promise;
   assert(tab.state.data === 'members-initial', 'Members data should display after initial load');
   assert(!tab.state.loading, 'Loading should clear after initial Members load');
 });
 
-describe('Tab: initial History tab load does not start unrelated optional queries', () => {
+describe('Tab: initial History tab load does not start unrelated optional queries', async () => {
   const tab = createMockTabLoader();
-  simulateMountAndLoadTab(tab, 'history');
+  await simulateMountAndLoadTab(tab, 'history');
   assert(!tab.state.loading, 'History should not set loading');
   assert(tab.state.data === null, 'History should not set data');
 });
@@ -459,33 +517,27 @@ describe('Tab: switching leagues discards old league pending requests', async ()
   const tab = createMockTabLoader();
   const oldPromise = simulateMountAndLoadTab(tab, 'drafts');
   const oldReqId = tab.tabReqId;
+
   tab.resetForLeagueOrUserChange();
   assert(tab.tabReqId > oldReqId, 'League switch should bump tabReqId before new load');
+
   const newPromise = tab.loadTab('drafts');
-  tab.resolveTabRequest('old-league-data');
+  const newReqId = tab.tabReqId;
+
+  tab.resolveTabRequestById(oldReqId, 'old-league-data');
   await oldPromise;
   assert(tab.state.data !== 'old-league-data', 'Old league data should be discarded');
-  tab.resolveTabRequest('new-league-data');
+
+  tab.resolveTabRequestById(newReqId, 'new-league-data');
   await newPromise;
   assert(tab.state.data === 'new-league-data', 'New league data should display');
+  assert(!tab.state.loading, 'Loading should clear after new league Drafts load');
 });
 
-(async () => {
-  for (const test of testQueue) {
-    await test();
-    await new Promise((r) => setTimeout(r, 5));
-  }
-  const lines = [
-    '',
-    '--- Race Condition Test Results ---',
-    `Passed: ${passed}, Failed: ${failed}`,
-    `Total: ${passed + failed}`,
-  ];
-  if (failed > 0) {
-    lines.push('');
-  } else {
-    lines.push('All race-condition tests passed.', '');
-  }
-  process.stderr.write(lines.join('\n') + '\n');
-  if (failed > 0) process.exit(1);
-})();
+// ── Runner ─────────────────────────────────────────────────────────────────
+
+runAll().then(() => {
+  process.exit(failed > 0 ? 1 : 0);
+}).catch(() => {
+  process.exit(1);
+});
